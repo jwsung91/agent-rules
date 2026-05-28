@@ -9,6 +9,7 @@ In both modes:
 - Follow the shared rules in `rules/`.
 - Preserve existing structure, naming, and documentation tone.
 - Keep changes scoped.
+- Use resource-safe build and test commands; avoid full-core parallelism by default.
 - Report validation honestly.
 
 For multi-agent workflows, follow `rules/agent-collaboration.md`.

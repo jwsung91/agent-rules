@@ -8,6 +8,7 @@ In both modes:
 
 - Follow the shared rules in `rules/`.
 - Keep changes scoped.
+- Use resource-safe build and test commands; avoid full-core parallelism by default.
 - Consider risks, compatibility concerns, and validation gaps appropriate to the task.
 - Do not expand the task scope unless explicitly requested.
 
