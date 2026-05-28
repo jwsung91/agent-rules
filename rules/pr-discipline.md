@@ -13,6 +13,7 @@ Use these rules for pull requests and final change reports.
 When opening or updating a PR:
 
 - Follow the repository's PR template when one is available.
+- Treat repository-local PR templates as the source of truth for PR structure.
 - Use English for PR titles, descriptions, summaries, and review requests unless the task explicitly requires another language.
 - Preserve the template structure unless there is a clear reason to omit a section.
 - If a template section does not apply, write `N/A` or a short explanation instead of deleting it silently.

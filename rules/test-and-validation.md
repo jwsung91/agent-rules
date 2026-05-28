@@ -29,6 +29,12 @@ Before committing, run lightweight checks appropriate to the files changed by th
 
 Prefer checking only changed files or the smallest affected area.
 
+Prefer repository-provided formatter, linter, test, and verification commands over generic commands.
+
+Before choosing commands, look for repository-local conventions such as formatter configs, lint configs, build presets, documented validation commands, verification scripts, and PR templates.
+
+If the repository provides an official verification script or documented validation command, prefer that command for pre-PR validation unless the task scope or environment makes it impractical.
+
 Recommended baseline:
 
 ```bash
