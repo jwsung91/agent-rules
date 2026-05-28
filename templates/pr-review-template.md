@@ -28,5 +28,7 @@ Review Mode
 - High-level assessment
 - Blocking issues
 - Non-blocking suggestions
+- Missing or insufficient tests
+- Missing or outdated documentation
 - Validation gaps
 - Follow-up recommendations

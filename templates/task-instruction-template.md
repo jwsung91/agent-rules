@@ -24,6 +24,14 @@ Primary Mode / Review Mode
 
 -
 
+## Test Expectations
+
+-
+
+## Documentation Impact
+
+-
+
 ## Validation
 
 ```bash
@@ -35,5 +43,7 @@ Primary Mode / Review Mode
 - Summary of changes
 - Files changed
 - Validation result
+- Test coverage changes or rationale
+- Documentation updates or rationale
 - Known limitations
 - Follow-up items
