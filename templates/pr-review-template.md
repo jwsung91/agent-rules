@@ -4,6 +4,10 @@
 
 ## PR / Branch
 
+## Agent Mode
+
+Review Mode
+
 ## Review Focus
 
 -

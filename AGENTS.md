@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This is the Codex and generic coding agent entrypoint for `jwsung91` repositories.
+This is the shared entrypoint for coding agents used across `jwsung91` repositories.
 
 Agents must follow the shared rules in `rules/` before making changes. In particular:
 
@@ -11,5 +11,16 @@ Agents must follow the shared rules in `rules/` before making changes. In partic
 - Validate changes when possible with the narrowest relevant checks.
 - Do not claim validation was run if it was not.
 - Report what changed, what was intentionally not changed, and how the work was validated.
+
+## Agent Usage Model
+
+Agent roles are execution modes, not fixed tool identities.
+
+Any supported agent may be used in either:
+
+- Primary Mode: implementation, documentation update, investigation, or refactoring.
+- Review Mode: cross-check, review, risk analysis, and validation gap review.
+
+Follow `rules/agent-collaboration.md` when multiple agents are used on the same task.
 
 For structured task requests, use `templates/task-instruction-template.md`.

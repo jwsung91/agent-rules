@@ -4,6 +4,10 @@
 
 ## Goal
 
+## Agent Mode
+
+Primary Mode / Review Mode
+
 ## Scope
 
 ### Allowed

@@ -14,11 +14,23 @@ Supported agents:
 
 ## Directory Overview
 
-- `AGENTS.md`: Codex and generic coding agent entrypoint.
+- `AGENTS.md`: Shared coding agent entrypoint.
 - `CLAUDE.md`: Claude-specific entrypoint.
 - `GEMINI.md`: Gemini-specific entrypoint.
+- `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/`: Shared rules that apply across agents.
 - `templates/`: Reusable task and review instruction forms.
+
+## Agent Usage Model
+
+Agent roles are execution modes, not fixed tool identities.
+
+Any supported agent may be used in either:
+
+- Primary Mode: implementation, documentation update, investigation, or refactoring.
+- Review Mode: cross-check, review, risk analysis, and validation gap review.
+
+Actual agent assignment should be decided per task. This repository intentionally avoids environment-specific assumptions.
 
 ## Recommended Usage
 

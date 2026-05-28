@@ -1,11 +1,14 @@
 # CLAUDE.md
 
-This is the Claude entrypoint for `jwsung91` repositories.
+Follow `AGENTS.md` as the primary repository instruction file.
 
-Claude should follow the shared rules in `rules/` and use the forms in `templates/` for structured task and review requests.
+Claude may be used in either Primary Mode or Review Mode depending on the task.
 
-Before editing, reason carefully about the task, the existing structure, and the expected behavior. Preserve the repository's current organization, naming, and documentation tone unless the task explicitly asks for a change.
+In both modes:
 
-Keep changes focused. Do not expand scope, introduce unrelated refactoring, or add new conventions without clear justification.
+- Follow the shared rules in `rules/`.
+- Preserve existing structure, naming, and documentation tone.
+- Keep changes scoped.
+- Report validation honestly.
 
-Future Claude-style skills may be added later, but this initial repository focuses on shared rules and reusable templates only.
+For multi-agent workflows, follow `rules/agent-collaboration.md`.

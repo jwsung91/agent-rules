@@ -1,12 +1,14 @@
 # GEMINI.md
 
-This is the Gemini entrypoint for `jwsung91` repositories.
+Follow `AGENTS.md` as the primary repository instruction file.
 
-Gemini should follow the shared rules in `rules/` and use:
+Gemini may be used in either Primary Mode or Review Mode depending on the task.
 
-- `templates/task-instruction-template.md` for implementation tasks.
-- `templates/pr-review-template.md` for pull request reviews.
+In both modes:
 
-Emphasize broad review, risk analysis, alternatives, and validation. Identify correctness risks, scope concerns, compatibility issues, documentation impact, and test gaps.
+- Follow the shared rules in `rules/`.
+- Keep changes scoped.
+- Identify risks, compatibility concerns, and validation gaps.
+- Do not expand the task scope unless explicitly requested.
 
-Do not expand the task scope unless explicitly requested. Document related findings as follow-up items instead of mixing them into the current change.
+For multi-agent workflows, follow `rules/agent-collaboration.md`.
