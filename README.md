@@ -17,7 +17,7 @@ Supported agents:
 - `AGENTS.md`: Shared coding agent entrypoint.
 - `CLAUDE.md`: Claude-specific entrypoint.
 - `GEMINI.md`: Gemini-specific entrypoint.
-- `docs/lightweight-adoption.md`: Guide for applying these rules to target repositories using a lightweight local `AGENTS.md`.
+- `docs/lightweight-adoption.md`: Guide for applying these rules to target repositories using a lightweight local `AGENTS.md` and optional `.agents/` namespacing.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
@@ -36,6 +36,6 @@ Actual agent assignment should be decided per task. This repository intentionall
 
 ## Recommended Usage
 
-Copy or reference the relevant entrypoint file from a target repository, then have the agent follow the shared rules in `rules/`. For target repositories, see `docs/lightweight-adoption.md` for the lightweight local `AGENTS.md` approach. Use the templates in `templates/` when preparing task instructions or pull request review requests. Use `rules/commit-guidelines.md` when preparing commits or instructing agents to commit changes.
+Copy or reference the relevant entrypoint file from a target repository, then have the agent follow the shared rules in `rules/`. For target repositories, see `docs/lightweight-adoption.md` for lightweight local `AGENTS.md` usage and optional `.agents/` namespacing. Use the templates in `templates/` when preparing task instructions or pull request review requests. Use `rules/commit-guidelines.md` when preparing commits or instructing agents to commit changes.
 
 This initial version focuses on rules and templates only. It does not define full agent skills, scripts, CI, package metadata, or automation.

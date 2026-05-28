@@ -22,6 +22,31 @@ Some agents and execution environments may not automatically open external links
 
 For that reason, the target repository's `AGENTS.md` should include the most important rules locally, even if it links to the shared rule repository.
 
+## Directory Naming
+
+Do not copy root-level `rules/` or `templates/` directly into a target repository unless that repository is dedicated to agent instructions.
+
+Those names may conflict with project domain rules, code templates, issue templates, documentation templates, or generated artifacts.
+
+For most target repositories, prefer the lightweight layout:
+
+```text
+target-repo/
+  AGENTS.md
+```
+
+If the target repository needs local copies of shared rules or repo-specific agent templates, place them under `.agents/`:
+
+```text
+target-repo/
+  AGENTS.md
+  .agents/
+    rules/
+    templates/
+```
+
+Use `.agents/` to make it clear that the files are for AI coding agents, not for the project runtime, build system, or domain logic.
+
 ## Recommended Local `AGENTS.md` Structure
 
 ````md
@@ -119,7 +144,8 @@ When adding `AGENTS.md` to a target repository:
 - Include only the most important shared rules.
 - Add repository-specific boundaries and validation commands.
 - Do not copy every file from `agent-rules`.
-- Do not add `rules/`, `skills/`, scripts, or automation unless the target repository explicitly needs them.
+- Use `.agents/rules/` or `.agents/templates/` only when local agent-specific rule or template files are needed.
+- Do not add root-level `rules/`, `skills/`, scripts, or automation unless the target repository explicitly needs them.
 
 ## Usage Examples
 
