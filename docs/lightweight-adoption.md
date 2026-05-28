@@ -78,6 +78,7 @@ Use the mode requested by the task.
 - Prefer simple, explicit, maintainable changes.
 - Follow repository-local formatter, linter, test, PR template, and verification conventions.
 - Validate changes with the narrowest relevant checks when practical.
+- Use resource-safe build and test commands; avoid full-core parallelism by default.
 - Before committing, run lightweight checks for changed files, such as `git diff --check`.
 - Use Conventional Commits for commit messages.
 - Do not claim validation was run if it was not.
@@ -121,6 +122,8 @@ Examples:
 git diff --check
 # repository-specific build/test/verify commands
 ```
+
+Use conservative parallelism for local build or test validation when the environment is unknown. Prefer `-j2`, or `-j1` when memory pressure, OOM, VM/WSL constraints, embedded devices, or previous instability are involved.
 
 If validation cannot be run, explain why and provide the command that should be run later.
 

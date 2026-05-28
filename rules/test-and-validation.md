@@ -23,6 +23,23 @@ Validation:
 - Documentation: updated, not needed, or not updated because ...
 ```
 
+## Resource-safe Validation
+
+Prefer resource-safe validation, especially for C++, CMake, ROS 2, embedded, WSL, virtualized, or resource-limited environments.
+
+- Run the narrowest relevant build or test target first.
+- Use conservative parallelism by default when the environment is unknown.
+- Prefer `-j2` for local validation when no repository-specific safe default is documented.
+- Use `-j1` when memory pressure, OOM, kernel instability, VM/WSL constraints, or embedded devices are involved.
+- Do not use all detected CPU cores by default.
+- If using detected CPU cores, apply a conservative upper bound such as `min(detected_cores, 2)` or `min(detected_cores, 4)`.
+- Increase parallelism only when the environment is known to be stable and has enough memory.
+- Do not run full builds, full test suites, sanitizers, benchmarks, and documentation builds together unless required.
+- Split validation into smaller steps when a command may consume excessive memory or CPU.
+- If a previous command caused OOM, kernel instability, system reset, or severe slowdown, do not repeat it unchanged.
+- Report resource-related failures separately from code failures.
+- If full validation is unsafe or impractical, report the narrower validation performed and provide the full command that should be run in a suitable environment.
+
 ## Pre-commit Checks
 
 Before committing, run lightweight checks appropriate to the files changed by the task when practical.

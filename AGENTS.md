@@ -9,6 +9,7 @@ Agents must follow the shared rules in `rules/` before making changes. In partic
 - Do not refactor unrelated files or rename public APIs unless requested.
 - Prefer simple, explicit, maintainable changes.
 - Validate changes when possible with the narrowest relevant checks.
+- Use resource-safe build and test commands; avoid full-core parallelism by default.
 - Before committing, run lightweight checks for changed files when practical, such as `git diff --check`.
 - Use `rules/commit-guidelines.md` when preparing commit messages.
 - Do not claim validation was run if it was not.
