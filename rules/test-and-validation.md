@@ -22,3 +22,37 @@ Validation:
 - Tests: added, updated, not needed, or not added because ...
 - Documentation: updated, not needed, or not updated because ...
 ```
+
+## Pre-commit Checks
+
+Before committing, run lightweight checks appropriate to the files changed by the task when practical.
+
+Prefer checking only changed files or the smallest affected area.
+
+Recommended baseline:
+
+```bash
+git diff --check
+```
+
+If the repository defines formatters, linters, or test commands, use the narrowest relevant command for the changed files or affected area.
+
+Examples:
+
+```bash
+# C++ formatting check, when clang-format is configured
+clang-format --dry-run --Werror <changed-files>
+
+# Python formatting/lint check, when Ruff is configured
+ruff format --check <changed-files>
+ruff check <changed-files>
+
+# Markdown or web documentation formatting check, when Prettier is configured
+npx prettier --check <changed-files>
+```
+
+Do not run broad repository-wide formatting unless explicitly requested.
+
+Do not include unrelated formatting changes in the same commit.
+
+If checks cannot be run, report why and provide the command that should be run later.
