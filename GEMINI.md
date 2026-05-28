@@ -8,7 +8,7 @@ In both modes:
 
 - Follow the shared rules in `rules/`.
 - Keep changes scoped.
-- Identify risks, compatibility concerns, and validation gaps.
+- Consider risks, compatibility concerns, and validation gaps appropriate to the task.
 - Do not expand the task scope unless explicitly requested.
 
 For multi-agent workflows, follow `rules/agent-collaboration.md`.
