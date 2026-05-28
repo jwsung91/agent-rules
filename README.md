@@ -18,6 +18,7 @@ Supported agents:
 - `CLAUDE.md`: Claude-specific entrypoint.
 - `GEMINI.md`: Gemini-specific entrypoint.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
+- `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
 - `templates/`: Reusable task and review instruction forms.
 
@@ -34,6 +35,6 @@ Actual agent assignment should be decided per task. This repository intentionall
 
 ## Recommended Usage
 
-Copy or reference the relevant entrypoint file from a target repository, then have the agent follow the shared rules in `rules/`. Use the templates in `templates/` when preparing task instructions or pull request review requests.
+Copy or reference the relevant entrypoint file from a target repository, then have the agent follow the shared rules in `rules/`. Use the templates in `templates/` when preparing task instructions or pull request review requests. Use `rules/commit-guidelines.md` when preparing commits or instructing agents to commit changes.
 
 This initial version focuses on rules and templates only. It does not define full agent skills, scripts, CI, package metadata, or automation.
