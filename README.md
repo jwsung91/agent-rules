@@ -18,10 +18,12 @@ Supported agents:
 - `CLAUDE.md`: Claude-specific entrypoint.
 - `GEMINI.md`: Gemini-specific entrypoint.
 - `docs/lightweight-adoption.md`: Guide for applying these rules to target repositories using a lightweight local `AGENTS.md` and optional `.agents/` namespacing.
+- `docs/scripted-adoption.md`: Usage guide for the Python adoption helper script.
+- `scripts/adopt-agent-rules.py`: Helper script for creating or checking lightweight target-repository adoption files.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
-- `templates/`: Reusable task and review instruction forms.
+- `templates/`: Reusable task, review, and target-repository adoption templates.
 
 ## Agent Usage Model
 
@@ -44,6 +46,29 @@ The recommended adoption model is **lightweight local adoption**:
 4. Explicitly tell the coding agent to follow the target repository's `AGENTS.md` when starting a task.
 
 This works better than linking to this repository only, because some agent environments may not automatically open external links or may lose remote context during a task.
+
+### Scripted adoption
+
+For repeated use across repositories, prefer the Python helper script:
+
+```bash
+python scripts/adopt-agent-rules.py /path/to/target-repo --dry-run
+python scripts/adopt-agent-rules.py /path/to/target-repo
+```
+
+Add optional tool-specific entrypoints:
+
+```bash
+python scripts/adopt-agent-rules.py /path/to/target-repo --entrypoints claude,gemini
+```
+
+Check an adopted repository:
+
+```bash
+python scripts/adopt-agent-rules.py /path/to/target-repo --check
+```
+
+See `docs/scripted-adoption.md` for safety options such as `--force`, `--backup`, custom `--boundary`, and custom `--validation`.
 
 ### 1. Add `AGENTS.md` to the target repository
 
@@ -243,7 +268,7 @@ git commit -m "docs(agent): update shared agent rules reference"
 
 For most repositories:
 
-1. Add a root-level `AGENTS.md` using the lightweight template above.
+1. Add a root-level `AGENTS.md` using the lightweight template or the adoption script.
 2. Add repository-specific validation commands and boundaries.
 3. Explicitly mention `AGENTS.md` and the desired mode when assigning agent tasks.
 4. Use the templates in `templates/` when preparing task instructions or pull request review requests.
@@ -290,4 +315,4 @@ Before considering a target repository adopted, check that:
 - Task prompts mention Primary Mode or Review Mode.
 - Final reports include validation status and any intentionally skipped checks.
 
-This repository intentionally focuses on rules and templates only. It does not define full agent skills, runtime scripts, CI, package metadata, or automation.
+This repository intentionally focuses on rules, templates, and lightweight adoption helpers. It does not define full agent skills, CI, package metadata, or runtime automation.
