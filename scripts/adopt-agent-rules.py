@@ -1,23 +1,39 @@
 #!/usr/bin/env python3
 """Adopt agent-rules in a target repository.
 
-This script creates a lightweight repository-local AGENTS.md and optional
-tool-specific entrypoints that point back to the shared agent-rules repository.
-It intentionally avoids copying the full rules directory by default.
+The helper creates lightweight repository-local entrypoints by default. It can
+also check/update existing adoption metadata and create a pinned local copy
+under .agents/agent-rules/ when offline use is needed.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 
 DEFAULT_SHARED_URL = "https://github.com/jwsung91/agent-rules"
+SOURCE_REF = "main"
+VALID_PROFILES = {"codex", "claude", "gemini", "multi"}
+PROFILE_FILES = {
+    "codex": ("AGENTS.md",),
+    "claude": ("AGENTS.md", "CLAUDE.md"),
+    "gemini": ("AGENTS.md", "GEMINI.md"),
+    "multi": ("AGENTS.md", "CLAUDE.md", "GEMINI.md"),
+}
+TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
+METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)
+MANAGED_START = "<!-- agent-rules-managed:start -->"
+MANAGED_END = "<!-- agent-rules-managed:end -->"
+BOUNDARY_PLACEHOLDER = "Add project-specific rules here."
+VALIDATION_PLACEHOLDER = "# Add project-specific build/test/lint commands here."
 
 
 @dataclass(frozen=True)
@@ -25,13 +41,59 @@ class RenderContext:
     shared_rules_url: str
     boundaries: str
     validation_commands: str
+    profile: str
+    source_commit: str
+    generated_at: str
+
+
+@dataclass
+class SourceStatus:
+    local_head: str | None
+    remote_head: str | None
+    local_status: str
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class IgnoreStatus:
+    path: str
+    tracked: bool
+    ignored: bool
+    matched_rule: str | None = None
+    warning: str | None = None
+
+
+@dataclass
+class DetectionResult:
+    repo_types: list[str]
+    validation_commands: list[str]
+
+
+@dataclass
+class FilePlan:
+    path: str
+    action: str
+    content: str | None = None
+    source: Path | None = None
+
+
+@dataclass
+class AdoptionPlan:
+    target_repo: Path
+    git_root: Path | None
+    profile: str | None
+    metadata: dict[str, str]
+    source_status: SourceStatus
+    local_copy_commit: str | None
+    files: list[FilePlan]
+    ignore_statuses: list[IgnoreStatus]
+    detected: DetectionResult
+    warnings: list[str] = field(default_factory=list)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Create or check lightweight agent-rules adoption files in a target repository."
-        )
+        description="Create, plan, update, or check agent-rules adoption files."
     )
     parser.add_argument(
         "target_repo",
@@ -40,11 +102,16 @@ def parse_args() -> argparse.Namespace:
         help="Path to the target repository root. Defaults to the current directory.",
     )
     parser.add_argument(
+        "--profile",
+        choices=sorted(VALID_PROFILES),
+        help="Agent profile to manage: codex, claude, gemini, or multi.",
+    )
+    parser.add_argument(
         "--entrypoints",
         default="",
         help=(
-            "Comma-separated optional entrypoints to create. "
-            "Supported values: claude, gemini, all. Default: none."
+            "Backward-compatible optional entrypoints: claude, gemini, all. "
+            "Prefer --profile for new usage."
         ),
     )
     parser.add_argument(
@@ -64,27 +131,80 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Validation command to add to AGENTS.md. May be repeated.",
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print planned changes without writing files.",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite existing target files.",
-    )
+    parser.add_argument("--plan", action="store_true", help="Show adoption plan.")
+    parser.add_argument("--dry-run", action="store_true", help="Print planned changes.")
+    parser.add_argument("--force", action="store_true", help="Overwrite existing files.")
     parser.add_argument(
         "--backup",
         action="store_true",
         help="Create timestamped .bak files before overwriting existing files.",
     )
+    parser.add_argument("--check", action="store_true", help="Check adoption health.")
     parser.add_argument(
-        "--check",
+        "--strict-check",
         action="store_true",
-        help="Check whether a target repository appears to have adopted agent-rules.",
+        help="Make adoption warnings fail --check.",
+    )
+    parser.add_argument(
+        "--check-latest",
+        action="store_true",
+        help="Check local, remote, and target adoption source versions.",
+    )
+    parser.add_argument(
+        "--allow-stale-source",
+        action="store_true",
+        help="Allow update using a local source that differs from remote main.",
+    )
+    parser.add_argument(
+        "--allow-ignored",
+        action="store_true",
+        help="Allow generated files that are ignored by the target repository.",
+    )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Update metadata and managed blocks in an existing adoption.",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="Merge adoption sections into an existing AGENTS.md without metadata.",
+    )
+    parser.add_argument(
+        "--local-copy",
+        action="store_true",
+        help="Copy shared rules under .agents/agent-rules/ for pinned/offline use.",
+    )
+    parser.add_argument(
+        "--submodule",
+        action="store_true",
+        help="Show submodule recommendation. Does not run git submodule add.",
+    )
+    parser.add_argument(
+        "--apply-submodule",
+        action="store_true",
+        help="Reserved for explicit submodule application; currently unsupported.",
+    )
+    parser.add_argument(
+        "--detect",
+        action="store_true",
+        help="Detect repository type and suggest validation commands.",
     )
     return parser.parse_args()
+
+
+def run_command(command: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return 127, "", str(exc)
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
 def resolve_target_repo(path_text: str) -> Path:
@@ -97,22 +217,16 @@ def resolve_target_repo(path_text: str) -> Path:
 
 
 def find_repo_root(path: Path) -> Path | None:
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return None
+    code, stdout, _ = run_command(["git", "-C", str(path), "rev-parse", "--show-toplevel"])
+    return Path(stdout).resolve() if code == 0 and stdout else None
 
-    root = result.stdout.strip()
-    return Path(root).resolve() if root else None
+
+def source_repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
 
 
 def template_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "templates"
+    return source_repo_root() / "templates"
 
 
 def read_template(name: str) -> str:
@@ -122,42 +236,15 @@ def read_template(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def format_boundaries(items: list[str]) -> str:
-    if items:
-        return "\n".join(f"- {item}" for item in items)
-
-    return (
-        "Add project-specific rules here.\n\n"
-        "Examples:\n\n"
-        "- public API compatibility expectations\n"
-        "- benchmark or performance data boundaries\n"
-        "- packaging impact expectations\n"
-        "- supported language or build conventions\n"
-        "- documentation update expectations"
-    )
-
-
-def format_validation_commands(commands: list[str]) -> str:
-    if not commands:
-        commands = [
-            "git diff --check",
-            "# Add project-specific build/test/lint commands here.",
-        ]
-
-    return "```bash\n" + "\n".join(commands) + "\n```"
-
-
-def render(content: str, context: RenderContext) -> str:
-    replacements = {
-        "{{SHARED_RULES_URL}}": context.shared_rules_url,
-        "{{REPOSITORY_SPECIFIC_BOUNDARIES}}": context.boundaries,
-        "{{VALIDATION_COMMANDS}}": context.validation_commands,
-    }
-
-    rendered = content
-    for key, value in replacements.items():
-        rendered = rendered.replace(key, value)
-    return rendered
+def parse_profile(value: str | None) -> str | None:
+    if value is None:
+        return None
+    profile = value.strip().lower()
+    if profile not in VALID_PROFILES:
+        raise SystemExit(
+            f"Unsupported profile: {value}. Supported values: codex, claude, gemini, multi."
+        )
+    return profile
 
 
 def parse_entrypoints(value: str) -> set[str]:
@@ -176,8 +263,811 @@ def parse_entrypoints(value: str) -> set[str]:
             + ", ".join(unknown)
             + ". Supported values: claude, gemini, all."
         )
-
     return set(raw_items)
+
+
+def profile_from_entrypoints(entrypoints: set[str]) -> str | None:
+    if not entrypoints:
+        return None
+    if entrypoints == {"claude"}:
+        return "claude"
+    if entrypoints == {"gemini"}:
+        return "gemini"
+    if entrypoints == {"claude", "gemini"}:
+        return "multi"
+    raise SystemExit("Could not infer profile from --entrypoints.")
+
+
+def required_files_for_profile(profile: str) -> list[str]:
+    if profile not in PROFILE_FILES:
+        raise SystemExit(
+            f"Unsupported profile: {profile}. Supported values: codex, claude, gemini, multi."
+        )
+    return list(PROFILE_FILES[profile])
+
+
+def format_boundaries(items: list[str]) -> str:
+    if items:
+        return "\n".join(f"- {item}" for item in items)
+    return (
+        "Add project-specific rules here.\n\n"
+        "Examples:\n\n"
+        "- public API compatibility expectations\n"
+        "- benchmark or performance data boundaries\n"
+        "- packaging impact expectations\n"
+        "- supported language or build conventions\n"
+        "- documentation update expectations"
+    )
+
+
+def format_validation_commands(commands: list[str]) -> str:
+    unique = dedupe(commands)
+    if not unique:
+        unique = [
+            "git diff --check",
+            VALIDATION_PLACEHOLDER,
+        ]
+    return "```bash\n" + "\n".join(unique) + "\n```"
+
+
+def dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def render_metadata(
+    *,
+    shared_url: str,
+    profile: str,
+    source_commit: str,
+    generated_at: str | None = None,
+) -> str:
+    timestamp = generated_at or datetime.now().astimezone().isoformat(timespec="seconds")
+    return "\n".join(
+        [
+            "<!-- agent-rules:",
+            f"source={shared_url}",
+            f"profile={profile}",
+            f"source_ref={SOURCE_REF}",
+            f"source_commit={source_commit}",
+            f"generated_at={timestamp}",
+            "managed_block=true",
+            "-->",
+        ]
+    )
+
+
+def parse_metadata(content: str) -> dict[str, str]:
+    match = METADATA_RE.search(content)
+    if not match:
+        return {}
+
+    metadata: dict[str, str] = {}
+    for line in match.group(1).splitlines():
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        metadata[key.strip()] = value.strip()
+    return metadata
+
+
+def render_template(content: str, context: RenderContext) -> str:
+    replacements = {
+        "{{SHARED_RULES_URL}}": context.shared_rules_url,
+        "{{REPOSITORY_SPECIFIC_BOUNDARIES}}": context.boundaries,
+        "{{VALIDATION_COMMANDS}}": context.validation_commands,
+        "{{AGENT_RULES_METADATA}}": render_metadata(
+            shared_url=context.shared_rules_url,
+            profile=context.profile,
+            source_commit=context.source_commit,
+            generated_at=context.generated_at,
+        ),
+    }
+    rendered = content
+    for key, value in replacements.items():
+        rendered = rendered.replace(key, value)
+    return rendered
+
+
+def local_source_head(root: Path | None = None) -> tuple[str | None, str | None]:
+    root = root or source_repo_root()
+    code, stdout, stderr = run_command(["git", "-C", str(root), "rev-parse", "HEAD"])
+    if code != 0 or not stdout:
+        return None, stderr or "git rev-parse failed"
+    return stdout, None
+
+
+def remote_main_head(shared_url: str) -> tuple[str | None, str | None]:
+    code, stdout, stderr = run_command(
+        ["git", "ls-remote", shared_url, f"refs/heads/{SOURCE_REF}"]
+    )
+    if code != 0 or not stdout:
+        return None, stderr or "git ls-remote failed"
+    return stdout.split()[0], None
+
+
+def resolve_latest_status(local_head: str | None, remote_head: str | None) -> str:
+    if not local_head or not remote_head:
+        return "unknown"
+    if local_head == remote_head:
+        return "current"
+    return "behind"
+
+
+def get_source_status(shared_url: str) -> SourceStatus:
+    warnings: list[str] = []
+    local_head, local_warning = local_source_head()
+    if local_warning:
+        warnings.append(f"WARN: local source HEAD unavailable: {local_warning}")
+    remote_head, remote_warning = remote_main_head(shared_url)
+    if remote_warning:
+        warnings.append(f"WARN: remote main HEAD unavailable: {remote_warning}")
+    return SourceStatus(
+        local_head=local_head,
+        remote_head=remote_head,
+        local_status=resolve_latest_status(local_head, remote_head),
+        warnings=warnings,
+    )
+
+
+def relative_to_repo(path: Path, repo: Path) -> str:
+    return path.relative_to(repo).as_posix()
+
+
+def is_tracked(repo: Path, relative_path: str) -> bool:
+    code, _, _ = run_command(
+        ["git", "-C", str(repo), "ls-files", "--error-unmatch", "--", relative_path]
+    )
+    return code == 0
+
+
+def check_ignore_status(repo: Path, relative_path: str) -> IgnoreStatus:
+    tracked = is_tracked(repo, relative_path)
+    code, stdout, stderr = run_command(
+        ["git", "-C", str(repo), "check-ignore", "-v", "--", relative_path]
+    )
+    if code == 0 and stdout:
+        return IgnoreStatus(
+            path=relative_path,
+            tracked=tracked,
+            ignored=True,
+            matched_rule=stdout,
+        )
+    if code not in (0, 1):
+        return IgnoreStatus(
+            path=relative_path,
+            tracked=tracked,
+            ignored=False,
+            warning=stderr or "git check-ignore failed",
+        )
+    return IgnoreStatus(path=relative_path, tracked=tracked, ignored=False)
+
+
+def planned_paths_for_gitignore(files: list[FilePlan]) -> list[str]:
+    return [item.path for item in files if not item.path.endswith(".bak")]
+
+
+def check_generated_files_ignored(repo: Path, files: list[FilePlan]) -> list[IgnoreStatus]:
+    if find_repo_root(repo) is None:
+        return [
+            IgnoreStatus(
+                path=path,
+                tracked=False,
+                ignored=False,
+                warning="target path is not inside a Git repository",
+            )
+            for path in planned_paths_for_gitignore(files)
+        ]
+    return [check_ignore_status(repo, path) for path in planned_paths_for_gitignore(files)]
+
+
+def fail_on_ignored(statuses: list[IgnoreStatus], allow_ignored: bool) -> int:
+    failing = [status for status in statuses if status.ignored and not status.tracked]
+    if not failing or allow_ignored:
+        return 0
+
+    print("FAIL: Generated file is ignored by target repository ignore rules.\n")
+    for status in failing:
+        print("File:")
+        print(f"- {status.path}")
+        if status.matched_rule:
+            print("\nMatched ignore rule:")
+            print(f"- {status.matched_rule}")
+        print("\nThis file would not be committed by default.\n")
+    print("Recommended fixes:")
+    print("1. Remove or narrow the ignore rule.")
+    print("2. Add exceptions:")
+    print("   !.agents/")
+    print("   !.agents/agent-rules/")
+    print("   !.agents/agent-rules/**")
+    print("3. Re-run with --dry-run.")
+    print("\nUse --allow-ignored only if this is intentional.")
+    return 1
+
+
+def detect_repository_type(target_repo: Path) -> DetectionResult:
+    repo_types: list[str] = []
+    commands: list[str] = ["git diff --check"]
+
+    if (target_repo / "CMakeLists.txt").exists():
+        repo_types.append("cmake")
+        commands.append("cmake --build build -j2")
+    if (target_repo / "pyproject.toml").exists() or (target_repo / "setup.py").exists():
+        repo_types.append("python")
+        commands.append("python -m pytest")
+    elif (target_repo / "requirements.txt").exists():
+        repo_types.append("python")
+        commands.append("python -m pytest")
+    package_json = target_repo / "package.json"
+    if package_json.exists():
+        repo_types.append("node")
+        commands.append("npm test")
+        try:
+            package_data = json.loads(package_json.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            package_data = {}
+        scripts = package_data.get("scripts", {}) if isinstance(package_data, dict) else {}
+        if isinstance(scripts, dict) and "lint" in scripts:
+            commands.append("npm run lint")
+    if (target_repo / "Cargo.toml").exists():
+        repo_types.append("rust")
+        commands.append("cargo test")
+    if (target_repo / "go.mod").exists():
+        repo_types.append("go")
+        commands.append("go test ./...")
+    if (
+        (target_repo / "package.xml").exists()
+        or (target_repo / "colcon.meta").exists()
+    ):
+        repo_types.append("ros2")
+        commands.extend(["colcon build --parallel-workers 2", "colcon test"])
+    if (target_repo / ".github" / "workflows").exists():
+        repo_types.append("github-actions")
+
+    return DetectionResult(repo_types=dedupe(repo_types), validation_commands=dedupe(commands))
+
+
+def build_render_context(
+    args: argparse.Namespace,
+    profile: str,
+    source_status: SourceStatus,
+    detected: DetectionResult,
+) -> RenderContext:
+    validation = list(args.validation)
+    if args.detect:
+        validation = dedupe(validation + detected.validation_commands)
+    return RenderContext(
+        shared_rules_url=args.shared_url,
+        boundaries=format_boundaries(list(args.boundary)),
+        validation_commands=format_validation_commands(validation),
+        profile=profile,
+        source_commit=source_status.local_head or "unknown",
+        generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+    )
+
+
+def render_file_for_profile(relative_path: str, context: RenderContext) -> str:
+    if relative_path == "AGENTS.md":
+        return render_template(read_template("target-AGENTS.md"), context)
+    if relative_path == "CLAUDE.md":
+        return render_template(read_template("target-CLAUDE.md"), context)
+    if relative_path == "GEMINI.md":
+        return render_template(read_template("target-GEMINI.md"), context)
+    raise SystemExit(f"Unsupported generated file: {relative_path}")
+
+
+def extract_managed_block(content: str) -> str | None:
+    start = content.find(MANAGED_START)
+    end = content.find(MANAGED_END)
+    if start == -1 or end == -1 or end < start:
+        return None
+    return content[start : end + len(MANAGED_END)]
+
+
+def replace_metadata_block(content: str, metadata: str) -> str:
+    if METADATA_RE.search(content):
+        return METADATA_RE.sub(metadata, content, count=1)
+    if content.startswith("# AGENTS.md"):
+        return content.replace("# AGENTS.md\n", f"# AGENTS.md\n\n{metadata}\n", 1)
+    return f"{metadata}\n\n{content}"
+
+
+def replace_managed_block(existing: str, rendered: str) -> str:
+    new_block = extract_managed_block(rendered)
+    if not new_block:
+        return existing
+
+    if extract_managed_block(existing):
+        start = existing.find(MANAGED_START)
+        end = existing.find(MANAGED_END) + len(MANAGED_END)
+        return existing[:start] + new_block + existing[end:]
+
+    insertion = f"\n\n{new_block}\n"
+    if "## Repository-specific Boundaries" in existing:
+        return existing.replace("## Repository-specific Boundaries", insertion + "\n## Repository-specific Boundaries", 1)
+    return existing.rstrip() + insertion + "\n"
+
+
+def update_agents_content(existing: str, rendered: str, metadata: str) -> str:
+    updated = replace_metadata_block(existing, metadata)
+    updated = replace_managed_block(updated, rendered)
+    if not updated.endswith("\n"):
+        updated += "\n"
+    return updated
+
+
+def section_present(content: str, heading: str) -> bool:
+    return re.search(rf"^##\s+{re.escape(heading)}\s*$", content, re.MULTILINE) is not None
+
+
+def merge_agents_content(existing: str, rendered: str, metadata: str, shared_url: str) -> str:
+    content = replace_metadata_block(existing, metadata)
+    additions: list[str] = []
+
+    if shared_url not in content:
+        additions.append(
+            "This repository follows the shared agent rules from:\n\n"
+            f"- {shared_url}\n"
+        )
+
+    rendered_block = extract_managed_block(rendered)
+    if rendered_block and (
+        not section_present(content, "Agent Usage Model")
+        or not section_present(content, "Core Rules")
+    ):
+        additions.append(rendered_block)
+
+    for heading in ("Repository-specific Boundaries", "Validation", "Final Report"):
+        if section_present(content, heading):
+            continue
+        pattern = re.compile(
+            rf"(^##\s+{re.escape(heading)}\s*$.*?)(?=^##\s+|\Z)",
+            re.MULTILINE | re.DOTALL,
+        )
+        match = pattern.search(rendered)
+        if match:
+            additions.append(match.group(1).strip())
+        else:
+            additions.append(
+                f"## {heading}\n\n"
+                f"<!-- TODO(agent-rules): add repository-specific {heading.lower()} guidance. -->"
+            )
+
+    if additions:
+        content = content.rstrip() + "\n\n" + "\n\n".join(additions).strip() + "\n"
+    if not content.endswith("\n"):
+        content += "\n"
+    return content
+
+
+def file_action(target_repo: Path, relative_path: str, *, update: bool, force: bool) -> str:
+    path = target_repo / relative_path
+    if path.exists():
+        if update:
+            return "update"
+        if force:
+            return "overwrite"
+        return "exists"
+    return "create"
+
+
+def build_entrypoint_plans(
+    target_repo: Path,
+    profile: str,
+    context: RenderContext,
+    *,
+    update: bool,
+    merge: bool,
+    force: bool,
+) -> list[FilePlan]:
+    plans: list[FilePlan] = []
+    for relative_path in required_files_for_profile(profile):
+        rendered = render_file_for_profile(relative_path, context)
+        path = target_repo / relative_path
+        action = file_action(target_repo, relative_path, update=update, force=force)
+
+        if action == "exists" and not merge:
+            plans.append(FilePlan(path=relative_path, action="exists"))
+            continue
+
+        if relative_path == "AGENTS.md" and path.exists():
+            existing = path.read_text(encoding="utf-8", errors="replace")
+            metadata = render_metadata(
+                shared_url=context.shared_rules_url,
+                profile=context.profile,
+                source_commit=context.source_commit,
+                generated_at=context.generated_at,
+            )
+            if update and parse_metadata(existing):
+                content = update_agents_content(existing, rendered, metadata)
+                action = "no-op" if content == existing else "update"
+            elif update:
+                content = None
+                action = "metadata-missing"
+            elif merge:
+                content = merge_agents_content(
+                    existing, rendered, metadata, context.shared_rules_url
+                )
+                action = "no-op" if content == existing else "merge"
+            elif force:
+                content = rendered
+            else:
+                content = None
+            plans.append(FilePlan(path=relative_path, action=action, content=content))
+            continue
+
+        if relative_path in TOOL_ENTRYPOINTS and path.exists() and update:
+            existing = path.read_text(encoding="utf-8", errors="replace")
+            content = rendered
+            action = "no-op" if content == existing else "update"
+            plans.append(FilePlan(path=relative_path, action=action, content=content))
+            continue
+
+        plans.append(FilePlan(path=relative_path, action=action, content=rendered))
+    return plans
+
+
+def local_copy_file_specs(profile: str) -> list[tuple[Path, str]]:
+    root = source_repo_root()
+    specs: list[tuple[Path, str]] = []
+    specs.append((Path("SOURCE_COMMIT"), ".agents/agent-rules/SOURCE_COMMIT"))
+    for name in required_files_for_profile(profile):
+        source_name = name
+        specs.append((root / source_name, f".agents/agent-rules/{name}"))
+    for directory in ("rules", "templates"):
+        for source in sorted((root / directory).rglob("*")):
+            if source.is_file():
+                specs.append((source, f".agents/agent-rules/{source.relative_to(root).as_posix()}"))
+    for name in ("lightweight-adoption.md", "scripted-adoption.md"):
+        source = root / "docs" / name
+        specs.append((source, f".agents/agent-rules/docs/{name}"))
+    return specs
+
+
+def build_local_copy_plans(
+    target_repo: Path,
+    profile: str,
+    source_commit: str,
+    *,
+    update: bool,
+    force: bool,
+) -> list[FilePlan]:
+    plans: list[FilePlan] = []
+    for source, relative_path in local_copy_file_specs(profile):
+        target = target_repo / relative_path
+        action = file_action(target_repo, relative_path, update=update, force=force)
+        if source == Path("SOURCE_COMMIT"):
+            content = source_commit + "\n"
+            if target.exists() and target.read_text(encoding="utf-8", errors="replace") == content:
+                action = "no-op"
+            plans.append(FilePlan(path=relative_path, action=action, content=content))
+        else:
+            if target.exists() and action == "exists":
+                plans.append(FilePlan(path=relative_path, action="skip-existing", source=source))
+            else:
+                plans.append(FilePlan(path=relative_path, action=action, source=source))
+    return plans
+
+
+def read_local_copy_commit(target_repo: Path) -> str | None:
+    path = target_repo / ".agents" / "agent-rules" / "SOURCE_COMMIT"
+    if not path.exists():
+        return None
+    value = path.read_text(encoding="utf-8", errors="replace").strip()
+    return value or None
+
+
+def build_plan(
+    target_repo: Path,
+    args: argparse.Namespace,
+    profile: str | None,
+) -> AdoptionPlan:
+    git_root = find_repo_root(target_repo)
+    detected = detect_repository_type(target_repo)
+    source_status = get_source_status(args.shared_url)
+    metadata = parse_metadata(
+        (target_repo / "AGENTS.md").read_text(encoding="utf-8", errors="replace")
+        if (target_repo / "AGENTS.md").exists()
+        else ""
+    )
+    files: list[FilePlan] = []
+    warnings = list(source_status.warnings)
+
+    if profile:
+        context = build_render_context(args, profile, source_status, detected)
+        files.extend(
+            build_entrypoint_plans(
+                target_repo,
+                profile,
+                context,
+                update=args.update,
+                merge=args.merge,
+                force=args.force,
+            )
+        )
+        if args.local_copy:
+            files.extend(
+                build_local_copy_plans(
+                    target_repo,
+                    profile,
+                    source_status.local_head or "unknown",
+                    update=args.update,
+                    force=args.force,
+                )
+            )
+
+    ignore_statuses = check_generated_files_ignored(target_repo, files) if files else []
+    return AdoptionPlan(
+        target_repo=target_repo,
+        git_root=git_root,
+        profile=profile,
+        metadata=metadata,
+        source_status=source_status,
+        local_copy_commit=read_local_copy_commit(target_repo),
+        files=files,
+        ignore_statuses=ignore_statuses,
+        detected=detected,
+        warnings=warnings,
+    )
+
+
+def print_profile_help() -> None:
+    print("No agent profile selected.\n")
+    print("Choose one:")
+    print("- --profile codex   : create AGENTS.md only")
+    print("- --profile claude  : create AGENTS.md + CLAUDE.md")
+    print("- --profile gemini  : create AGENTS.md + GEMINI.md")
+    print("- --profile multi   : create AGENTS.md + CLAUDE.md + GEMINI.md")
+
+
+def latest_status_for_target(metadata: dict[str, str], source_status: SourceStatus) -> str:
+    applied = metadata.get("source_commit")
+    latest = source_status.remote_head or source_status.local_head
+    if not applied or not latest:
+        return "unknown"
+    return "current" if applied == latest else "behind"
+
+
+def print_latest(plan: AdoptionPlan, args: argparse.Namespace) -> None:
+    source = plan.source_status
+    print("Source status:")
+    print(f"- local source HEAD: {source.local_head or 'unknown'}")
+    print(f"- remote main HEAD: {source.remote_head or 'unknown'}")
+    print(f"- local source status: {source.local_status}")
+    for warning in source.warnings:
+        print(f"- {warning}")
+    print("\nTarget status:")
+    print(f"- applied source_commit: {plan.metadata.get('source_commit', 'missing')}")
+    print(f"- applied profile: {plan.metadata.get('profile', 'missing')}")
+    print(f"- latest status: {latest_status_for_target(plan.metadata, source)}")
+    print(f"- local-copy SOURCE_COMMIT: {plan.local_copy_commit or 'missing'}")
+    if plan.local_copy_commit and source.remote_head and plan.local_copy_commit != source.remote_head:
+        print("- WARN: local copy is behind remote main")
+    print("\nRecommended:")
+    if source.local_status == "behind":
+        print("- Update local agent-rules first.")
+        print("- Then run:")
+    elif plan.metadata.get("profile"):
+        print("- Run:")
+    else:
+        print("- Choose a profile and run:")
+    profile = args.profile or plan.metadata.get("profile") or "claude"
+    print(
+        f"  python scripts/adopt-agent-rules.py {plan.target_repo} "
+        f"--profile {profile} --update --dry-run"
+    )
+
+
+def print_plan(plan: AdoptionPlan, args: argparse.Namespace) -> None:
+    print("Target repository:")
+    print(f"- path: {plan.target_repo}")
+    print(f"- git root: {'OK' if plan.git_root == plan.target_repo else plan.git_root or 'missing'}")
+
+    print("\nExisting adoption:")
+    for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+        print(f"- {name}: {'present' if (plan.target_repo / name).exists() else 'missing'}")
+    print(f"- metadata: {'present' if plan.metadata else 'missing'}")
+    if plan.metadata:
+        print(f"- applied profile: {plan.metadata.get('profile', 'missing')}")
+        print(f"- applied source_commit: {plan.metadata.get('source_commit', 'missing')}")
+    print(f"- local-copy SOURCE_COMMIT: {plan.local_copy_commit or 'missing'}")
+
+    print("\nSource:")
+    print(f"- local agent-rules HEAD: {plan.source_status.local_head or 'unknown'}")
+    print(f"- remote main HEAD: {plan.source_status.remote_head or 'unknown'}")
+    print(f"- status: {plan.source_status.local_status}")
+    for warning in plan.source_status.warnings:
+        print(f"- {warning}")
+
+    print("\nProfile:")
+    print(f"- {plan.profile or 'not selected'}")
+
+    print("\nPlanned files:")
+    if plan.files:
+        for item in plan.files:
+            print(f"- {item.action}: {item.path}")
+    else:
+        print("- none")
+
+    print("\nGitignore:")
+    if plan.ignore_statuses:
+        for status in plan.ignore_statuses:
+            if status.ignored and not status.tracked:
+                print(f"- FAIL: {status.path} is ignored")
+            elif status.ignored and status.tracked:
+                print(f"- OK: {status.path} is tracked despite ignore match")
+            else:
+                print(f"- OK: {status.path} is not ignored")
+            if status.warning:
+                print(f"  WARN: {status.warning}")
+    else:
+        print("- no generated files to check")
+
+    if args.detect or plan.detected.repo_types:
+        print("\nDetected repository type:")
+        print(f"- {', '.join(plan.detected.repo_types) if plan.detected.repo_types else 'none'}")
+        print("\nSuggested validation commands:")
+        for command in plan.detected.validation_commands:
+            print(f"- {command}")
+
+    print("\nRecommended commands:")
+    if plan.profile:
+        print(
+            f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
+            f"--profile {plan.profile} --dry-run"
+        )
+    else:
+        for profile in ("codex", "claude", "gemini", "multi"):
+            print(
+                f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
+                f"--profile {profile} --dry-run"
+            )
+    if args.submodule:
+        print("\nRecommended submodule command:")
+        print(f"git submodule add {args.shared_url} .agents/agent-rules")
+
+
+def check_file_contains(path: Path, required: list[str]) -> tuple[bool, list[str]]:
+    if not path.exists():
+        return False, ["file is missing"]
+    content = path.read_text(encoding="utf-8", errors="replace")
+    missing = [text for text in required if text not in content]
+    return not missing, missing
+
+
+def extract_validation_commands(content: str) -> list[str]:
+    match = re.search(r"## Validation\s+.*?```bash\n(.*?)```", content, re.DOTALL)
+    if not match:
+        return []
+    return [
+        line.strip()
+        for line in match.group(1).splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def append_check(results: list[tuple[str, str]], status: str, message: str) -> None:
+    results.append((status, message))
+
+
+def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> int:
+    results: list[tuple[str, str]] = []
+    agents_path = target_repo / "AGENTS.md"
+    content = (
+        agents_path.read_text(encoding="utf-8", errors="replace")
+        if agents_path.exists()
+        else ""
+    )
+    metadata = parse_metadata(content)
+
+    append_check(
+        results,
+        "OK" if agents_path.exists() else "FAIL",
+        "AGENTS.md exists" if agents_path.exists() else "AGENTS.md is missing",
+    )
+    append_check(
+        results,
+        "OK" if metadata else "FAIL",
+        "agent-rules metadata block exists"
+        if metadata
+        else "agent-rules metadata block is missing",
+    )
+    append_check(
+        results,
+        "OK" if shared_url in content or metadata.get("source") else "FAIL",
+        "shared source URL found"
+        if shared_url in content or metadata.get("source")
+        else "shared source URL is missing",
+    )
+    append_check(
+        results,
+        "OK" if metadata.get("source_commit") else "FAIL",
+        "source_commit found" if metadata.get("source_commit") else "source_commit is missing",
+    )
+
+    profile = metadata.get("profile")
+    append_check(
+        results,
+        "OK" if profile in VALID_PROFILES else "FAIL",
+        f"profile: {profile}" if profile in VALID_PROFILES else "profile is missing or invalid",
+    )
+
+    required = required_files_for_profile(profile) if profile in VALID_PROFILES else ["AGENTS.md"]
+    for relative_path in required:
+        path = target_repo / relative_path
+        append_check(
+            results,
+            "OK" if path.exists() else "FAIL",
+            f"{relative_path} exists"
+            if path.exists()
+            else f"{relative_path} is required by profile but missing",
+        )
+
+    for name in ("CLAUDE.md", "GEMINI.md"):
+        path = target_repo / name
+        if path.exists():
+            ok, _ = check_file_contains(
+                path, ["Follow `AGENTS.md` as the primary repository instruction file."]
+            )
+            append_check(
+                results,
+                "OK" if ok else "FAIL",
+                f"{name} references AGENTS.md as primary instruction"
+                if ok
+                else f"{name} does not reference AGENTS.md as primary instruction",
+            )
+
+    if BOUNDARY_PLACEHOLDER in content:
+        append_check(
+            results,
+            "WARN",
+            "Repository-specific Boundaries still contains placeholder text",
+        )
+    validation_commands = extract_validation_commands(content)
+    if not validation_commands or validation_commands == ["git diff --check"]:
+        append_check(results, "WARN", "Validation only contains git diff --check")
+    if VALIDATION_PLACEHOLDER in content:
+        append_check(results, "WARN", "Validation still contains placeholder text")
+
+    plans = [FilePlan(path=name, action="check") for name in required]
+    local_copy_root = target_repo / ".agents" / "agent-rules"
+    if local_copy_root.exists():
+        plans.append(FilePlan(path=".agents/agent-rules/SOURCE_COMMIT", action="check"))
+        if not (local_copy_root / "SOURCE_COMMIT").exists():
+            append_check(results, "FAIL", ".agents/agent-rules/SOURCE_COMMIT is missing")
+    for status in check_generated_files_ignored(target_repo, plans):
+        if status.ignored and not status.tracked:
+            append_check(results, "FAIL", f"{status.path} is ignored by .gitignore")
+        elif status.warning:
+            append_check(results, "WARN", status.warning)
+
+    if (target_repo / "rules" / "commit-guidelines.md").exists():
+        append_check(
+            results,
+            "WARN",
+            "root-level rules/ looks like an agent-rules copy; use .agents/agent-rules/",
+        )
+    if (target_repo / "templates" / "task-instruction-template.md").exists():
+        append_check(
+            results,
+            "WARN",
+            "root-level templates/ looks like an agent-rules copy; use .agents/agent-rules/",
+        )
+
+    for status, message in results:
+        print(f"[{status}] {message}")
+
+    has_fail = any(status == "FAIL" for status, _ in results)
+    has_warn = any(status == "WARN" for status, _ in results)
+    if has_fail or (strict and has_warn):
+        return 1
+    return 0
 
 
 def backup_existing_file(path: Path) -> Path:
@@ -187,133 +1077,188 @@ def backup_existing_file(path: Path) -> Path:
     return backup_path
 
 
-def write_file(path: Path, content: str, *, force: bool, backup: bool, dry_run: bool) -> None:
-    existed = path.exists()
-    if existed and not force:
+def write_plan_file(
+    target_repo: Path,
+    plan: FilePlan,
+    *,
+    backup: bool,
+    dry_run: bool,
+) -> tuple[str, str]:
+    path = target_repo / plan.path
+    if plan.action in {"skip-existing", "no-op"}:
+        return "Skipped", plan.path
+    if plan.action == "metadata-missing":
+        raise SystemExit(
+            f"Refusing to update file without agent-rules metadata: {path}\n"
+            "Use --merge to preserve existing content and add metadata, or --force "
+            "to overwrite intentionally."
+        )
+    if plan.action == "exists":
         raise SystemExit(
             f"Refusing to overwrite existing file: {path}\n"
-            "Use --force to overwrite, and optionally --backup to save a copy first."
+            "Use --force to overwrite, --merge to preserve existing AGENTS.md content, "
+            "or --update for files with agent-rules metadata."
         )
 
+    existed = path.exists()
     if dry_run:
-        action = "Would update" if existed else "Would create"
-        print(f"{action}: {path}")
-        print("-" * 72)
-        print(content.rstrip())
-        print("-" * 72)
-        return
+        print(f"Would {plan.action}: {path}")
+        if plan.content is not None:
+            print("-" * 72)
+            print(plan.content.rstrip())
+            print("-" * 72)
+        elif plan.source is not None:
+            print(f"Source: {plan.source}")
+        return ("Updated" if existed else "Created", plan.path)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-
     if existed and backup:
         backup_path = backup_existing_file(path)
         print(f"Backed up existing file: {backup_path}")
 
-    path.write_text(content, encoding="utf-8")
-    print(f"{'Updated' if existed else 'Created'}: {path}")
+    if plan.content is not None:
+        path.write_text(plan.content, encoding="utf-8")
+    elif plan.source is not None:
+        shutil.copy2(plan.source, path)
+    else:
+        raise SystemExit(f"No content or source for planned file: {plan.path}")
+    return ("Updated" if existed else "Created", plan.path)
 
 
-def check_file_contains(path: Path, required: list[str]) -> tuple[bool, list[str]]:
-    if not path.exists():
-        return False, ["file is missing"]
+def print_summary(
+    created: list[str],
+    updated: list[str],
+    skipped: list[str],
+    plan: AdoptionPlan,
+    args: argparse.Namespace,
+) -> None:
+    print("\nCreated:")
+    print("\n".join(f"- {item}" for item in created) if created else "- none")
+    print("\nUpdated:")
+    print("\n".join(f"- {item}" for item in updated) if updated else "- none")
+    print("\nSkipped:")
+    print("\n".join(f"- {item}" for item in skipped) if skipped else "- none")
 
-    content = path.read_text(encoding="utf-8", errors="replace")
-    missing = [text for text in required if text not in content]
-    return not missing, missing
+    print("\nWarnings:")
+    warnings = list(plan.warnings)
+    if plan.source_status.local_status == "behind":
+        warnings.append("Local agent-rules source differs from remote main.")
+    for status in plan.ignore_statuses:
+        if status.ignored and not status.tracked and args.allow_ignored:
+            warnings.append(f"{status.path} is ignored but --allow-ignored was used.")
+        if status.warning:
+            warnings.append(status.warning)
+    print("\n".join(f"- {warning}" for warning in warnings) if warnings else "- none")
+
+    print("\nGitignore:")
+    if plan.ignore_statuses:
+        for status in plan.ignore_statuses:
+            if status.ignored and status.tracked:
+                print(f"- OK: {status.path} is tracked despite ignore match")
+            elif status.ignored:
+                print(f"- WARN: {status.path} is ignored")
+            else:
+                print(f"- OK: {status.path} is not ignored")
+    else:
+        print("- no generated files checked")
+
+    print("\nLatest source status:")
+    print(f"- local: {plan.source_status.local_head or 'unknown'}")
+    print(f"- remote main: {plan.source_status.remote_head or 'unknown'}")
+    print(f"- status: {plan.source_status.local_status}")
+
+    if args.detect or plan.detected.repo_types:
+        print("\nDetected repository type:")
+        print(f"- {', '.join(plan.detected.repo_types) if plan.detected.repo_types else 'none'}")
+        print("\nSuggested validation commands:")
+        for command in plan.detected.validation_commands:
+            print(f"- {command}")
+
+    changed = created + updated
+    print("\nNext commands:")
+    if changed:
+        print("- git diff -- " + " ".join(changed))
+    print("- git diff --check")
+    if changed:
+        print("- git add " + " ".join(changed))
+    print('- git commit -m "docs(agent): adopt shared agent rules"')
 
 
-def check_adoption(target_repo: Path, shared_url: str) -> int:
-    checks: list[tuple[str, bool, list[str]]] = []
+def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
+    ignored_result = fail_on_ignored(plan.ignore_statuses, args.allow_ignored)
+    if ignored_result:
+        return ignored_result
 
-    agents_ok, agents_missing = check_file_contains(
-        target_repo / "AGENTS.md",
-        [
-            shared_url,
-            "Agent Usage Model",
-            "Core Rules",
-            "Repository-specific Boundaries",
-            "Validation",
-            "Final Report",
-        ],
-    )
-    checks.append(("AGENTS.md", agents_ok, agents_missing))
-
-    for name in ("CLAUDE.md", "GEMINI.md"):
-        path = target_repo / name
-        if path.exists():
-            ok, missing = check_file_contains(path, ["AGENTS.md"])
-            checks.append((name, ok, missing))
-
-    all_ok = True
-    for name, ok, missing in checks:
-        status = "OK" if ok else "FAIL"
-        print(f"[{status}] {name}")
-        if missing:
-            for item in missing:
-                print(f"  - missing: {item}")
-        all_ok = all_ok and ok
-
-    if not all_ok:
-        print("\nAdoption check failed. Review the missing items above.")
-        return 1
-
-    print("\nAdoption check passed.")
+    created: list[str] = []
+    updated: list[str] = []
+    skipped: list[str] = []
+    for item in plan.files:
+        bucket, path = write_plan_file(
+            plan.target_repo, item, backup=args.backup, dry_run=args.dry_run
+        )
+        if bucket == "Created":
+            created.append(path)
+        elif bucket == "Updated":
+            updated.append(path)
+        else:
+            skipped.append(path)
+    print_summary(created, updated, skipped, plan, args)
     return 0
+
+
+def validate_args(args: argparse.Namespace, profile: str | None) -> None:
+    if args.profile and args.entrypoints:
+        raise SystemExit("Use either --profile or --entrypoints, not both.")
+    if args.merge and args.force:
+        raise SystemExit("Use either --merge or --force, not both.")
+    if args.merge and args.update:
+        raise SystemExit("Use either --merge or --update, not both.")
+    if args.apply_submodule:
+        raise SystemExit("--apply-submodule is not implemented; run git submodule add manually.")
+    if args.backup and not (args.force or args.update or args.merge):
+        raise SystemExit("--backup only applies when files may be updated or overwritten.")
+    write_requested = not (args.check or args.check_latest or args.plan)
+    if write_requested and not profile:
+        print_profile_help()
+        raise SystemExit(2)
+    if args.update and not profile:
+        print_profile_help()
+        raise SystemExit(2)
 
 
 def main() -> int:
     args = parse_args()
     target_repo = resolve_target_repo(args.target_repo)
-
-    git_root = find_repo_root(target_repo)
-    if git_root is None:
-        print(
-            f"Warning: target path does not appear to be inside a Git repository: {target_repo}",
-            file=sys.stderr,
-        )
-    elif git_root != target_repo:
-        print(
-            f"Warning: target path is inside a Git repository but not the root.\n"
-            f"  target: {target_repo}\n"
-            f"  root:   {git_root}",
-            file=sys.stderr,
-        )
+    entrypoints = parse_entrypoints(args.entrypoints)
+    profile = parse_profile(args.profile) or profile_from_entrypoints(entrypoints)
+    validate_args(args, profile)
 
     if args.check:
-        return check_adoption(target_repo, args.shared_url)
+        return check_adoption(target_repo, args.shared_url, strict=args.strict_check)
 
-    entrypoints = parse_entrypoints(args.entrypoints)
-    context = RenderContext(
-        shared_rules_url=args.shared_url,
-        boundaries=format_boundaries(args.boundary),
-        validation_commands=format_validation_commands(args.validation),
-    )
+    plan = build_plan(target_repo, args, profile)
 
-    files: dict[str, str] = {
-        "AGENTS.md": render(read_template("target-AGENTS.md"), context)
-    }
+    if args.check_latest:
+        print_latest(plan, args)
+        return 0
 
-    if "claude" in entrypoints:
-        files["CLAUDE.md"] = render(read_template("target-CLAUDE.md"), context)
-    if "gemini" in entrypoints:
-        files["GEMINI.md"] = render(read_template("target-GEMINI.md"), context)
+    if args.plan:
+        print_plan(plan, args)
+        return 0
 
-    for relative_path, content in files.items():
-        write_file(
-            target_repo / relative_path,
-            content,
-            force=args.force,
-            backup=args.backup,
-            dry_run=args.dry_run,
+    if args.update and plan.source_status.local_status == "behind" and not args.allow_stale_source:
+        print(
+            "FAIL: local agent-rules source differs from remote main.\n"
+            "Update local agent-rules first, or re-run with --allow-stale-source "
+            "if this is intentional."
         )
+        return 1
 
-    print("\nNext steps:")
-    print("1. Review repository-specific boundaries in AGENTS.md.")
-    print("2. Add project-specific validation commands if needed.")
-    print("3. Run: git diff --check")
-    print('4. Commit with: docs(agent): adopt shared agent rules')
+    if profile is None:
+        print_profile_help()
+        return 2
 
-    return 0
+    return apply_plan(plan, args)
 
 
 if __name__ == "__main__":

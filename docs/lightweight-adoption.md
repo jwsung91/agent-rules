@@ -9,6 +9,7 @@ Keep `agent-rules` as the shared source of truth.
 In each target repository, add a small root-level `AGENTS.md` that includes:
 
 - a link to `https://github.com/jwsung91/agent-rules`
+- an `agent-rules` metadata block
 - a short local summary of critical rules
 - repository-specific boundaries
 - repository-local validation commands
@@ -21,6 +22,23 @@ This keeps the target repository lightweight while still giving agents enough lo
 Some agents and execution environments may not automatically open external links.
 
 For that reason, the target repository's `AGENTS.md` should include the most important rules locally, even if it links to the shared rule repository.
+
+## Metadata Block
+
+Scripted adoption adds a metadata block near the top of `AGENTS.md`:
+
+```md
+<!-- agent-rules:
+source=https://github.com/jwsung91/agent-rules
+profile=claude
+source_ref=main
+source_commit=abc1234
+generated_at=2026-06-13T21:00:00+09:00
+managed_block=true
+-->
+```
+
+The metadata records which `agent-rules` commit generated the target file. `--check-latest` uses it to report whether the target repository is behind the shared source, and `--update` uses it to refresh only managed shared-rule content. Keep repository-specific sections manually editable; the metadata and managed block separate generated guidance from local guidance.
 
 ## Directory Naming
 
@@ -41,8 +59,10 @@ If the target repository needs local copies of shared rules or repo-specific age
 target-repo/
   AGENTS.md
   .agents/
-    rules/
-    templates/
+    agent-rules/
+      SOURCE_COMMIT
+      rules/
+      templates/
 ```
 
 Use `.agents/` to make it clear that the files are for AI coding agents, not for the project runtime, build system, or domain logic.
@@ -51,6 +71,15 @@ Use `.agents/` to make it clear that the files are for AI coding agents, not for
 
 ````md
 # AGENTS.md
+
+<!-- agent-rules:
+source=https://github.com/jwsung91/agent-rules
+profile=codex
+source_ref=main
+source_commit=<agent-rules-commit>
+generated_at=<timestamp>
+managed_block=true
+-->
 
 This repository follows the shared agent rules from:
 
@@ -147,7 +176,7 @@ When adding `AGENTS.md` to a target repository:
 - Include only the most important shared rules.
 - Add repository-specific boundaries and validation commands.
 - Do not copy every file from `agent-rules`.
-- Use `.agents/rules/` or `.agents/templates/` only when local agent-specific rule or template files are needed.
+- Use `.agents/agent-rules/` only when local pinned or offline shared-rule files are needed.
 - Do not add root-level `rules/`, `skills/`, scripts, or automation unless the target repository explicitly needs them.
 
 ## Usage Examples

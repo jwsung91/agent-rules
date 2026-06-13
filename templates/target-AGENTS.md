@@ -1,5 +1,9 @@
 # AGENTS.md
 
+{{AGENT_RULES_METADATA}}
+
+<!-- agent-rules-managed:start -->
+
 This repository follows the shared agent rules from:
 
 - {{SHARED_RULES_URL}}
@@ -31,6 +35,8 @@ Use the mode requested by the task.
 - Use Conventional Commits for commit messages.
 - Do not claim validation was run if it was not.
 - Report what changed, what was intentionally not changed, validation results, and any test or documentation impact.
+
+<!-- agent-rules-managed:end -->
 
 ## Repository-specific Boundaries
 
