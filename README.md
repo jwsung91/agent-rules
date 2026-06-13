@@ -71,9 +71,12 @@ Check and update an adopted repository:
 ```bash
 python scripts/adopt-agent-rules.py /path/to/target-repo --check
 python scripts/adopt-agent-rules.py /path/to/target-repo --check-latest
+python scripts/adopt-agent-rules.py /path/to/target-repo --check-latest --fail-if-outdated
 python scripts/adopt-agent-rules.py /path/to/target-repo --profile claude --update --dry-run
 python scripts/adopt-agent-rules.py /path/to/target-repo --profile claude --update
 ```
+
+Use `--check-latest --fail-if-outdated` or `--check-latest --strict-check` in automation when outdated local, target, or local-copy sources should fail the command.
 
 Use `--local-copy` only when the target repository needs offline or pinned access. The helper copies under `.agents/agent-rules/` only; do not copy shared `rules/` or `templates/` to the target repository root.
 

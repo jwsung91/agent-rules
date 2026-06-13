@@ -23,6 +23,28 @@ def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProc
     return subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
 
 
+def git_commit(repo: Path, message: str) -> str:
+    result = run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            message,
+        ],
+        repo,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    rev = run(["git", "rev-parse", "HEAD"], repo)
+    assert rev.returncode == 0, rev.stderr + rev.stdout
+    return rev.stdout.strip()
+
+
 class AdoptAgentRulesUnitTests(unittest.TestCase):
     def test_parse_profile(self) -> None:
         self.assertEqual(adopt.parse_profile("codex"), "codex")
@@ -58,8 +80,19 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
 
     def test_resolve_latest_status(self) -> None:
         self.assertEqual(adopt.resolve_latest_status("abc", "abc"), "current")
-        self.assertEqual(adopt.resolve_latest_status("abc", "def"), "behind")
+        self.assertEqual(adopt.resolve_latest_status("abc", "def"), "different")
         self.assertEqual(adopt.resolve_latest_status("abc", None), "unknown")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            run(["git", "init"], repo)
+            (repo / "file.txt").write_text("one\n", encoding="utf-8")
+            run(["git", "add", "file.txt"], repo)
+            first = git_commit(repo, "first")
+            (repo / "file.txt").write_text("two\n", encoding="utf-8")
+            run(["git", "add", "file.txt"], repo)
+            second = git_commit(repo, "second")
+            self.assertEqual(adopt.resolve_latest_status(first, second, repo), "behind")
+            self.assertEqual(adopt.resolve_latest_status(second, first, repo), "ahead")
 
     def test_format_validation_commands(self) -> None:
         rendered = adopt.format_validation_commands(["git diff --check", "git diff --check"])
@@ -109,6 +142,8 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                 check_latest=False,
                 allow_stale_source=False,
                 allow_ignored=False,
+                allow_subdir_target=False,
+                fail_if_outdated=False,
                 update=False,
                 merge=False,
                 local_copy=False,
@@ -190,19 +225,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
     def test_tracked_ignored_agents_allows_update(self) -> None:
         (self.repo / "AGENTS.md").write_text("# tracked\n", encoding="utf-8")
         run(["git", "add", "-f", "AGENTS.md"], self.repo)
-        run(
-            [
-                "git",
-                "-c",
-                "user.email=test@example.invalid",
-                "-c",
-                "user.name=Test User",
-                "commit",
-                "-m",
-                "add agents",
-            ],
-            self.repo,
-        )
+        git_commit(self.repo, "add agents")
         (self.repo / ".gitignore").write_text("AGENTS.md\n", encoding="utf-8")
         result = self.cli("--profile", "codex", "--force")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -218,6 +241,82 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertTrue((self.repo / ".agents" / "agent-rules" / "SOURCE_COMMIT").exists())
         self.assertTrue((self.repo / ".agents" / "agent-rules" / "rules").exists())
+
+    def test_local_copy_existing_files_require_update_or_force(self) -> None:
+        local_copy = self.repo / ".agents" / "agent-rules"
+        local_copy.mkdir(parents=True)
+        (local_copy / "SOURCE_COMMIT").write_text("old\n", encoding="utf-8")
+        result = self.cli("--profile", "codex", "--local-copy")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Refusing to apply local copy", result.stdout)
+
+        update = self.cli("--profile", "codex", "--local-copy", "--update", "--dry-run")
+        self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
+        self.assertIn("Would update", update.stdout)
+
+    def test_update_refreshes_metadata_and_managed_block(self) -> None:
+        self.assertEqual(self.cli("--profile", "codex").returncode, 0)
+        path = self.repo / "AGENTS.md"
+        content = path.read_text(encoding="utf-8")
+        old_content = content.replace("source_commit=", "source_commit=old")
+        old_content = old_content.replace(
+            "Use agent roles as execution modes, not fixed tool identities.",
+            "Old managed text.",
+        )
+        old_content += "\n## Repository Notes\n\nKeep this text.\n"
+        path.write_text(old_content, encoding="utf-8")
+
+        result = self.cli("--profile", "codex", "--update")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        updated = path.read_text(encoding="utf-8")
+        self.assertNotIn("Old managed text.", updated)
+        self.assertIn("Use agent roles as execution modes, not fixed tool identities.", updated)
+        self.assertIn("Keep this text.", updated)
+
+    def test_legacy_adoption_warns_without_strict(self) -> None:
+        (self.repo / "AGENTS.md").write_text(
+            f"# AGENTS.md\n\n{ROOT}\n",
+            encoding="utf-8",
+        )
+        result = self.cli("--check")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("legacy adoption detected; run --merge to add metadata", result.stdout)
+        strict = self.cli("--check", "--strict-check")
+        self.assertEqual(strict.returncode, 1)
+
+    def test_subdir_target_apply_requires_explicit_allow(self) -> None:
+        subdir = self.repo / "subdir"
+        subdir.mkdir()
+        result = run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                str(subdir),
+                "--shared-url",
+                str(ROOT),
+                "--profile",
+                "codex",
+            ],
+            ROOT,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not the repository root", result.stdout)
+
+        allowed = run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                str(subdir),
+                "--shared-url",
+                str(ROOT),
+                "--profile",
+                "codex",
+                "--allow-subdir-target",
+                "--dry-run",
+            ],
+            ROOT,
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr + allowed.stdout)
 
     def test_detect_outputs_validation(self) -> None:
         (self.repo / "package.json").write_text('{"scripts":{"lint":"eslint ."}}', encoding="utf-8")

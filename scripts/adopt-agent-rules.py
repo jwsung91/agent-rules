@@ -90,6 +90,10 @@ class AdoptionPlan:
     detected: DetectionResult
     warnings: list[str] = field(default_factory=list)
 
+    @property
+    def is_subdir_target(self) -> bool:
+        return self.git_root is not None and self.git_root != self.target_repo
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -143,7 +147,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict-check",
         action="store_true",
-        help="Make adoption warnings fail --check.",
+        help="Make adoption warnings fail --check and outdated latest checks fail.",
+    )
+    parser.add_argument(
+        "--fail-if-outdated",
+        action="store_true",
+        help="Make --check-latest fail when local, target, or local-copy source is not current.",
     )
     parser.add_argument(
         "--check-latest",
@@ -159,6 +168,11 @@ def parse_args() -> argparse.Namespace:
         "--allow-ignored",
         action="store_true",
         help="Allow generated files that are ignored by the target repository.",
+    )
+    parser.add_argument(
+        "--allow-subdir-target",
+        action="store_true",
+        help="Allow writing when target_repo is a subdirectory inside a Git repository.",
     )
     parser.add_argument(
         "--update",
@@ -392,12 +406,73 @@ def remote_main_head(shared_url: str) -> tuple[str | None, str | None]:
     return stdout.split()[0], None
 
 
-def resolve_latest_status(local_head: str | None, remote_head: str | None) -> str:
+def merge_base_is_ancestor(repo: Path, ancestor: str, descendant: str) -> str:
+    code, _, stderr = run_command(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", ancestor, descendant]
+    )
+    if code == 0:
+        return "yes"
+    if code == 1:
+        return "no"
+    return f"unknown:{stderr or 'git merge-base failed'}"
+
+
+def resolve_latest_status(
+    local_head: str | None,
+    remote_head: str | None,
+    repo: Path | None = None,
+) -> str:
     if not local_head or not remote_head:
         return "unknown"
     if local_head == remote_head:
         return "current"
-    return "behind"
+
+    if repo is None:
+        return "different"
+
+    local_before_remote = merge_base_is_ancestor(repo, local_head, remote_head)
+    if local_before_remote == "yes":
+        return "behind"
+    if local_before_remote.startswith("unknown:"):
+        return "different"
+
+    remote_before_local = merge_base_is_ancestor(repo, remote_head, local_head)
+    if remote_before_local == "yes":
+        return "ahead"
+    if remote_before_local.startswith("unknown:"):
+        return "different"
+    return "diverged"
+
+
+def latest_reference(source_status: SourceStatus) -> str | None:
+    return source_status.remote_head or source_status.local_head
+
+
+def target_commit_status(
+    source_commit: str | None,
+    source_status: SourceStatus,
+    repo: Path | None = None,
+) -> str:
+    latest = latest_reference(source_status)
+    if not source_commit or not latest:
+        return "unknown"
+    if source_commit == latest:
+        return "current"
+    if repo is None:
+        return "different"
+
+    applied_before_latest = merge_base_is_ancestor(repo, source_commit, latest)
+    if applied_before_latest == "yes":
+        return "behind"
+    if applied_before_latest.startswith("unknown:"):
+        return "different"
+    return "different"
+
+
+def latest_status_is_outdated(status: str, *, local_source: bool = False) -> bool:
+    if local_source:
+        return status in {"behind", "different", "diverged"}
+    return status != "current"
 
 
 def get_source_status(shared_url: str) -> SourceStatus:
@@ -411,7 +486,7 @@ def get_source_status(shared_url: str) -> SourceStatus:
     return SourceStatus(
         local_head=local_head,
         remote_head=remote_head,
-        local_status=resolve_latest_status(local_head, remote_head),
+        local_status=resolve_latest_status(local_head, remote_head, source_repo_root()),
         warnings=warnings,
     )
 
@@ -453,8 +528,13 @@ def planned_paths_for_gitignore(files: list[FilePlan]) -> list[str]:
     return [item.path for item in files if not item.path.endswith(".bak")]
 
 
-def check_generated_files_ignored(repo: Path, files: list[FilePlan]) -> list[IgnoreStatus]:
-    if find_repo_root(repo) is None:
+def check_generated_files_ignored(
+    target_repo: Path,
+    git_root: Path | None,
+    files: list[FilePlan],
+) -> list[IgnoreStatus]:
+    paths = planned_paths_for_gitignore(files)
+    if git_root is None:
         return [
             IgnoreStatus(
                 path=path,
@@ -462,9 +542,26 @@ def check_generated_files_ignored(repo: Path, files: list[FilePlan]) -> list[Ign
                 ignored=False,
                 warning="target path is not inside a Git repository",
             )
-            for path in planned_paths_for_gitignore(files)
+            for path in paths
         ]
-    return [check_ignore_status(repo, path) for path in planned_paths_for_gitignore(files)]
+
+    statuses: list[IgnoreStatus] = []
+    for path in paths:
+        absolute_path = target_repo / path
+        try:
+            root_relative = absolute_path.relative_to(git_root).as_posix()
+        except ValueError:
+            statuses.append(
+                IgnoreStatus(
+                    path=path,
+                    tracked=False,
+                    ignored=False,
+                    warning=f"{absolute_path} is outside git root {git_root}",
+                )
+            )
+            continue
+        statuses.append(check_ignore_status(git_root, root_relative))
+    return statuses
 
 
 def fail_on_ignored(statuses: list[IgnoreStatus], allow_ignored: bool) -> int:
@@ -739,19 +836,32 @@ def build_local_copy_plans(
     force: bool,
 ) -> list[FilePlan]:
     plans: list[FilePlan] = []
+    local_copy_root = target_repo / ".agents" / "agent-rules"
+    existing_local_copy_without_update = local_copy_root.exists() and not (update or force)
     for source, relative_path in local_copy_file_specs(profile):
         target = target_repo / relative_path
-        action = file_action(target_repo, relative_path, update=update, force=force)
         if source == Path("SOURCE_COMMIT"):
             content = source_commit + "\n"
-            if target.exists() and target.read_text(encoding="utf-8", errors="replace") == content:
+            if existing_local_copy_without_update:
+                action = "exists" if target.exists() else "blocked-existing-local-copy"
+            elif target.exists() and target.read_text(encoding="utf-8", errors="replace") == content:
                 action = "no-op"
+            elif target.exists():
+                action = "update"
+            else:
+                action = "create"
             plans.append(FilePlan(path=relative_path, action=action, content=content))
         else:
-            if target.exists() and action == "exists":
-                plans.append(FilePlan(path=relative_path, action="skip-existing", source=source))
+            if existing_local_copy_without_update:
+                action = "exists" if target.exists() else "blocked-existing-local-copy"
             else:
-                plans.append(FilePlan(path=relative_path, action=action, source=source))
+                source_content = source.read_text(encoding="utf-8")
+                if target.exists():
+                    target_content = target.read_text(encoding="utf-8", errors="replace")
+                    action = "no-op" if source_content == target_content else "update"
+                else:
+                    action = "create"
+            plans.append(FilePlan(path=relative_path, action=action, source=source))
     return plans
 
 
@@ -778,6 +888,10 @@ def build_plan(
     )
     files: list[FilePlan] = []
     warnings = list(source_status.warnings)
+    if git_root is not None and git_root != target_repo:
+        warnings.append(
+            f"WARN: target path is inside a Git repository but is not the root: {git_root}"
+        )
 
     if profile:
         context = build_render_context(args, profile, source_status, detected)
@@ -802,7 +916,9 @@ def build_plan(
                 )
             )
 
-    ignore_statuses = check_generated_files_ignored(target_repo, files) if files else []
+    ignore_statuses = (
+        check_generated_files_ignored(target_repo, git_root, files) if files else []
+    )
     return AdoptionPlan(
         target_repo=target_repo,
         git_root=git_root,
@@ -827,15 +943,21 @@ def print_profile_help() -> None:
 
 
 def latest_status_for_target(metadata: dict[str, str], source_status: SourceStatus) -> str:
-    applied = metadata.get("source_commit")
-    latest = source_status.remote_head or source_status.local_head
-    if not applied or not latest:
-        return "unknown"
-    return "current" if applied == latest else "behind"
+    return target_commit_status(
+        metadata.get("source_commit"), source_status, source_repo_root()
+    )
+
+
+def latest_status_for_local_copy(plan: AdoptionPlan) -> str:
+    return target_commit_status(
+        plan.local_copy_commit, plan.source_status, source_repo_root()
+    )
 
 
 def print_latest(plan: AdoptionPlan, args: argparse.Namespace) -> None:
     source = plan.source_status
+    target_status = latest_status_for_target(plan.metadata, source)
+    local_copy_status = latest_status_for_local_copy(plan)
     print("Source status:")
     print(f"- local source HEAD: {source.local_head or 'unknown'}")
     print(f"- remote main HEAD: {source.remote_head or 'unknown'}")
@@ -845,13 +967,17 @@ def print_latest(plan: AdoptionPlan, args: argparse.Namespace) -> None:
     print("\nTarget status:")
     print(f"- applied source_commit: {plan.metadata.get('source_commit', 'missing')}")
     print(f"- applied profile: {plan.metadata.get('profile', 'missing')}")
-    print(f"- latest status: {latest_status_for_target(plan.metadata, source)}")
+    print(f"- latest status: {target_status}")
     print(f"- local-copy SOURCE_COMMIT: {plan.local_copy_commit or 'missing'}")
-    if plan.local_copy_commit and source.remote_head and plan.local_copy_commit != source.remote_head:
-        print("- WARN: local copy is behind remote main")
+    print(f"- local-copy latest status: {local_copy_status}")
+    if plan.local_copy_commit and local_copy_status != "current":
+        print(f"- WARN: local copy source status is {local_copy_status}")
     print("\nRecommended:")
     if source.local_status == "behind":
         print("- Update local agent-rules first.")
+        print("- Then run:")
+    elif source.local_status in {"different", "diverged"}:
+        print("- Review local agent-rules source versus remote main before updating targets.")
         print("- Then run:")
     elif plan.metadata.get("profile"):
         print("- Run:")
@@ -864,10 +990,32 @@ def print_latest(plan: AdoptionPlan, args: argparse.Namespace) -> None:
     )
 
 
+def check_latest_exit_code(plan: AdoptionPlan, args: argparse.Namespace) -> int:
+    if not (args.strict_check or args.fail_if_outdated):
+        return 0
+    failures: list[str] = []
+    if latest_status_is_outdated(plan.source_status.local_status, local_source=True):
+        failures.append(f"local source status is {plan.source_status.local_status}")
+    target_status = latest_status_for_target(plan.metadata, plan.source_status)
+    if target_status != "current":
+        failures.append(f"target source status is {target_status}")
+    local_copy_status = latest_status_for_local_copy(plan)
+    if plan.local_copy_commit and local_copy_status != "current":
+        failures.append(f"local-copy source status is {local_copy_status}")
+    if failures:
+        print("\nOutdated check failed:")
+        for failure in failures:
+            print(f"- {failure}")
+        return 1
+    return 0
+
+
 def print_plan(plan: AdoptionPlan, args: argparse.Namespace) -> None:
     print("Target repository:")
     print(f"- path: {plan.target_repo}")
     print(f"- git root: {'OK' if plan.git_root == plan.target_repo else plan.git_root or 'missing'}")
+    if plan.is_subdir_target:
+        print("- WARN: target path is not the Git repository root")
 
     print("\nExisting adoption:")
     for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
@@ -884,6 +1032,9 @@ def print_plan(plan: AdoptionPlan, args: argparse.Namespace) -> None:
     print(f"- status: {plan.source_status.local_status}")
     for warning in plan.source_status.warnings:
         print(f"- {warning}")
+    for warning in plan.warnings:
+        if warning not in plan.source_status.warnings:
+            print(f"- {warning}")
 
     print("\nProfile:")
     print(f"- {plan.profile or 'not selected'}")
@@ -922,11 +1073,21 @@ def print_plan(plan: AdoptionPlan, args: argparse.Namespace) -> None:
             f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
             f"--profile {plan.profile} --dry-run"
         )
+        if plan.detected.repo_types:
+            print(
+                f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
+                f"--profile {plan.profile} --detect --dry-run"
+            )
     else:
         for profile in ("codex", "claude", "gemini", "multi"):
             print(
                 f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
                 f"--profile {profile} --dry-run"
+            )
+        if plan.detected.repo_types:
+            print(
+                f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
+                "--profile codex --detect --dry-run"
             )
     if args.submodule:
         print("\nRecommended submodule command:")
@@ -958,6 +1119,7 @@ def append_check(results: list[tuple[str, str]], status: str, message: str) -> N
 
 def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> int:
     results: list[tuple[str, str]] = []
+    git_root = find_repo_root(target_repo)
     agents_path = target_repo / "AGENTS.md"
     content = (
         agents_path.read_text(encoding="utf-8", errors="replace")
@@ -965,37 +1127,49 @@ def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> 
         else ""
     )
     metadata = parse_metadata(content)
+    has_shared_url = shared_url in content or bool(metadata.get("source"))
+    legacy_adoption = agents_path.exists() and not metadata and shared_url in content
 
     append_check(
         results,
         "OK" if agents_path.exists() else "FAIL",
         "AGENTS.md exists" if agents_path.exists() else "AGENTS.md is missing",
     )
+    if metadata:
+        append_check(results, "OK", "agent-rules metadata block exists")
+    elif legacy_adoption:
+        append_check(
+            results,
+            "WARN",
+            "legacy adoption detected; run --merge to add metadata",
+        )
+    else:
+        append_check(results, "FAIL", "agent-rules metadata block is missing")
+
     append_check(
         results,
-        "OK" if metadata else "FAIL",
-        "agent-rules metadata block exists"
-        if metadata
-        else "agent-rules metadata block is missing",
+        "OK" if has_shared_url else "FAIL",
+        "shared source URL found" if has_shared_url else "shared source URL is missing",
     )
     append_check(
         results,
-        "OK" if shared_url in content or metadata.get("source") else "FAIL",
-        "shared source URL found"
-        if shared_url in content or metadata.get("source")
-        else "shared source URL is missing",
-    )
-    append_check(
-        results,
-        "OK" if metadata.get("source_commit") else "FAIL",
-        "source_commit found" if metadata.get("source_commit") else "source_commit is missing",
+        "OK" if metadata.get("source_commit") else "WARN" if legacy_adoption else "FAIL",
+        "source_commit found"
+        if metadata.get("source_commit")
+        else "legacy adoption detected; run --merge to add metadata"
+        if legacy_adoption
+        else "source_commit is missing",
     )
 
     profile = metadata.get("profile")
     append_check(
         results,
-        "OK" if profile in VALID_PROFILES else "FAIL",
-        f"profile: {profile}" if profile in VALID_PROFILES else "profile is missing or invalid",
+        "OK" if profile in VALID_PROFILES else "WARN" if legacy_adoption else "FAIL",
+        f"profile: {profile}"
+        if profile in VALID_PROFILES
+        else "legacy adoption detected; run --merge to add metadata"
+        if legacy_adoption
+        else "profile is missing or invalid",
     )
 
     required = required_files_for_profile(profile) if profile in VALID_PROFILES else ["AGENTS.md"]
@@ -1041,7 +1215,7 @@ def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> 
         plans.append(FilePlan(path=".agents/agent-rules/SOURCE_COMMIT", action="check"))
         if not (local_copy_root / "SOURCE_COMMIT").exists():
             append_check(results, "FAIL", ".agents/agent-rules/SOURCE_COMMIT is missing")
-    for status in check_generated_files_ignored(target_repo, plans):
+    for status in check_generated_files_ignored(target_repo, git_root, plans):
         if status.ignored and not status.tracked:
             append_check(results, "FAIL", f"{status.path} is ignored by .gitignore")
         elif status.warning:
@@ -1087,6 +1261,12 @@ def write_plan_file(
     path = target_repo / plan.path
     if plan.action in {"skip-existing", "no-op"}:
         return "Skipped", plan.path
+    if plan.action == "blocked-existing-local-copy":
+        raise SystemExit(
+            f"Refusing to apply local copy because .agents/agent-rules already exists: {target_repo / '.agents' / 'agent-rules'}\n"
+            "Use --local-copy --update to refresh the existing local copy, or --force "
+            "to overwrite intentionally."
+        )
     if plan.action == "metadata-missing":
         raise SystemExit(
             f"Refusing to update file without agent-rules metadata: {path}\n"
@@ -1094,6 +1274,12 @@ def write_plan_file(
             "to overwrite intentionally."
         )
     if plan.action == "exists":
+        if plan.path.startswith(".agents/agent-rules/"):
+            raise SystemExit(
+                f"Refusing to apply local copy because .agents/agent-rules already exists: {target_repo / '.agents' / 'agent-rules'}\n"
+                "Use --local-copy --update to refresh the existing local copy, or --force "
+                "to overwrite intentionally."
+            )
         raise SystemExit(
             f"Refusing to overwrite existing file: {path}\n"
             "Use --force to overwrite, --merge to preserve existing AGENTS.md content, "
@@ -1125,6 +1311,32 @@ def write_plan_file(
     return ("Updated" if existed else "Created", plan.path)
 
 
+def validate_plan_before_write(plan: AdoptionPlan, args: argparse.Namespace) -> int:
+    if plan.is_subdir_target and not args.allow_subdir_target:
+        print(
+            "FAIL: target path is inside a Git repository but is not the repository root.\n"
+            f"- target: {plan.target_repo}\n"
+            f"- git root: {plan.git_root}\n\n"
+            "Run the helper from the Git repository root, or use --allow-subdir-target "
+            "if writing under this subdirectory is intentional."
+        )
+        return 1
+
+    for item in plan.files:
+        if item.action in {"exists", "metadata-missing", "blocked-existing-local-copy"}:
+            try:
+                write_plan_file(
+                    plan.target_repo,
+                    item,
+                    backup=args.backup,
+                    dry_run=True,
+                )
+            except SystemExit as exc:
+                print(exc)
+                return 1
+    return 0
+
+
 def print_summary(
     created: list[str],
     updated: list[str],
@@ -1141,8 +1353,10 @@ def print_summary(
 
     print("\nWarnings:")
     warnings = list(plan.warnings)
-    if plan.source_status.local_status == "behind":
-        warnings.append("Local agent-rules source differs from remote main.")
+    if plan.source_status.local_status in {"behind", "ahead", "different", "diverged"}:
+        warnings.append(
+            f"Local agent-rules source status versus remote main is {plan.source_status.local_status}."
+        )
     for status in plan.ignore_statuses:
         if status.ignored and not status.tracked and args.allow_ignored:
             warnings.append(f"{status.path} is ignored but --allow-ignored was used.")
@@ -1185,6 +1399,10 @@ def print_summary(
 
 
 def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
+    preflight_result = validate_plan_before_write(plan, args)
+    if preflight_result:
+        return preflight_result
+
     ignored_result = fail_on_ignored(plan.ignore_statuses, args.allow_ignored)
     if ignored_result:
         return ignored_result
@@ -1240,15 +1458,19 @@ def main() -> int:
 
     if args.check_latest:
         print_latest(plan, args)
-        return 0
+        return check_latest_exit_code(plan, args)
 
     if args.plan:
         print_plan(plan, args)
         return 0
 
-    if args.update and plan.source_status.local_status == "behind" and not args.allow_stale_source:
+    if (
+        args.update
+        and plan.source_status.local_status in {"behind", "different", "diverged"}
+        and not args.allow_stale_source
+    ):
         print(
-            "FAIL: local agent-rules source differs from remote main.\n"
+            f"FAIL: local agent-rules source status is {plan.source_status.local_status} versus remote main.\n"
             "Update local agent-rules first, or re-run with --allow-stale-source "
             "if this is intentional."
         )
