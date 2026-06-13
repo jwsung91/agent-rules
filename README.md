@@ -18,10 +18,12 @@ Supported agents:
 - `CLAUDE.md`: Claude-specific entrypoint.
 - `GEMINI.md`: Gemini-specific entrypoint.
 - `docs/lightweight-adoption.md`: Guide for applying these rules to target repositories using a lightweight local `AGENTS.md` and optional `.agents/` namespacing.
+- `docs/scripted-adoption.md`: Usage guide for the Python adoption helper script.
+- `scripts/adopt-agent-rules.py`: Helper script for creating or checking lightweight target-repository adoption files.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
-- `templates/`: Reusable task and review instruction forms.
+- `templates/`: Reusable task, review, and target-repository adoption templates.
 
 ## Agent Usage Model
 
@@ -43,207 +45,42 @@ The recommended adoption model is **lightweight local adoption**:
 3. Put only the highest-signal rules, repository-specific boundaries, and validation commands in that local file.
 4. Explicitly tell the coding agent to follow the target repository's `AGENTS.md` when starting a task.
 
-This works better than linking to this repository only, because some agent environments may not automatically open external links or may lose remote context during a task.
+This works better than linking to this repository only, because some agents and execution environments may not automatically open external links or may lose remote context during a task.
 
-### 1. Add `AGENTS.md` to the target repository
+### Scripted adoption
 
-From the root of the target repository:
-
-```bash
-cat > AGENTS.md <<'EOF'
-# AGENTS.md
-
-This repository follows the shared agent rules from:
-
-- https://github.com/jwsung91/agent-rules
-
-Use this file as the repository-local instruction entrypoint.
-
-If internet access is available, agents may consult the shared rules repository for detailed guidance. The rules below are the local summary that must be followed even when external links are not available.
-
-## Agent Usage Model
-
-Use agent roles as execution modes, not fixed tool identities.
-
-- Primary Mode: implementation, documentation update, investigation, or refactoring.
-- Review Mode: cross-check, review, risk analysis, and validation gap review.
-
-Use the mode requested by the task.
-
-## Core Rules
-
-- Investigate existing code, documentation, and behavior before editing.
-- Keep changes scoped to the requested task.
-- Do not refactor unrelated files.
-- Do not rename public APIs, files, directories, or user-facing concepts unless explicitly requested.
-- Prefer simple, explicit, maintainable changes.
-- Follow repository-local formatter, linter, test, PR template, and verification conventions.
-- Validate changes with the narrowest relevant checks when practical.
-- Use resource-safe build and test commands; avoid full-core parallelism by default.
-- Before committing, run lightweight checks for changed files, such as `git diff --check`.
-- Use Conventional Commits for commit messages.
-- Do not claim validation was run if it was not.
-- Report what changed, what was intentionally not changed, validation results, and any test or documentation impact.
-
-## Repository-specific Boundaries
-
-Add project-specific rules here.
-
-Examples:
-
-- public API compatibility expectations
-- benchmark or performance data boundaries
-- packaging impact expectations
-- supported language or build conventions
-- documentation update expectations
-
-## Validation
-
-Before choosing commands, check repository-local scripts and configuration first.
-
-Preferred checks for this repository:
+For repeated use across repositories, prefer the Python helper script:
 
 ```bash
-git diff --check
-# Add project-specific build/test/lint commands here.
+python scripts/adopt-agent-rules.py /path/to/target-repo --dry-run
+python scripts/adopt-agent-rules.py /path/to/target-repo
 ```
 
-Use conservative parallelism for local build or test validation when the environment is unknown. Prefer `-j2`, or `-j1` when memory pressure, OOM, VM/WSL constraints, embedded devices, or previous instability are involved.
-
-If validation cannot be run, explain why and provide the command that should be run later.
-
-## Final Report
-
-Include:
-
-- Summary
-- Changes
-- Validation
-- Not Included
-- Test or documentation impact
-- Follow-up
-EOF
-```
-
-Then edit the placeholders and commit it:
+Add optional tool-specific entrypoints:
 
 ```bash
-git add AGENTS.md
-git commit -m "docs(agent): adopt shared agent rules"
+python scripts/adopt-agent-rules.py /path/to/target-repo --entrypoints claude,gemini
 ```
 
-### 2. Add optional agent-specific entrypoints
-
-Use these only when a specific tool or workflow expects a tool-specific file. Keep them thin so the root `AGENTS.md` stays the source of repository-local truth.
+Check an adopted repository:
 
 ```bash
-cat > CLAUDE.md <<'EOF'
-# CLAUDE.md
-
-Follow `AGENTS.md` as the primary repository instruction file.
-
-If internet access is available, also consult:
-
-- https://github.com/jwsung91/agent-rules
-EOF
-
-cat > GEMINI.md <<'EOF'
-# GEMINI.md
-
-Follow `AGENTS.md` as the primary repository instruction file.
-
-If internet access is available, also consult:
-
-- https://github.com/jwsung91/agent-rules
-EOF
-
-git add CLAUDE.md GEMINI.md
-git commit -m "docs(agent): add agent-specific entrypoints"
+python scripts/adopt-agent-rules.py /path/to/target-repo --check
 ```
 
-### 3. Optional: keep a local copy or pinned reference
+See `docs/scripted-adoption.md` for safety options such as `--force`, `--backup`, custom `--boundary`, and custom `--validation`.
 
-Most repositories should not copy this entire repository. Prefer the short root `AGENTS.md` above.
+### Manual adoption
 
-Use a local copy only when the target repository needs offline access, pinned rules, or local agent-specific templates.
+From the root of the target repository, add a short `AGENTS.md` based on `templates/target-AGENTS.md`, then edit repository-specific boundaries and validation commands.
 
-Recommended layout:
-
-```text
-target-repo/
-  AGENTS.md
-  .agents/
-    rules/
-    templates/
-```
-
-Do **not** copy root-level `rules/` or `templates/` directly into a target repository unless that repository is dedicated to agent instructions. Those names may conflict with project domain rules, issue templates, documentation templates, or generated artifacts.
-
-If you want a pinned reference instead of copying files, use a submodule under `.agents/`:
-
-```bash
-mkdir -p .agents
-git submodule add https://github.com/jwsung91/agent-rules .agents/agent-rules
-git commit -m "docs(agent): add shared agent rules reference"
-```
-
-Use this only when submodule maintenance is acceptable for the target repository.
-
-### 4. Start tasks with an explicit mode and instruction source
-
-Primary implementation task:
-
-```text
-Use Primary Mode.
-
-Follow this repository's AGENTS.md.
-If internet access is available, also consult https://github.com/jwsung91/agent-rules.
-
-Keep the change scoped.
-Validate with the narrowest relevant checks.
-```
-
-Review or cross-check task:
-
-```text
-Use Review Mode.
-
-Follow this repository's AGENTS.md.
-If internet access is available, also consult https://github.com/jwsung91/agent-rules.
-
-Review for correctness, scope control, compatibility, repository-local convention compliance, and validation gaps.
-Do not rewrite the implementation unless requested.
-```
-
-Commit preparation task:
-
-```text
-Prepare a commit for the current changes.
-
-Follow AGENTS.md and use Conventional Commits.
-Before committing, check the diff and run lightweight validation that is relevant to the changed files.
-Do not include unrelated changes.
-```
-
-### 5. Keep target repositories updated
-
-For lightweight adoption, update the target repository's root `AGENTS.md` when these shared rules change in a way that affects daily work.
-
-For `.agents/` copies, periodically refresh only the files that are actually used by that repository.
-
-For submodules:
-
-```bash
-git submodule update --remote .agents/agent-rules
-git add .agents/agent-rules
-git commit -m "docs(agent): update shared agent rules reference"
-```
+Optional tool-specific files such as `CLAUDE.md` and `GEMINI.md` should stay thin and point back to `AGENTS.md` as the primary repository-local instruction file.
 
 ## Recommended Usage
 
 For most repositories:
 
-1. Add a root-level `AGENTS.md` using the lightweight template above.
+1. Add a root-level `AGENTS.md` using the lightweight template or the adoption script.
 2. Add repository-specific validation commands and boundaries.
 3. Explicitly mention `AGENTS.md` and the desired mode when assigning agent tasks.
 4. Use the templates in `templates/` when preparing task instructions or pull request review requests.
@@ -290,4 +127,4 @@ Before considering a target repository adopted, check that:
 - Task prompts mention Primary Mode or Review Mode.
 - Final reports include validation status and any intentionally skipped checks.
 
-This repository intentionally focuses on rules and templates only. It does not define full agent skills, runtime scripts, CI, package metadata, or automation.
+This repository intentionally focuses on rules, templates, and lightweight adoption helpers. It does not define full agent skills, CI, package metadata, or runtime automation.
