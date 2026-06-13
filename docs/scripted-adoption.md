@@ -40,6 +40,16 @@ python scripts/adopt-agent-rules.py /path/to/repo --profile claude --dry-run
 python scripts/adopt-agent-rules.py /path/to/repo --profile claude
 ```
 
+## Claude + Codex Usage
+
+When a repository uses Claude and Codex together, `--profile claude` is usually recommended.
+
+- Codex uses `AGENTS.md` in Primary Mode for implementation, scoped edits, and validation.
+- Claude uses `CLAUDE.md` and `AGENTS.md` in Review Mode for design review, risk analysis, compatibility checks, and validation gap review.
+- `CLAUDE.md` should stay thin and delegate to `AGENTS.md` as the primary repository instruction file.
+
+For detailed workflows and copyable prompts, see `docs/claude-codex-workflow.md`.
+
 ## 3. New Repository: Gemini
 
 ```bash

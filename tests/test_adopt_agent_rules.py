@@ -60,6 +60,8 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
 
     def test_required_files_for_profile(self) -> None:
         self.assertEqual(adopt.required_files_for_profile("codex"), ["AGENTS.md"])
+        self.assertEqual(adopt.required_files_for_profile("claude"), ["AGENTS.md", "CLAUDE.md"])
+        self.assertEqual(adopt.required_files_for_profile("gemini"), ["AGENTS.md", "GEMINI.md"])
         self.assertEqual(
             adopt.required_files_for_profile("multi"),
             ["AGENTS.md", "CLAUDE.md", "GEMINI.md"],
@@ -181,6 +183,9 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli()
         self.assertEqual(result.returncode, 2)
         self.assertIn("No agent profile selected", result.stdout)
+        self.assertFalse((self.repo / "AGENTS.md").exists())
+        self.assertFalse((self.repo / "CLAUDE.md").exists())
+        self.assertFalse((self.repo / "GEMINI.md").exists())
 
     def test_apply_check_latest_and_check(self) -> None:
         result = self.cli("--profile", "claude")
@@ -192,6 +197,42 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(self.cli("--check-latest").returncode, 0)
         check = self.cli("--check")
         self.assertEqual(check.returncode, 0, check.stderr + check.stdout)
+        self.assertIn("[OK] AGENTS.md exists", check.stdout)
+        self.assertIn("[OK] agent-rules metadata block exists", check.stdout)
+        self.assertIn("[OK] profile: claude", check.stdout)
+        self.assertIn("[OK] CLAUDE.md exists", check.stdout)
+        self.assertIn("[OK] CLAUDE.md references AGENTS.md as primary instruction", check.stdout)
+
+    def test_claude_profile_dry_run_and_apply(self) -> None:
+        dry_run = self.cli("--profile", "claude", "--dry-run")
+        self.assertEqual(dry_run.returncode, 0, dry_run.stderr + dry_run.stdout)
+        self.assertIn("Would create: " + str(self.repo / "AGENTS.md"), dry_run.stdout)
+        self.assertIn("Would create: " + str(self.repo / "CLAUDE.md"), dry_run.stdout)
+        self.assertNotIn("GEMINI.md", dry_run.stdout)
+
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((self.repo / "AGENTS.md").exists())
+        self.assertTrue((self.repo / "CLAUDE.md").exists())
+        self.assertFalse((self.repo / "GEMINI.md").exists())
+        self.assertIn(
+            "Follow `AGENTS.md` as the primary repository instruction file.",
+            (self.repo / "CLAUDE.md").read_text(encoding="utf-8"),
+        )
+
+    def test_codex_profile_creates_only_agents(self) -> None:
+        result = self.cli("--profile", "codex")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((self.repo / "AGENTS.md").exists())
+        self.assertFalse((self.repo / "CLAUDE.md").exists())
+        self.assertFalse((self.repo / "GEMINI.md").exists())
+
+    def test_multi_profile_creates_all_entrypoints(self) -> None:
+        result = self.cli("--profile", "multi")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((self.repo / "AGENTS.md").exists())
+        self.assertTrue((self.repo / "CLAUDE.md").exists())
+        self.assertTrue((self.repo / "GEMINI.md").exists())
 
     def test_existing_agents_default_fails(self) -> None:
         (self.repo / "AGENTS.md").write_text("# custom\n", encoding="utf-8")
@@ -221,6 +262,23 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("ignored by target repository ignore rules", result.stdout)
         allowed = self.cli("--profile", "claude", "--allow-ignored", "--dry-run")
         self.assertEqual(allowed.returncode, 0, allowed.stderr + allowed.stdout)
+
+    def test_claude_profile_fails_when_untracked_claude_entrypoint_is_ignored(self) -> None:
+        (self.repo / ".gitignore").write_text("CLAUDE.md\n", encoding="utf-8")
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("CLAUDE.md", result.stdout)
+        self.assertIn("Matched ignore rule", result.stdout)
+
+    def test_tracked_ignored_claude_entrypoint_allows_update(self) -> None:
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        run(["git", "add", "-f", "AGENTS.md", "CLAUDE.md"], self.repo)
+        git_commit(self.repo, "add claude adoption")
+        (self.repo / ".gitignore").write_text("CLAUDE.md\n", encoding="utf-8")
+
+        update = self.cli("--profile", "claude", "--update", "--dry-run")
+        self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
 
     def test_tracked_ignored_agents_allows_update(self) -> None:
         (self.repo / "AGENTS.md").write_text("# tracked\n", encoding="utf-8")

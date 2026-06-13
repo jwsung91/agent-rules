@@ -78,6 +78,8 @@ python scripts/adopt-agent-rules.py /path/to/target-repo --profile claude --upda
 
 Use `--check-latest --fail-if-outdated` or `--check-latest --strict-check` in automation when outdated local, target, or local-copy sources should fail the command.
 
+For repositories that use Codex and Claude together, see `docs/claude-codex-workflow.md`. The recommended setup is usually `--profile claude`, where `AGENTS.md` acts as the shared entrypoint and `CLAUDE.md` delegates to it.
+
 Use `--local-copy` only when the target repository needs offline or pinned access. The helper copies under `.agents/agent-rules/` only; do not copy shared `rules/` or `templates/` to the target repository root.
 
 See `docs/scripted-adoption.md` for `--merge`, `.gitignore` collision handling, `--detect`, `--force`, `--backup`, custom `--boundary`, and custom `--validation`.
