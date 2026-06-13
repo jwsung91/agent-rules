@@ -52,23 +52,32 @@ This works better than linking to this repository only, because some agent envir
 For repeated use across repositories, prefer the Python helper script:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/target-repo --dry-run
-python scripts/adopt-agent-rules.py /path/to/target-repo
+python scripts/adopt-agent-rules.py /path/to/target-repo --plan
+python scripts/adopt-agent-rules.py /path/to/target-repo --profile codex --dry-run
+python scripts/adopt-agent-rules.py /path/to/target-repo --profile codex
 ```
 
-Add optional tool-specific entrypoints:
+Choose the profile that matches the target repository workflow:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/target-repo --entrypoints claude,gemini
+python scripts/adopt-agent-rules.py /path/to/target-repo --profile codex   # AGENTS.md
+python scripts/adopt-agent-rules.py /path/to/target-repo --profile claude  # AGENTS.md + CLAUDE.md
+python scripts/adopt-agent-rules.py /path/to/target-repo --profile gemini  # AGENTS.md + GEMINI.md
+python scripts/adopt-agent-rules.py /path/to/target-repo --profile multi   # all entrypoints
 ```
 
-Check an adopted repository:
+Check and update an adopted repository:
 
 ```bash
 python scripts/adopt-agent-rules.py /path/to/target-repo --check
+python scripts/adopt-agent-rules.py /path/to/target-repo --check-latest
+python scripts/adopt-agent-rules.py /path/to/target-repo --profile claude --update --dry-run
+python scripts/adopt-agent-rules.py /path/to/target-repo --profile claude --update
 ```
 
-See `docs/scripted-adoption.md` for safety options such as `--force`, `--backup`, custom `--boundary`, and custom `--validation`.
+Use `--local-copy` only when the target repository needs offline or pinned access. The helper copies under `.agents/agent-rules/` only; do not copy shared `rules/` or `templates/` to the target repository root.
+
+See `docs/scripted-adoption.md` for `--merge`, `.gitignore` collision handling, `--detect`, `--force`, `--backup`, custom `--boundary`, and custom `--validation`.
 
 ### 1. Add `AGENTS.md` to the target repository
 
@@ -198,8 +207,10 @@ Recommended layout:
 target-repo/
   AGENTS.md
   .agents/
-    rules/
-    templates/
+    agent-rules/
+      SOURCE_COMMIT
+      rules/
+      templates/
 ```
 
 Do **not** copy root-level `rules/` or `templates/` directly into a target repository unless that repository is dedicated to agent instructions. Those names may conflict with project domain rules, issue templates, documentation templates, or generated artifacts.
