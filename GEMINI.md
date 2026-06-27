@@ -1,15 +1,64 @@
 # GEMINI.md
 
-Follow `AGENTS.md` as the primary repository instruction file.
+This file is the Gemini-specific instruction entrypoint for this repository.
+`AGENTS.md` is the shared canonical reference; this file supersedes it where they differ.
 
-Gemini may be used in either Primary Mode or Review Mode depending on the task.
+## Agent Usage Model
 
-In both modes:
+Gemini may operate in either mode:
 
-- Follow the shared rules in `rules/`.
-- Keep changes scoped.
-- Use resource-safe build and test commands; avoid full-core parallelism by default.
-- Consider risks, compatibility concerns, and validation gaps appropriate to the task.
+- **Primary Mode**: implementation, documentation update, investigation, or refactoring.
+- **Review Mode**: cross-check, risk analysis, scope review, and validation gap review.
+
+Use the mode requested by the task. Follow `rules/agent-collaboration.md` for multi-agent workflows.
+
+## Core Rules
+
+- Investigate existing code, documentation, and behavior before editing.
+- Keep changes scoped to the requested task.
+- Do not refactor unrelated files or rename public APIs unless explicitly requested.
+- Prefer simple, explicit, maintainable changes.
+- Preserve existing structure, naming, and documentation tone.
 - Do not expand the task scope unless explicitly requested.
+- Consider risks, compatibility concerns, and validation gaps appropriate to the task.
 
-For multi-agent workflows, follow `rules/agent-collaboration.md`.
+## Commit Messages
+
+Use Conventional Commits:
+
+```text
+<type>[optional scope]: <description>
+```
+
+Common types: `feat`, `fix`, `docs`, `test`, `refactor`, `style`, `perf`, `build`, `ci`, `chore`.
+
+Use `!` or a `BREAKING CHANGE:` footer for compatibility-breaking changes.
+Keep the subject concise, lowercase, imperative mood, no trailing period.
+
+## Validation
+
+- Run the narrowest relevant checks first.
+- Add or update tests when behavior changes; explain when not.
+- Do not claim validation was run if it was not.
+- Before committing, run at minimum: `git diff --check`.
+- Use resource-safe parallelism: prefer `-j2` by default, `-j1` under memory pressure or constrained environments.
+
+Report validation using this format:
+
+```text
+Validation:
+- [x] Ran: ...
+- [ ] Not run: ... because ...
+- Tests: added / updated / not needed / not added because ...
+- Documentation: updated / not needed / not updated because ...
+```
+
+## Final Report
+
+Include in every final response or PR summary:
+
+- **Summary**: what changed and why
+- **Changes**: files and behaviors affected
+- **Validation**: what was run and results
+- **Not Included**: what was intentionally left out
+- **Follow-up**: known gaps or deferred work

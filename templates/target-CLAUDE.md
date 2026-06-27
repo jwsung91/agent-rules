@@ -1,7 +1,69 @@
 # CLAUDE.md
 
-Follow `AGENTS.md` as the primary repository instruction file.
+This file is the Claude-specific instruction entrypoint for this repository.
+It follows the shared agent rules from `jwsung91/agent-rules`.
 
-If internet access is available, also consult:
+## Agent Usage Model
 
-- {{SHARED_RULES_URL}}
+Claude may operate in either mode:
+
+- **Primary Mode**: implementation, documentation update, investigation, or refactoring.
+- **Review Mode**: cross-check, risk analysis, scope review, and validation gap review.
+
+Use the mode requested by the task. Follow `AGENTS.md` for multi-agent workflows.
+
+## Core Rules
+
+- Investigate existing code, documentation, and behavior before editing.
+- Keep changes scoped to the requested task.
+- Do not refactor unrelated files or rename public APIs unless explicitly requested.
+- Prefer simple, explicit, maintainable changes.
+- Preserve existing structure, naming, and documentation tone.
+- Follow repository-local formatter, linter, test, PR template, and verification conventions.
+
+## Commit Messages
+
+Use Conventional Commits:
+
+```text
+<type>[optional scope]: <description>
+```
+
+Common types: `feat`, `fix`, `docs`, `test`, `refactor`, `style`, `perf`, `build`, `ci`, `chore`.
+
+Use `!` or a `BREAKING CHANGE:` footer for compatibility-breaking changes.
+Keep the subject concise, lowercase, imperative mood, no trailing period.
+
+## Validation
+
+- Run the narrowest relevant checks first.
+- Add or update tests when behavior changes; explain when not.
+- Do not claim validation was run if it was not.
+- Before committing, run at minimum: `git diff --check`.
+- Use resource-safe parallelism: prefer `-j2` by default, `-j1` under memory pressure or WSL constraints.
+
+Preferred checks for this repository:
+
+```bash
+# {{VALIDATION_COMMANDS}}
+```
+
+Report validation using this format:
+
+```text
+Validation:
+- [x] Ran: ...
+- [ ] Not run: ... because ...
+- Tests: added / updated / not needed / not added because ...
+- Documentation: updated / not needed / not updated because ...
+```
+
+## Final Report
+
+Include in every final response or PR summary:
+
+- **Summary**: what changed and why
+- **Changes**: files and behaviors affected
+- **Validation**: what was run and results
+- **Not Included**: what was intentionally left out
+- **Follow-up**: known gaps or deferred work
