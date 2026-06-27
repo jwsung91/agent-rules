@@ -131,12 +131,8 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                 dry_run=False,
                 force=False,
                 check=False,
-                strict_check=False,
-                check_latest=False,
-                update=False,
-                merge=False,
+                sync=False,
                 local_copy=False,
-                detect=False,
             )
             plan = adopt.build_plan(repo, args, "claude")
             self.assertEqual([item.path for item in plan.files], ["CLAUDE.md"])
@@ -178,13 +174,14 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         metadata = adopt.parse_metadata((self.repo / "CLAUDE.md").read_text(encoding="utf-8"))
         self.assertEqual(metadata["profile"], "claude")
-        self.assertEqual(self.cli("--check-latest").returncode, 0)
         check = self.cli("--check")
-        self.assertEqual(check.returncode, 0, check.stderr + check.stdout)
         self.assertIn("[OK] agent file(s) found: CLAUDE.md", check.stdout)
         self.assertIn("[OK] agent-rules metadata block exists (CLAUDE.md)", check.stdout)
         self.assertIn("[OK] profile: claude", check.stdout)
         self.assertIn("[OK] CLAUDE.md exists", check.stdout)
+        self.assertIn("local source HEAD:", check.stdout)
+        self.assertIn("remote main HEAD:", check.stdout)
+        self.assertIn("latest status:", check.stdout)
 
     def test_claude_profile_dry_run_and_apply(self) -> None:
         dry_run = self.cli("--profile", "claude", "--dry-run")
@@ -221,11 +218,13 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
 
     def test_merge_and_update_dry_run(self) -> None:
         (self.repo / "AGENTS.md").write_text("# AGENTS.md\n\nCustom notes.\n", encoding="utf-8")
-        merge = self.cli("--profile", "codex", "--merge", "--dry-run")
-        self.assertEqual(merge.returncode, 0, merge.stderr + merge.stdout)
-        self.assertIn("Custom notes.", merge.stdout)
-        self.assertEqual(self.cli("--profile", "codex", "--merge").returncode, 0)
-        update = self.cli("--profile", "codex", "--update", "--dry-run")
+        # --sync on file without metadata should merge
+        sync_merge = self.cli("--profile", "codex", "--sync", "--dry-run")
+        self.assertEqual(sync_merge.returncode, 0, sync_merge.stderr + sync_merge.stdout)
+        self.assertIn("Custom notes.", sync_merge.stdout)
+        self.assertEqual(self.cli("--profile", "codex", "--sync").returncode, 0)
+        # --sync on file with metadata should update
+        update = self.cli("--profile", "codex", "--sync", "--dry-run")
         self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
 
     def test_force_overwrites_existing(self) -> None:
@@ -254,7 +253,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         git_commit(self.repo, "add claude adoption")
         (self.repo / ".gitignore").write_text("CLAUDE.md\n", encoding="utf-8")
 
-        update = self.cli("--profile", "claude", "--update", "--dry-run")
+        update = self.cli("--profile", "claude", "--sync", "--dry-run")
         self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
 
     def test_tracked_ignored_agents_allows_update(self) -> None:
@@ -285,7 +284,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Refusing to apply local copy", result.stdout)
 
-        update = self.cli("--profile", "codex", "--local-copy", "--update", "--dry-run")
+        update = self.cli("--profile", "codex", "--local-copy", "--sync", "--dry-run")
         self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
         self.assertIn("Would update", update.stdout)
 
@@ -301,7 +300,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         old_content += "\n## Repository Notes\n\nKeep this text.\n"
         path.write_text(old_content, encoding="utf-8")
 
-        result = self.cli("--profile", "codex", "--update")
+        result = self.cli("--profile", "codex", "--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         updated = path.read_text(encoding="utf-8")
         self.assertNotIn("Old managed text.", updated)
@@ -313,11 +312,10 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             f"# AGENTS.md\n\n{ROOT}\n",
             encoding="utf-8",
         )
+        # --check is always strict; WARN results in exit code 1
         result = self.cli("--check")
-        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
         self.assertIn("legacy adoption detected; run --merge to add metadata", result.stdout)
-        strict = self.cli("--check", "--strict-check")
-        self.assertEqual(strict.returncode, 1)
 
     def test_subdir_target_apply_fails(self) -> None:
         subdir = self.repo / "subdir"
@@ -339,7 +337,8 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
 
     def test_detect_outputs_validation(self) -> None:
         (self.repo / "package.json").write_text('{"scripts":{"lint":"eslint ."}}', encoding="utf-8")
-        result = self.cli("--profile", "codex", "--detect", "--dry-run")
+        # --detect is always enabled; no explicit flag needed
+        result = self.cli("--profile", "codex", "--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("npm run lint", result.stdout)
 

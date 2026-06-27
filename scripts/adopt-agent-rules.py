@@ -131,34 +131,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true", help="Overwrite existing files.")
     parser.add_argument("--check", action="store_true", help="Check adoption health.")
     parser.add_argument(
-        "--strict-check",
+        "--sync",
         action="store_true",
-        help="Make adoption warnings fail --check.",
-    )
-    parser.add_argument(
-        "--check-latest",
-        action="store_true",
-        help="Check local, remote, and target adoption source versions.",
-    )
-    parser.add_argument(
-        "--update",
-        action="store_true",
-        help="Update metadata and managed blocks in an existing adoption.",
-    )
-    parser.add_argument(
-        "--merge",
-        action="store_true",
-        help="Merge adoption sections into an existing AGENTS.md without metadata.",
+        help="Update metadata and managed blocks, or merge into an existing file without metadata.",
     )
     parser.add_argument(
         "--local-copy",
         action="store_true",
         help="Copy shared rules under .agents/agent-rules/ for pinned/offline use.",
-    )
-    parser.add_argument(
-        "--detect",
-        action="store_true",
-        help="Detect repository type and suggest validation commands.",
     )
     return parser.parse_args()
 
@@ -561,8 +541,7 @@ def build_render_context(
     detected: DetectionResult,
 ) -> RenderContext:
     validation = list(args.validation)
-    if args.detect:
-        validation = dedupe(validation + detected.validation_commands)
+    validation = dedupe(validation + detected.validation_commands)
     return RenderContext(
         shared_rules_url=args.shared_url,
         boundaries=format_boundaries(list(args.boundary)),
@@ -684,10 +663,23 @@ def build_entrypoint_plans(
     profile: str,
     context: RenderContext,
     *,
+    sync: bool,
     update: bool,
     merge: bool,
     force: bool,
 ) -> list[FilePlan]:
+    if sync:
+        # Determine whether to update or merge based on metadata presence
+        _primary = required_files_for_profile(profile)[0]
+        _primary_path = target_repo / _primary
+        if _primary_path.exists():
+            _existing = _primary_path.read_text(encoding="utf-8", errors="replace")
+            if parse_metadata(_existing):
+                update = True
+            elif _primary == "AGENTS.md":
+                merge = True
+            else:
+                update = True
     plans: list[FilePlan] = []
     primary_file = required_files_for_profile(profile)[0]
     for relative_path in required_files_for_profile(profile):
@@ -829,8 +821,9 @@ def build_plan(
                 target_repo,
                 profile,
                 context,
-                update=args.update,
-                merge=args.merge,
+                sync=args.sync,
+                update=False,
+                merge=False,
                 force=args.force,
             )
         )
@@ -840,7 +833,7 @@ def build_plan(
                     target_repo,
                     profile,
                     source_status.local_head or "unknown",
-                    update=args.update,
+                    update=args.sync,
                     force=args.force,
                 )
             )
@@ -963,7 +956,7 @@ def append_check(results: list[tuple[str, str]], status: str, message: str) -> N
     results.append((status, message))
 
 
-def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> int:
+def check_adoption(target_repo: Path, shared_url: str) -> int:
     results: list[tuple[str, str]] = []
     git_root = find_repo_root(target_repo)
 
@@ -1093,9 +1086,24 @@ def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> 
     for status, message in results:
         print(f"[{status}] {message}")
 
+    source_status = get_source_status(shared_url)
+    target_status = latest_status_for_target(metadata, source_status)
+    local_copy_commit = read_local_copy_commit(target_repo)
+
+    print("\nSource status:")
+    print(f"- local source HEAD: {source_status.local_head or 'unknown'}")
+    print(f"- remote main HEAD: {source_status.remote_head or 'unknown'}")
+    print(f"- local source status: {source_status.local_status}")
+    for warning in source_status.warnings:
+        print(f"- {warning}")
+    print("\nTarget status:")
+    print(f"- applied source_commit: {metadata.get('source_commit', 'missing')}")
+    print(f"- applied profile: {metadata.get('profile', 'missing')}")
+    print(f"- latest status: {target_status}")
+
     has_fail = any(status == "FAIL" for status, _ in results)
     has_warn = any(status == "WARN" for status, _ in results)
-    if has_fail or (strict and has_warn):
+    if has_fail or has_warn:
         return 1
     return 0
 
@@ -1217,7 +1225,7 @@ def print_summary(
     print(f"- remote main: {plan.source_status.remote_head or 'unknown'}")
     print(f"- status: {plan.source_status.local_status}")
 
-    if args.detect or plan.detected.repo_types:
+    if plan.detected.repo_types:
         print("\nDetected repository type:")
         print(f"- {', '.join(plan.detected.repo_types) if plan.detected.repo_types else 'none'}")
         print("\nSuggested validation commands:")
@@ -1259,35 +1267,41 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
 
 
 def validate_args(args: argparse.Namespace, profile: str | None) -> None:
-    if args.merge and args.force:
-        raise SystemExit("Use either --merge or --force, not both.")
-    if args.merge and args.update:
-        raise SystemExit("Use either --merge or --update, not both.")
-    write_requested = not (args.check or args.check_latest)
+    if args.sync and args.force:
+        raise SystemExit("Use either --sync or --force, not both.")
+    write_requested = not args.check
     if write_requested and not profile:
         print_profile_help()
         raise SystemExit(2)
-    if args.update and not profile:
-        print_profile_help()
-        raise SystemExit(2)
+
+
+def infer_profile_from_existing(target_repo: Path) -> str | None:
+    for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+        p = target_repo / name
+        if p.exists():
+            m = parse_metadata(p.read_text(encoding="utf-8", errors="replace"))
+            if m.get("profile"):
+                return m["profile"]
+    return None
 
 
 def main() -> int:
     args = parse_args()
     target_repo = resolve_target_repo(args.target_repo)
     profile = parse_profile(args.profile)
+
+    # Auto-detect profile from existing files when --check or --sync is requested
+    if profile is None and (args.check or args.sync):
+        profile = infer_profile_from_existing(target_repo)
+
     validate_args(args, profile)
 
     if args.check:
-        return check_adoption(target_repo, args.shared_url, strict=args.strict_check)
+        return check_adoption(target_repo, args.shared_url)
 
     plan = build_plan(target_repo, args, profile)
 
-    if args.check_latest:
-        print_latest(plan, args)
-        return check_latest_exit_code(plan, args)
-
-    if args.update and plan.source_status.local_status in {"behind", "different", "diverged"}:
+    if args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
         print(
             f"FAIL: local agent-rules source status is {plan.source_status.local_status} versus remote main.\n"
             "Update local agent-rules first."
