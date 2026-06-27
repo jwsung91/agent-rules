@@ -1246,7 +1246,8 @@ def print_summary(
     skipped: list[str],
     plan: AdoptionPlan,
     args: argparse.Namespace,
-    gitignore_fixes: list[str] | None = None,
+    gitignore_files: list[str] | None = None,
+    gitignore_fixed: set[str] | None = None,
 ) -> None:
     print("\nCreated:")
     print("\n".join(f"- {item}" for item in created) if created else "- none")
@@ -1254,9 +1255,9 @@ def print_summary(
     print("\n".join(f"- {item}" for item in updated) if updated else "- none")
     print("\nSkipped:")
     print("\n".join(f"- {item}" for item in skipped) if skipped else "- none")
-    if gitignore_fixes:
+    if gitignore_files:
         print("\n.gitignore fixed:")
-        for f in gitignore_fixes:
+        for f in gitignore_files:
             print(f"- {f}")
 
     print("\nWarnings:")
@@ -1270,11 +1271,14 @@ def print_summary(
             warnings.append(status.warning)
     print("\n".join(f"- {warning}" for warning in warnings) if warnings else "- none")
 
+    fixed = gitignore_fixed or set()
     print("\nGitignore:")
     if plan.ignore_statuses:
         for status in plan.ignore_statuses:
             if status.ignored and status.tracked:
                 print(f"- OK: {status.path} is tracked despite ignore match")
+            elif status.ignored and status.path in fixed:
+                print(f"- OK: {status.path} was ignored — exception added to .gitignore")
             elif status.ignored:
                 print(f"- WARN: {status.path} is ignored")
             else:
@@ -1299,7 +1303,7 @@ def print_summary(
     if changed:
         print("- git diff -- " + " ".join(changed))
     print("- git diff --check")
-    all_to_add = list(gitignore_fixes) + changed
+    all_to_add = list(gitignore_files or []) + changed
     if all_to_add:
         print("- git add " + " ".join(all_to_add))
     print('- git commit -m "docs(agent): adopt shared agent rules"')
@@ -1311,13 +1315,15 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
         return preflight_result
 
     git_root = plan.git_root or plan.target_repo
-    gitignore_fixes: list[str] = []
+    gitignore_files: list[str] = []   # .gitignore paths modified (for git add)
+    gitignore_fixed: set[str] = set() # file paths whose ignore was resolved
     unfixable: list[IgnoreStatus] = []
     for status in plan.ignore_statuses:
         if status.ignored and not status.tracked:
             fixed = fix_gitignore_exception(git_root, status, dry_run=args.dry_run)
             if fixed:
-                gitignore_fixes.append(fixed)
+                gitignore_files.append(fixed)
+                gitignore_fixed.add(status.path)
             else:
                 unfixable.append(status)
 
@@ -1337,7 +1343,7 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
             updated.append(path)
         else:
             skipped.append(path)
-    print_summary(created, updated, skipped, plan, args, gitignore_fixes=gitignore_fixes)
+    print_summary(created, updated, skipped, plan, args, gitignore_files=gitignore_files, gitignore_fixed=gitignore_fixed)
     return 0
 
 
