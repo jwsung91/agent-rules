@@ -1,7 +1,68 @@
 # GEMINI.md
 
-Follow `AGENTS.md` as the primary repository instruction file.
+This is the Gemini instruction entrypoint for this repository.
 
-If internet access is available, also consult:
+## Agent Usage Model
 
-- {{SHARED_RULES_URL}}
+Gemini may operate in either mode:
+
+- **Primary Mode**: implementation, documentation update, investigation, or refactoring.
+- **Review Mode**: cross-check, risk analysis, scope review, and validation gap review.
+
+Use the mode requested by the task.
+
+## Core Rules
+
+- Investigate existing code, documentation, and behavior before editing.
+- Keep changes scoped to the requested task.
+- Do not refactor unrelated files or rename public APIs unless explicitly requested.
+- Prefer simple, explicit, maintainable changes.
+- Preserve existing structure, naming, and documentation tone.
+- Do not expand the task scope unless explicitly requested.
+- Consider risks, compatibility concerns, and validation gaps appropriate to the task.
+- Follow repository-local formatter, linter, test, PR template, and verification conventions.
+
+## Commit Messages
+
+Use Conventional Commits:
+
+```text
+<type>[optional scope]: <description>
+```
+
+Common types: `feat`, `fix`, `docs`, `test`, `refactor`, `style`, `perf`, `build`, `ci`, `chore`.
+
+Use `!` or a `BREAKING CHANGE:` footer for compatibility-breaking changes.
+Keep the subject concise, lowercase, imperative mood, no trailing period.
+
+## Validation
+
+- Run the narrowest relevant checks first.
+- Add or update tests when behavior changes; explain when not.
+- Do not claim validation was run if it was not.
+- Before committing, run at minimum: `git diff --check`.
+- Use resource-safe parallelism: prefer `-j2` by default, `-j1` under memory pressure or constrained environments.
+
+Preferred checks for this repository:
+
+{{VALIDATION_COMMANDS}}
+
+Report validation using this format:
+
+```text
+Validation:
+- [x] Ran: ...
+- [ ] Not run: ... because ...
+- Tests: added / updated / not needed / not added because ...
+- Documentation: updated / not needed / not updated because ...
+```
+
+## Final Report
+
+Include in every final response or PR summary:
+
+- **Summary**: what changed and why
+- **Changes**: files and behaviors affected
+- **Validation**: what was run and results
+- **Not Included**: what was intentionally left out
+- **Follow-up**: known gaps or deferred work

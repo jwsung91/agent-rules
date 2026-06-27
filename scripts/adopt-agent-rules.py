@@ -579,10 +579,9 @@ def fail_on_ignored(statuses: list[IgnoreStatus], allow_ignored: bool) -> int:
         print("\nThis file would not be committed by default.\n")
     print("Recommended fixes:")
     print("1. Remove or narrow the ignore rule.")
-    print("2. Add exceptions:")
-    print("   !.agents/")
-    print("   !.agents/agent-rules/")
-    print("   !.agents/agent-rules/**")
+    print("2. Add exceptions to .gitignore:")
+    for status in failing:
+        print(f"   !{status.path}")
     print("3. Re-run with --dry-run.")
     print("\nUse --allow-ignored only if this is intentional.")
     return 1
@@ -1182,20 +1181,6 @@ def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> 
             if path.exists()
             else f"{relative_path} is required by profile but missing",
         )
-
-    for name in ("CLAUDE.md", "GEMINI.md"):
-        path = target_repo / name
-        if path.exists():
-            ok, _ = check_file_contains(
-                path, ["Follow `AGENTS.md` as the primary repository instruction file."]
-            )
-            append_check(
-                results,
-                "OK" if ok else "FAIL",
-                f"{name} references AGENTS.md as primary instruction"
-                if ok
-                else f"{name} does not reference AGENTS.md as primary instruction",
-            )
 
     if BOUNDARY_PLACEHOLDER in content:
         append_check(

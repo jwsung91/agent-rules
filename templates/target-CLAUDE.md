@@ -1,7 +1,6 @@
 # CLAUDE.md
 
-This file is the Claude-specific instruction entrypoint for this repository.
-It follows the shared agent rules from `jwsung91/agent-rules`.
+This is the Claude instruction entrypoint for this repository.
 
 ## Agent Usage Model
 
@@ -10,7 +9,7 @@ Claude may operate in either mode:
 - **Primary Mode**: implementation, documentation update, investigation, or refactoring.
 - **Review Mode**: cross-check, risk analysis, scope review, and validation gap review.
 
-Use the mode requested by the task. Follow `AGENTS.md` for multi-agent workflows.
+Use the mode requested by the task.
 
 ## Core Rules
 
@@ -44,9 +43,7 @@ Keep the subject concise, lowercase, imperative mood, no trailing period.
 
 Preferred checks for this repository:
 
-```bash
-# {{VALIDATION_COMMANDS}}
-```
+{{VALIDATION_COMMANDS}}
 
 Report validation using this format:
 

@@ -201,7 +201,6 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("[OK] agent-rules metadata block exists", check.stdout)
         self.assertIn("[OK] profile: claude", check.stdout)
         self.assertIn("[OK] CLAUDE.md exists", check.stdout)
-        self.assertIn("[OK] CLAUDE.md references AGENTS.md as primary instruction", check.stdout)
 
     def test_claude_profile_dry_run_and_apply(self) -> None:
         dry_run = self.cli("--profile", "claude", "--dry-run")
@@ -215,10 +214,6 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "AGENTS.md").exists())
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertFalse((self.repo / "GEMINI.md").exists())
-        self.assertIn(
-            "Follow `AGENTS.md` as the primary repository instruction file.",
-            (self.repo / "CLAUDE.md").read_text(encoding="utf-8"),
-        )
 
     def test_codex_profile_creates_only_agents(self) -> None:
         result = self.cli("--profile", "codex")
