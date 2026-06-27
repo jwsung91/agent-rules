@@ -18,6 +18,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None  # type: ignore[assignment]
+
 
 DEFAULT_SHARED_URL = "https://github.com/jwsung91/agent-rules"
 SOURCE_REF = "main"
@@ -75,6 +80,12 @@ class FilePlan:
     action: str
     content: str | None = None
     source: Path | None = None
+
+
+@dataclass
+class BatchEntry:
+    path: str
+    profile: str | None = None
 
 
 @dataclass
@@ -139,6 +150,11 @@ def parse_args() -> argparse.Namespace:
         "--local-copy",
         action="store_true",
         help="Copy shared rules under .agents/agent-rules/ for pinned/offline use.",
+    )
+    parser.add_argument(
+        "--batch",
+        metavar="FILE",
+        help="Apply to multiple repositories listed in a .toml or .txt file.",
     )
     return parser.parse_args()
 
@@ -1266,9 +1282,97 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     return 0
 
 
+def parse_batch_file(batch_file: Path) -> list[BatchEntry]:
+    if batch_file.suffix == ".toml":
+        return _parse_toml_batch(batch_file)
+    return _parse_text_batch(batch_file)
+
+
+def _parse_toml_batch(batch_file: Path) -> list[BatchEntry]:
+    if tomllib is None:
+        raise SystemExit("TOML batch files require Python 3.11+.")
+    data = tomllib.loads(batch_file.read_text(encoding="utf-8"))
+    repos = data.get("repos", [])
+    if not isinstance(repos, list):
+        raise SystemExit("TOML batch file must contain a [[repos]] array.")
+    entries: list[BatchEntry] = []
+    for item in repos:
+        if not isinstance(item, dict) or "path" not in item:
+            raise SystemExit(f"Each [[repos]] entry must have a 'path' field: {item}")
+        entries.append(BatchEntry(path=item["path"], profile=item.get("profile")))
+    return entries
+
+
+def _parse_text_batch(batch_file: Path) -> list[BatchEntry]:
+    entries: list[BatchEntry] = []
+    for line in batch_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        entries.append(BatchEntry(path=line))
+    return entries
+
+
+def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
+    entries = parse_batch_file(batch_file)
+    if not entries:
+        print("No repositories found in batch file.")
+        return 0
+
+    results: list[tuple[str, int]] = []
+    for entry in entries:
+        print(f"\n{'─' * 60}")
+        print(f"  {entry.path}")
+        print(f"{'─' * 60}")
+
+        try:
+            target_repo = resolve_target_repo(entry.path)
+        except SystemExit as exc:
+            print(f"FAIL: {exc}")
+            results.append((entry.path, 1))
+            continue
+
+        profile_str = entry.profile or args.profile
+        profile = parse_profile(profile_str)
+        if profile is None and (args.check or args.sync):
+            profile = infer_profile_from_existing(target_repo)
+
+        try:
+            if args.check:
+                code = check_adoption(target_repo, args.shared_url)
+            else:
+                if not profile:
+                    print("FAIL: no profile specified and none inferred from existing files.")
+                    results.append((entry.path, 2))
+                    continue
+                plan = build_plan(target_repo, args, profile)
+                if args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
+                    print(f"FAIL: local source is {plan.source_status.local_status}. Update agent-rules first.")
+                    results.append((entry.path, 1))
+                    continue
+                code = apply_plan(plan, args)
+        except SystemExit as exc:
+            print(f"FAIL: {exc}")
+            code = 1
+
+        results.append((entry.path, code))
+
+    print(f"\n{'═' * 60}")
+    succeeded = [p for p, c in results if c == 0]
+    failed = [(p, c) for p, c in results if c != 0]
+    print(f"{len(succeeded)} succeeded, {len(failed)} failed")
+    if failed:
+        print("\nFailed:")
+        for p, _ in failed:
+            print(f"  - {p}")
+    return 1 if failed else 0
+
+
 def validate_args(args: argparse.Namespace, profile: str | None) -> None:
     if args.sync and args.force:
         raise SystemExit("Use either --sync or --force, not both.")
+    if args.batch:
+        return
     write_requested = not args.check
     if write_requested and not profile:
         print_profile_help()
@@ -1287,6 +1391,15 @@ def infer_profile_from_existing(target_repo: Path) -> str | None:
 
 def main() -> int:
     args = parse_args()
+
+    if args.batch:
+        batch_file = Path(args.batch).expanduser().resolve()
+        if not batch_file.exists():
+            raise SystemExit(f"Batch file does not exist: {batch_file}")
+        profile = parse_profile(args.profile)
+        validate_args(args, profile)
+        return run_batch(batch_file, args)
+
     target_repo = resolve_target_repo(args.target_repo)
     profile = parse_profile(args.profile)
 

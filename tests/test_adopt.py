@@ -343,5 +343,98 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("npm run lint", result.stdout)
 
 
+class AdoptAgentRulesBatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def make_repo(self, name: str) -> Path:
+        repo = self.base / name
+        repo.mkdir()
+        run(["git", "init"], repo)
+        return repo
+
+    def cli(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return run(
+            [sys.executable, str(SCRIPT), "--shared-url", str(ROOT), *args],
+            ROOT,
+        )
+
+    def test_parse_toml_batch(self) -> None:
+        repo = self.make_repo("r1")
+        toml_file = self.base / "repos.toml"
+        toml_file.write_text(
+            f'[[repos]]\npath = "{repo}"\nprofile = "codex"\n',
+            encoding="utf-8",
+        )
+        entries = adopt.parse_batch_file(toml_file)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].path, str(repo))
+        self.assertEqual(entries[0].profile, "codex")
+
+    def test_parse_text_batch(self) -> None:
+        repo1 = self.make_repo("r1")
+        repo2 = self.make_repo("r2")
+        txt_file = self.base / "repos.txt"
+        txt_file.write_text(f"# comment\n{repo1}\n{repo2}\n", encoding="utf-8")
+        entries = adopt.parse_batch_file(txt_file)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].path, str(repo1))
+        self.assertIsNone(entries[0].profile)
+
+    def test_batch_apply(self) -> None:
+        repo1 = self.make_repo("r1")
+        repo2 = self.make_repo("r2")
+        toml_file = self.base / "repos.toml"
+        toml_file.write_text(
+            f'[[repos]]\npath = "{repo1}"\n\n[[repos]]\npath = "{repo2}"\n',
+            encoding="utf-8",
+        )
+        result = self.cli("--batch", str(toml_file), "--profile", "codex", "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("2 succeeded", result.stdout)
+
+    def test_batch_per_repo_profile_override(self) -> None:
+        repo1 = self.make_repo("r1")
+        repo2 = self.make_repo("r2")
+        toml_file = self.base / "repos.toml"
+        toml_file.write_text(
+            f'[[repos]]\npath = "{repo1}"\nprofile = "codex"\n\n'
+            f'[[repos]]\npath = "{repo2}"\nprofile = "claude"\n',
+            encoding="utf-8",
+        )
+        result = self.cli("--batch", str(toml_file), "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("2 succeeded", result.stdout)
+
+    def test_batch_check(self) -> None:
+        repo = self.make_repo("r1")
+        run([sys.executable, str(SCRIPT), str(repo), "--shared-url", str(ROOT), "--profile", "codex"], ROOT)
+        toml_file = self.base / "repos.toml"
+        toml_file.write_text(f'[[repos]]\npath = "{repo}"\n', encoding="utf-8")
+        result = self.cli("--batch", str(toml_file), "--check")
+        # --check is always strict; fresh adoption may have placeholder warnings
+        # Verify the batch ran and reported on exactly 1 repository
+        import re
+        match = re.search(r"(\d+) succeeded, (\d+) failed", result.stdout)
+        self.assertIsNotNone(match, result.stderr + result.stdout)
+        self.assertEqual(int(match.group(1)) + int(match.group(2)), 1)
+
+    def test_batch_continues_on_failure(self) -> None:
+        repo1 = self.make_repo("r1")
+        toml_file = self.base / "repos.toml"
+        toml_file.write_text(
+            f'[[repos]]\npath = "/nonexistent/repo"\n\n[[repos]]\npath = "{repo1}"\nprofile = "codex"\n',
+            encoding="utf-8",
+        )
+        result = self.cli("--batch", str(toml_file), "--dry-run")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("1 succeeded", result.stdout)
+        self.assertIn("1 failed", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
