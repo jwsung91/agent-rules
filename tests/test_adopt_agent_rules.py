@@ -52,12 +52,6 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             adopt.parse_profile("unknown")
 
-    def test_parse_entrypoints_backward_compatibility(self) -> None:
-        self.assertEqual(adopt.parse_entrypoints(""), set())
-        self.assertEqual(adopt.parse_entrypoints("claude"), {"claude"})
-        self.assertEqual(adopt.parse_entrypoints("all"), {"claude", "gemini"})
-        self.assertEqual(adopt.profile_from_entrypoints({"claude", "gemini"}), "all")
-
     def test_required_files_for_profile(self) -> None:
         self.assertEqual(adopt.required_files_for_profile("codex"), ["AGENTS.md"])
         self.assertEqual(adopt.required_files_for_profile("claude"), ["CLAUDE.md"])
@@ -131,26 +125,17 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
             args = argparse.Namespace(
                 target_repo=str(repo),
                 profile="claude",
-                entrypoints="",
                 shared_url=str(ROOT),
                 boundary=[],
                 validation=[],
-                plan=True,
                 dry_run=False,
                 force=False,
-                backup=False,
                 check=False,
                 strict_check=False,
                 check_latest=False,
-                allow_stale_source=False,
-                allow_ignored=False,
-                allow_subdir_target=False,
-                fail_if_outdated=False,
                 update=False,
                 merge=False,
                 local_copy=False,
-                submodule=False,
-                apply_submodule=False,
                 detect=False,
             )
             plan = adopt.build_plan(repo, args, "claude")
@@ -173,7 +158,6 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         )
 
     def test_plan_and_profile_dry_runs(self) -> None:
-        self.assertEqual(self.cli("--plan").returncode, 0)
         for profile in ("codex", "claude", "gemini", "all"):
             result = self.cli("--profile", profile, "--dry-run")
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -244,19 +228,17 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         update = self.cli("--profile", "codex", "--update", "--dry-run")
         self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
 
-    def test_force_backup(self) -> None:
+    def test_force_overwrites_existing(self) -> None:
         (self.repo / "AGENTS.md").write_text("# old\n", encoding="utf-8")
-        result = self.cli("--profile", "codex", "--force", "--backup")
+        result = self.cli("--profile", "codex", "--force")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertTrue(list(self.repo.glob("AGENTS.md.*.bak")))
+        self.assertIn("agent-rules", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
 
-    def test_ignored_generated_files_fail_and_allow(self) -> None:
+    def test_ignored_generated_files_fail(self) -> None:
         (self.repo / ".gitignore").write_text("AGENTS.md\nCLAUDE.md\n.agents/\n", encoding="utf-8")
         result = self.cli("--profile", "claude")
         self.assertEqual(result.returncode, 1)
         self.assertIn("ignored by target repository ignore rules", result.stdout)
-        allowed = self.cli("--profile", "claude", "--allow-ignored", "--dry-run")
-        self.assertEqual(allowed.returncode, 0, allowed.stderr + allowed.stdout)
 
     def test_claude_profile_fails_when_untracked_claude_entrypoint_is_ignored(self) -> None:
         (self.repo / ".gitignore").write_text("CLAUDE.md\n", encoding="utf-8")
@@ -337,7 +319,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         strict = self.cli("--check", "--strict-check")
         self.assertEqual(strict.returncode, 1)
 
-    def test_subdir_target_apply_requires_explicit_allow(self) -> None:
+    def test_subdir_target_apply_fails(self) -> None:
         subdir = self.repo / "subdir"
         subdir.mkdir()
         result = run(
@@ -354,22 +336,6 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("not the repository root", result.stdout)
-
-        allowed = run(
-            [
-                sys.executable,
-                str(SCRIPT),
-                str(subdir),
-                "--shared-url",
-                str(ROOT),
-                "--profile",
-                "codex",
-                "--allow-subdir-target",
-                "--dry-run",
-            ],
-            ROOT,
-        )
-        self.assertEqual(allowed.returncode, 0, allowed.stderr + allowed.stdout)
 
     def test_detect_outputs_validation(self) -> None:
         (self.repo / "package.json").write_text('{"scripts":{"lint":"eslint ."}}', encoding="utf-8")

@@ -97,7 +97,7 @@ class AdoptionPlan:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create, plan, update, or check agent-rules adoption files."
+        description="Create, update, or check agent-rules adoption files."
     )
     parser.add_argument(
         "target_repo",
@@ -109,14 +109,6 @@ def parse_args() -> argparse.Namespace:
         "--profile",
         choices=sorted(VALID_PROFILES),
         help="Agent profile to manage: codex, claude, gemini, or all.",
-    )
-    parser.add_argument(
-        "--entrypoints",
-        default="",
-        help=(
-            "Backward-compatible optional entrypoints: claude, gemini, all. "
-            "Prefer --profile for new usage."
-        ),
     )
     parser.add_argument(
         "--shared-url",
@@ -135,44 +127,18 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Validation command to add to AGENTS.md. May be repeated.",
     )
-    parser.add_argument("--plan", action="store_true", help="Show adoption plan.")
-    parser.add_argument("--dry-run", action="store_true", help="Print planned changes.")
+    parser.add_argument("--dry-run", action="store_true", help="Print planned changes without writing.")
     parser.add_argument("--force", action="store_true", help="Overwrite existing files.")
-    parser.add_argument(
-        "--backup",
-        action="store_true",
-        help="Create timestamped .bak files before overwriting existing files.",
-    )
     parser.add_argument("--check", action="store_true", help="Check adoption health.")
     parser.add_argument(
         "--strict-check",
         action="store_true",
-        help="Make adoption warnings fail --check and outdated latest checks fail.",
-    )
-    parser.add_argument(
-        "--fail-if-outdated",
-        action="store_true",
-        help="Make --check-latest fail when local, target, or local-copy source is not current.",
+        help="Make adoption warnings fail --check.",
     )
     parser.add_argument(
         "--check-latest",
         action="store_true",
         help="Check local, remote, and target adoption source versions.",
-    )
-    parser.add_argument(
-        "--allow-stale-source",
-        action="store_true",
-        help="Allow update using a local source that differs from remote main.",
-    )
-    parser.add_argument(
-        "--allow-ignored",
-        action="store_true",
-        help="Allow generated files that are ignored by the target repository.",
-    )
-    parser.add_argument(
-        "--allow-subdir-target",
-        action="store_true",
-        help="Allow writing when target_repo is a subdirectory inside a Git repository.",
     )
     parser.add_argument(
         "--update",
@@ -188,16 +154,6 @@ def parse_args() -> argparse.Namespace:
         "--local-copy",
         action="store_true",
         help="Copy shared rules under .agents/agent-rules/ for pinned/offline use.",
-    )
-    parser.add_argument(
-        "--submodule",
-        action="store_true",
-        help="Show submodule recommendation. Does not run git submodule add.",
-    )
-    parser.add_argument(
-        "--apply-submodule",
-        action="store_true",
-        help="Reserved for explicit submodule application; currently unsupported.",
     )
     parser.add_argument(
         "--detect",
@@ -260,36 +216,6 @@ def parse_profile(value: str | None) -> str | None:
         )
     return profile
 
-
-def parse_entrypoints(value: str) -> set[str]:
-    if not value:
-        return set()
-
-    raw_items = [item.strip().lower() for item in value.split(",") if item.strip()]
-    if "all" in raw_items:
-        return {"claude", "gemini"}
-
-    supported = {"claude", "gemini"}
-    unknown = sorted(set(raw_items) - supported)
-    if unknown:
-        raise SystemExit(
-            "Unsupported entrypoint(s): "
-            + ", ".join(unknown)
-            + ". Supported values: claude, gemini, all."
-        )
-    return set(raw_items)
-
-
-def profile_from_entrypoints(entrypoints: set[str]) -> str | None:
-    if not entrypoints:
-        return None
-    if entrypoints == {"claude"}:
-        return "claude"
-    if entrypoints == {"gemini"}:
-        return "gemini"
-    if entrypoints == {"claude", "gemini"}:
-        return "all"
-    raise SystemExit("Could not infer profile from --entrypoints.")
 
 
 def required_files_for_profile(profile: str) -> list[str]:
@@ -564,9 +490,9 @@ def check_generated_files_ignored(
     return statuses
 
 
-def fail_on_ignored(statuses: list[IgnoreStatus], allow_ignored: bool) -> int:
+def fail_on_ignored(statuses: list[IgnoreStatus]) -> int:
     failing = [status for status in statuses if status.ignored and not status.tracked]
-    if not failing or allow_ignored:
+    if not failing:
         return 0
 
     print("FAIL: Generated file is ignored by target repository ignore rules.\n")
@@ -583,7 +509,6 @@ def fail_on_ignored(statuses: list[IgnoreStatus], allow_ignored: bool) -> int:
     for status in failing:
         print(f"   !{status.path}")
     print("3. Re-run with --dry-run.")
-    print("\nUse --allow-ignored only if this is intentional.")
     return 1
 
 
@@ -995,7 +920,7 @@ def print_latest(plan: AdoptionPlan, args: argparse.Namespace) -> None:
 
 
 def check_latest_exit_code(plan: AdoptionPlan, args: argparse.Namespace) -> int:
-    if not (args.strict_check or args.fail_if_outdated):
+    if not args.strict_check:
         return 0
     failures: list[str] = []
     if latest_status_is_outdated(plan.source_status.local_status, local_source=True):
@@ -1013,89 +938,6 @@ def check_latest_exit_code(plan: AdoptionPlan, args: argparse.Namespace) -> int:
         return 1
     return 0
 
-
-def print_plan(plan: AdoptionPlan, args: argparse.Namespace) -> None:
-    print("Target repository:")
-    print(f"- path: {plan.target_repo}")
-    print(f"- git root: {'OK' if plan.git_root == plan.target_repo else plan.git_root or 'missing'}")
-    if plan.is_subdir_target:
-        print("- WARN: target path is not the Git repository root")
-
-    print("\nExisting adoption:")
-    for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
-        print(f"- {name}: {'present' if (plan.target_repo / name).exists() else 'missing'}")
-    print(f"- metadata: {'present' if plan.metadata else 'missing'}")
-    if plan.metadata:
-        print(f"- applied profile: {plan.metadata.get('profile', 'missing')}")
-        print(f"- applied source_commit: {plan.metadata.get('source_commit', 'missing')}")
-    print(f"- local-copy SOURCE_COMMIT: {plan.local_copy_commit or 'missing'}")
-
-    print("\nSource:")
-    print(f"- local agent-rules HEAD: {plan.source_status.local_head or 'unknown'}")
-    print(f"- remote main HEAD: {plan.source_status.remote_head or 'unknown'}")
-    print(f"- status: {plan.source_status.local_status}")
-    for warning in plan.source_status.warnings:
-        print(f"- {warning}")
-    for warning in plan.warnings:
-        if warning not in plan.source_status.warnings:
-            print(f"- {warning}")
-
-    print("\nProfile:")
-    print(f"- {plan.profile or 'not selected'}")
-
-    print("\nPlanned files:")
-    if plan.files:
-        for item in plan.files:
-            print(f"- {item.action}: {item.path}")
-    else:
-        print("- none")
-
-    print("\nGitignore:")
-    if plan.ignore_statuses:
-        for status in plan.ignore_statuses:
-            if status.ignored and not status.tracked:
-                print(f"- FAIL: {status.path} is ignored")
-            elif status.ignored and status.tracked:
-                print(f"- OK: {status.path} is tracked despite ignore match")
-            else:
-                print(f"- OK: {status.path} is not ignored")
-            if status.warning:
-                print(f"  WARN: {status.warning}")
-    else:
-        print("- no generated files to check")
-
-    if args.detect or plan.detected.repo_types:
-        print("\nDetected repository type:")
-        print(f"- {', '.join(plan.detected.repo_types) if plan.detected.repo_types else 'none'}")
-        print("\nSuggested validation commands:")
-        for command in plan.detected.validation_commands:
-            print(f"- {command}")
-
-    print("\nRecommended commands:")
-    if plan.profile:
-        print(
-            f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
-            f"--profile {plan.profile} --dry-run"
-        )
-        if plan.detected.repo_types:
-            print(
-                f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
-                f"--profile {plan.profile} --detect --dry-run"
-            )
-    else:
-        for profile in ("codex", "claude", "gemini", "all"):
-            print(
-                f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
-                f"--profile {profile} --dry-run"
-            )
-        if plan.detected.repo_types:
-            print(
-                f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
-                "--profile codex --detect --dry-run"
-            )
-    if args.submodule:
-        print("\nRecommended submodule command:")
-        print(f"git submodule add {args.shared_url} .agents/agent-rules")
 
 
 def check_file_contains(path: Path, required: list[str]) -> tuple[bool, list[str]]:
@@ -1258,18 +1100,10 @@ def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> 
     return 0
 
 
-def backup_existing_file(path: Path) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    backup_path = path.with_name(f"{path.name}.{timestamp}.bak")
-    shutil.copy2(path, backup_path)
-    return backup_path
-
-
 def write_plan_file(
     target_repo: Path,
     plan: FilePlan,
     *,
-    backup: bool,
     dry_run: bool,
 ) -> tuple[str, str]:
     path = target_repo / plan.path
@@ -1312,10 +1146,6 @@ def write_plan_file(
         return ("Updated" if existed else "Created", plan.path)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    if existed and backup:
-        backup_path = backup_existing_file(path)
-        print(f"Backed up existing file: {backup_path}")
-
     if plan.content is not None:
         path.write_text(plan.content, encoding="utf-8")
     elif plan.source is not None:
@@ -1326,25 +1156,19 @@ def write_plan_file(
 
 
 def validate_plan_before_write(plan: AdoptionPlan, args: argparse.Namespace) -> int:
-    if plan.is_subdir_target and not args.allow_subdir_target:
+    if plan.is_subdir_target:
         print(
             "FAIL: target path is inside a Git repository but is not the repository root.\n"
             f"- target: {plan.target_repo}\n"
             f"- git root: {plan.git_root}\n\n"
-            "Run the helper from the Git repository root, or use --allow-subdir-target "
-            "if writing under this subdirectory is intentional."
+            "Run the helper from the Git repository root."
         )
         return 1
 
     for item in plan.files:
         if item.action in {"exists", "metadata-missing", "blocked-existing-local-copy"}:
             try:
-                write_plan_file(
-                    plan.target_repo,
-                    item,
-                    backup=args.backup,
-                    dry_run=True,
-                )
+                write_plan_file(plan.target_repo, item, dry_run=True)
             except SystemExit as exc:
                 print(exc)
                 return 1
@@ -1372,8 +1196,6 @@ def print_summary(
             f"Local agent-rules source status versus remote main is {plan.source_status.local_status}."
         )
     for status in plan.ignore_statuses:
-        if status.ignored and not status.tracked and args.allow_ignored:
-            warnings.append(f"{status.path} is ignored but --allow-ignored was used.")
         if status.warning:
             warnings.append(status.warning)
     print("\n".join(f"- {warning}" for warning in warnings) if warnings else "- none")
@@ -1417,7 +1239,7 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     if preflight_result:
         return preflight_result
 
-    ignored_result = fail_on_ignored(plan.ignore_statuses, args.allow_ignored)
+    ignored_result = fail_on_ignored(plan.ignore_statuses)
     if ignored_result:
         return ignored_result
 
@@ -1425,9 +1247,7 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     updated: list[str] = []
     skipped: list[str] = []
     for item in plan.files:
-        bucket, path = write_plan_file(
-            plan.target_repo, item, backup=args.backup, dry_run=args.dry_run
-        )
+        bucket, path = write_plan_file(plan.target_repo, item, dry_run=args.dry_run)
         if bucket == "Created":
             created.append(path)
         elif bucket == "Updated":
@@ -1439,17 +1259,11 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
 
 
 def validate_args(args: argparse.Namespace, profile: str | None) -> None:
-    if args.profile and args.entrypoints:
-        raise SystemExit("Use either --profile or --entrypoints, not both.")
     if args.merge and args.force:
         raise SystemExit("Use either --merge or --force, not both.")
     if args.merge and args.update:
         raise SystemExit("Use either --merge or --update, not both.")
-    if args.apply_submodule:
-        raise SystemExit("--apply-submodule is not implemented; run git submodule add manually.")
-    if args.backup and not (args.force or args.update or args.merge):
-        raise SystemExit("--backup only applies when files may be updated or overwritten.")
-    write_requested = not (args.check or args.check_latest or args.plan)
+    write_requested = not (args.check or args.check_latest)
     if write_requested and not profile:
         print_profile_help()
         raise SystemExit(2)
@@ -1461,8 +1275,7 @@ def validate_args(args: argparse.Namespace, profile: str | None) -> None:
 def main() -> int:
     args = parse_args()
     target_repo = resolve_target_repo(args.target_repo)
-    entrypoints = parse_entrypoints(args.entrypoints)
-    profile = parse_profile(args.profile) or profile_from_entrypoints(entrypoints)
+    profile = parse_profile(args.profile)
     validate_args(args, profile)
 
     if args.check:
@@ -1474,19 +1287,10 @@ def main() -> int:
         print_latest(plan, args)
         return check_latest_exit_code(plan, args)
 
-    if args.plan:
-        print_plan(plan, args)
-        return 0
-
-    if (
-        args.update
-        and plan.source_status.local_status in {"behind", "different", "diverged"}
-        and not args.allow_stale_source
-    ):
+    if args.update and plan.source_status.local_status in {"behind", "different", "diverged"}:
         print(
             f"FAIL: local agent-rules source status is {plan.source_status.local_status} versus remote main.\n"
-            "Update local agent-rules first, or re-run with --allow-stale-source "
-            "if this is intentional."
+            "Update local agent-rules first."
         )
         return 1
 
