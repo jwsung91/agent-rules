@@ -1,34 +1,32 @@
 # Scripted Repository Adoption
 
-Use `scripts/adopt-agent-rules.py` when applying `agent-rules` to multiple repositories or when you want repeatable planning, checking, and update behavior.
+Use `scripts/adopt-agent-rules.py` when applying `agent-rules` to multiple repositories or when you want repeatable checking and update behavior.
 
 The script creates root-level agent entrypoints and does not copy root-level `rules/` or `templates/` into the target repository. Full local copies, when requested, are written only under `.agents/agent-rules/`.
 
 ## Recommended Workflow
 
-1. Inspect the target repository with `--plan`.
-2. Choose an agent profile: `codex`, `claude`, `gemini`, or `multi`.
-3. Run with `--dry-run`.
-4. Apply the files.
-5. Edit repository-specific boundaries and validation commands.
-6. Run the suggested validation, starting with `git diff --check`.
-7. Commit in the target repository after review.
+1. Choose an agent profile: `codex`, `claude`, `gemini`, or `all`.
+2. Run with `--dry-run`.
+3. Apply the files.
+4. Edit repository-specific boundaries and validation commands.
+5. Run the suggested validation, starting with `git diff --check`.
+6. Commit in the target repository after review.
 
 ## Profiles
 
 ```text
 codex  -> AGENTS.md
-claude -> AGENTS.md + CLAUDE.md
-gemini -> AGENTS.md + GEMINI.md
-multi  -> AGENTS.md + CLAUDE.md + GEMINI.md
+claude -> CLAUDE.md
+gemini -> GEMINI.md
+all    -> AGENTS.md + CLAUDE.md + GEMINI.md
 ```
 
-`--entrypoints` remains available for backward compatibility, but new usage should prefer `--profile`. Do not pass `--profile` and `--entrypoints` together.
+Each profile creates only the files its agent needs. Use `--profile all` when the repository is used by multiple agent tools.
 
 ## 1. New Repository: Codex
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --plan
 python scripts/adopt-agent-rules.py /path/to/repo --profile codex --dry-run
 python scripts/adopt-agent-rules.py /path/to/repo --profile codex
 ```
@@ -40,16 +38,6 @@ python scripts/adopt-agent-rules.py /path/to/repo --profile claude --dry-run
 python scripts/adopt-agent-rules.py /path/to/repo --profile claude
 ```
 
-## Claude + Codex Usage
-
-When a repository uses Claude and Codex together, `--profile claude` is usually recommended.
-
-- Codex uses `AGENTS.md` in Primary Mode for implementation, scoped edits, and validation.
-- Claude uses `CLAUDE.md` and `AGENTS.md` in Review Mode for design review, risk analysis, compatibility checks, and validation gap review.
-- `CLAUDE.md` should stay thin and delegate to `AGENTS.md` as the primary repository instruction file.
-
-For detailed workflows and copyable prompts, see `docs/claude-codex-workflow.md`.
-
 ## 3. New Repository: Gemini
 
 ```bash
@@ -60,74 +48,44 @@ python scripts/adopt-agent-rules.py /path/to/repo --profile gemini
 ## 4. Multi-Agent Repository
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile multi --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile multi
+python scripts/adopt-agent-rules.py /path/to/repo --profile all --dry-run
+python scripts/adopt-agent-rules.py /path/to/repo --profile all
 ```
 
-## 5. Existing `AGENTS.md`: Merge
+## 5. Existing File: Sync
 
-Default apply refuses to overwrite an existing `AGENTS.md`.
+Default apply refuses to overwrite an existing file.
 
-Use `--merge` when the target repository already has manually written instructions and no `agent-rules` metadata block:
+Use `--sync` when the target repository already has an agent file. The helper automatically selects the right strategy:
+
+- **metadata present** → refreshes the metadata block and managed shared-rule block, preserving repository-specific sections.
+- **no metadata** → merges shared sections into the existing file without overwriting it (AGENTS.md only).
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --merge --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --merge
+python scripts/adopt-agent-rules.py /path/to/repo --sync --dry-run
+python scripts/adopt-agent-rules.py /path/to/repo --sync
 ```
 
-The merge path preserves existing content, adds missing shared sections, and adds metadata used by future checks and updates.
+`--profile` is optional with `--sync`; the helper infers it from the existing file's metadata. Pass `--profile` explicitly to change the profile.
 
 If `--check` finds a shared source URL but no metadata block, it reports:
 
 ```text
-[WARN] legacy adoption detected; run --merge to add metadata
+[WARN] legacy adoption detected; run --sync to add metadata
 ```
 
-This is a warning in normal checks and a failure with `--strict-check`.
+## 6. Sync From Updated Source
 
-## 6. Latest Status
+After pulling a new version of `agent-rules`, sync target repositories:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --check-latest
-python scripts/adopt-agent-rules.py /path/to/repo --check-latest --fail-if-outdated
+python scripts/adopt-agent-rules.py /path/to/repo --sync --dry-run
+python scripts/adopt-agent-rules.py /path/to/repo --sync
 ```
 
-This compares:
+If the local `agent-rules` source differs from remote `main`, `--sync` is blocked with an error. Pull from remote first, then re-run.
 
-- local `agent-rules` HEAD
-- remote `main` HEAD when reachable
-- target `AGENTS.md` metadata `source_commit`
-- `.agents/agent-rules/SOURCE_COMMIT` when a local copy exists
-
-Network or git lookup failures are warnings, not fatal errors.
-
-Latest status values:
-
-- `current`: commits match.
-- `behind`: the checked commit is an ancestor of the latest source commit.
-- `ahead`: the local source commit contains the remote source commit.
-- `diverged`: local and remote source commits are both known but neither is an ancestor of the other.
-- `different`: commits differ but ancestry could not be proven or the target commit is not an ancestor of the latest source.
-- `unknown`: one side of the comparison is missing or could not be determined.
-
-By default, `--check-latest` is informational and exits 0. Use `--fail-if-outdated` or `--strict-check` when automation should fail if:
-
-- local source is `behind`, `different`, or `diverged`
-- target `source_commit` is not `current`
-- local-copy `SOURCE_COMMIT` is not `current`
-
-## 7. Update From Current Source
-
-```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --update --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --update
-```
-
-`--update` refreshes the metadata block and managed shared-rule block. Repository-specific sections such as boundaries and validation commands are preserved.
-
-If local `agent-rules` differs from remote `main`, update is blocked by default. Use `--allow-stale-source` only when intentionally updating from the local checkout.
-
-## 8. Local Copy
+## 7. Local Copy
 
 ```bash
 python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --dry-run
@@ -139,8 +97,7 @@ Local copy mode writes:
 ```text
 .agents/agent-rules/
   SOURCE_COMMIT
-  AGENTS.md
-  CLAUDE.md or GEMINI.md when selected by profile
+  AGENTS.md / CLAUDE.md / GEMINI.md (selected by profile)
   rules/
   templates/
   docs/lightweight-adoption.md
@@ -149,28 +106,30 @@ Local copy mode writes:
 
 Do not copy `rules/` or `templates/` to the target repository root.
 
-If `.agents/agent-rules/` already exists, a new `--local-copy` apply fails by default. Use one of these explicit modes:
+If `.agents/agent-rules/` already exists, a new `--local-copy` apply fails by default. Use `--sync` or `--force` to refresh:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --update --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --update
+python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --sync --dry-run
+python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --sync
 python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --force
 ```
 
-During update, each local-copy file is compared with the source file. Unchanged files are reported as `no-op`; changed files are reported as `update`.
-
-## 9. `.gitignore` Collisions
+## 8. `.gitignore` Collisions
 
 Generated entrypoints must be commit-visible. Before writing, the helper checks each generated file with git:
 
 ```bash
-git -C /path/to/repo ls-files --error-unmatch -- AGENTS.md
-git -C /path/to/repo check-ignore -v -- AGENTS.md
+git -C /path/to/repo ls-files --error-unmatch -- CLAUDE.md
+git -C /path/to/repo check-ignore -v -- CLAUDE.md
 ```
 
-If an untracked generated file is ignored, the helper fails. Fix the ignore rule or add narrow exceptions, then re-run with `--dry-run`.
+If an untracked generated file is ignored, the helper fails with a recommended fix. Remove or narrow the ignore rule, or add narrow exceptions to `.gitignore`:
 
-For local copies ignored by `.agents/`, add exceptions such as:
+```gitignore
+!CLAUDE.md
+```
+
+For local copies, add exceptions such as:
 
 ```gitignore
 !.agents/
@@ -178,39 +137,34 @@ For local copies ignored by `.agents/`, add exceptions such as:
 !.agents/agent-rules/**
 ```
 
-Use `--allow-ignored` only when the ignored state is intentional.
+## 9. Validation Command Detection
 
-## 10. Detect Validation Commands
+The helper always inspects the target repository for known build files and suggests matching commands. Detected commands are written into the generated file automatically.
 
-```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile codex --detect --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile codex --detect
-```
+Supported files: `CMakeLists.txt`, `pyproject.toml`, `setup.py`, `requirements.txt`, `package.json`, `Cargo.toml`, `go.mod`, `package.xml`, `colcon.meta`, `.github/workflows/`.
 
-`--detect` does not run validation. It suggests commands from repository files such as `CMakeLists.txt`, `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `package.xml`, `colcon.meta`, and `.github/workflows/`.
-
-When `--validation` is also provided, explicit commands are kept and detected commands are appended without duplicates.
-
-Detected validation commands are written into generated `AGENTS.md` only when `--detect` is included on the apply command, not just the planning command.
-
-## Subdirectory Targets
-
-The helper expects `target_repo` to be the Git repository root. If the path is a subdirectory inside a Git repository:
-
-- `--plan` prints a warning.
-- write/apply/update operations fail by default.
-- `--allow-subdir-target` must be provided to write under that subdirectory intentionally.
-
-Git tracking and ignore checks always run from the Git root, and generated paths are converted to Git-root-relative paths before calling `git ls-files` or `git check-ignore`.
+When `--validation` is also provided, explicit commands come first and detected commands are appended without duplicates.
 
 ## Check
 
 ```bash
 python scripts/adopt-agent-rules.py /path/to/repo --check
-python scripts/adopt-agent-rules.py /path/to/repo --check --strict-check
 ```
 
-`--check` reports `[OK]`, `[WARN]`, and `[FAIL]` items. Failures return exit code 1. Warnings return exit code 0 unless `--strict-check` is used.
+`--check` reports `[OK]`, `[WARN]`, and `[FAIL]` items for:
+
+- presence of agent instruction files
+- metadata block existence and validity
+- required files for the active profile
+- source URL and commit traceability
+- `.gitignore` visibility
+- version status (local source HEAD vs. remote main HEAD)
+
+Both warnings and failures return exit code 1.
+
+## Subdirectory Targets
+
+The helper expects `target_repo` to be the Git repository root. If the path is a subdirectory inside a Git repository, write operations fail with an error. Run the helper from the repository root instead.
 
 ## Safety Notes
 
@@ -218,5 +172,4 @@ python scripts/adopt-agent-rules.py /path/to/repo --check --strict-check
 - The helper never pushes to GitHub.
 - The helper never runs `git pull`.
 - Existing files are not overwritten unless `--force` is passed.
-- Use `--force --backup` when intentionally replacing an existing file.
-- Submodule mode only prints the recommended command unless a future explicit apply option is implemented.
+- Use `--dry-run` to preview all planned changes before applying.

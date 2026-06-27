@@ -38,7 +38,7 @@ managed_block=true
 -->
 ```
 
-The metadata records which `agent-rules` commit generated the target file. `--check-latest` uses it to report whether the target repository is behind the shared source, and `--update` uses it to refresh only managed shared-rule content. Keep repository-specific sections manually editable; the metadata and managed block separate generated guidance from local guidance.
+The metadata records which `agent-rules` commit generated the target file. `--check` uses it to report whether the target repository is behind the shared source, and `--sync` uses it to refresh only managed shared-rule content. Keep repository-specific sections manually editable; the metadata and managed block separate generated guidance from local guidance.
 
 ## Directory Naming
 
