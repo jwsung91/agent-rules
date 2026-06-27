@@ -1184,20 +1184,19 @@ def write_plan_file(
     if plan.action == "metadata-missing":
         raise SystemExit(
             f"Refusing to update file without agent-rules metadata: {path}\n"
-            "Use --merge to preserve existing content and add metadata, or --force "
+            "Use --sync to preserve existing content and add metadata, or --force "
             "to overwrite intentionally."
         )
     if plan.action == "exists":
         if plan.path.startswith(".agents/agent-rules/"):
             raise SystemExit(
                 f"Refusing to apply local copy because .agents/agent-rules already exists: {target_repo / '.agents' / 'agent-rules'}\n"
-                "Use --local-copy --update to refresh the existing local copy, or --force "
+                "Use --local-copy --sync to refresh the existing local copy, or --force "
                 "to overwrite intentionally."
             )
         raise SystemExit(
             f"Refusing to overwrite existing file: {path}\n"
-            "Use --force to overwrite, --merge to preserve existing AGENTS.md content, "
-            "or --update for files with agent-rules metadata."
+            "Use --sync to update files with agent-rules metadata, or --force to overwrite."
         )
 
     existed = path.exists()
