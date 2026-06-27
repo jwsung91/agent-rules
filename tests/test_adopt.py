@@ -233,18 +233,20 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("agent-rules", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
 
-    def test_ignored_generated_files_fail(self) -> None:
-        (self.repo / ".gitignore").write_text("AGENTS.md\nCLAUDE.md\n.agents/\n", encoding="utf-8")
-        result = self.cli("--profile", "claude")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("ignored by target repository ignore rules", result.stdout)
-
-    def test_claude_profile_fails_when_untracked_claude_entrypoint_is_ignored(self) -> None:
+    def test_ignored_file_pattern_is_auto_fixed(self) -> None:
         (self.repo / ".gitignore").write_text("CLAUDE.md\n", encoding="utf-8")
         result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((self.repo / "CLAUDE.md").exists())
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("!CLAUDE.md", gitignore)
+        self.assertIn(".gitignore fixed", result.stdout)
+
+    def test_ignored_directory_pattern_fails(self) -> None:
+        (self.repo / ".gitignore").write_text(".agents/\n", encoding="utf-8")
+        result = self.cli("--profile", "codex", "--local-copy")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("CLAUDE.md", result.stdout)
-        self.assertIn("Matched ignore rule", result.stdout)
+        self.assertIn("ignored by target repository ignore rules", result.stdout)
 
     def test_tracked_ignored_claude_entrypoint_allows_update(self) -> None:
         result = self.cli("--profile", "claude")
@@ -268,7 +270,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         (self.repo / ".gitignore").write_text(".agents/\n", encoding="utf-8")
         result = self.cli("--profile", "codex", "--local-copy")
         self.assertEqual(result.returncode, 1)
-        self.assertIn(".agents/agent-rules/SOURCE_COMMIT", result.stdout)
+        self.assertIn("ignored by target repository ignore rules", result.stdout)
 
     def test_local_copy_creates_source_commit(self) -> None:
         result = self.cli("--profile", "codex", "--local-copy")

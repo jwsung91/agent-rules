@@ -430,6 +430,13 @@ def check_ignore_status(repo: Path, relative_path: str) -> IgnoreStatus:
         ["git", "-C", str(repo), "check-ignore", "-v", "--", relative_path]
     )
     if code == 0 and stdout:
+        # Format: "<source>:<linenum>:<pattern>\t<pathname>"
+        # A negation pattern (!foo) as the last match means the file is un-ignored.
+        tab_idx = stdout.find("\t")
+        rule_part = stdout[:tab_idx] if tab_idx != -1 else stdout
+        pattern = rule_part.rsplit(":", 1)[-1].strip() if ":" in rule_part else ""
+        if pattern.startswith("!"):
+            return IgnoreStatus(path=relative_path, tracked=tracked, ignored=False)
         return IgnoreStatus(
             path=relative_path,
             tracked=tracked,
@@ -484,6 +491,41 @@ def check_generated_files_ignored(
             continue
         statuses.append(check_ignore_status(git_root, root_relative))
     return statuses
+
+
+def fix_gitignore_exception(
+    git_root: Path, status: IgnoreStatus, *, dry_run: bool
+) -> str | None:
+    """Add a !<filename> exception to the .gitignore blocking the file.
+    Returns the relative .gitignore path on success, None if not fixable."""
+    if not status.matched_rule or status.tracked:
+        return None
+    # matched_rule format: "<relative_gitignore>:<line>:<pattern>\t<file>"
+    tab_idx = status.matched_rule.find("\t")
+    rule_part = status.matched_rule[:tab_idx] if tab_idx != -1 else status.matched_rule
+    gitignore_rel = rule_part.split(":")[0]
+    gitignore_path = git_root / gitignore_rel
+    if not gitignore_path.exists():
+        return None
+    # Only auto-fix exact filename patterns; skip directory or wildcard patterns
+    tab_idx = status.matched_rule.find("\t")
+    rule_part = status.matched_rule[:tab_idx] if tab_idx != -1 else status.matched_rule
+    pattern = rule_part.rsplit(":", 1)[-1].strip() if ":" in rule_part else ""
+    if pattern.endswith("/") or "*" in pattern or "?" in pattern:
+        return None
+    filename = Path(status.path).name
+    exception = f"!{filename}"
+    content = gitignore_path.read_text(encoding="utf-8")
+    if exception in content.splitlines():
+        return None
+    if dry_run:
+        print(f"Would add '{exception}' to {gitignore_rel}")
+        return gitignore_rel
+    if not content.endswith("\n"):
+        content += "\n"
+    content += f"{exception}\n"
+    gitignore_path.write_text(content, encoding="utf-8")
+    return gitignore_rel
 
 
 def fail_on_ignored(statuses: list[IgnoreStatus]) -> int:
@@ -1205,6 +1247,7 @@ def print_summary(
     skipped: list[str],
     plan: AdoptionPlan,
     args: argparse.Namespace,
+    gitignore_fixes: list[str] | None = None,
 ) -> None:
     print("\nCreated:")
     print("\n".join(f"- {item}" for item in created) if created else "- none")
@@ -1212,6 +1255,10 @@ def print_summary(
     print("\n".join(f"- {item}" for item in updated) if updated else "- none")
     print("\nSkipped:")
     print("\n".join(f"- {item}" for item in skipped) if skipped else "- none")
+    if gitignore_fixes:
+        print("\n.gitignore fixed:")
+        for f in gitignore_fixes:
+            print(f"- {f}")
 
     print("\nWarnings:")
     warnings = list(plan.warnings)
@@ -1253,8 +1300,9 @@ def print_summary(
     if changed:
         print("- git diff -- " + " ".join(changed))
     print("- git diff --check")
-    if changed:
-        print("- git add " + " ".join(changed))
+    all_to_add = list(gitignore_fixes) + changed
+    if all_to_add:
+        print("- git add " + " ".join(all_to_add))
     print('- git commit -m "docs(agent): adopt shared agent rules"')
 
 
@@ -1263,9 +1311,21 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     if preflight_result:
         return preflight_result
 
-    ignored_result = fail_on_ignored(plan.ignore_statuses)
-    if ignored_result:
-        return ignored_result
+    git_root = plan.git_root or plan.target_repo
+    gitignore_fixes: list[str] = []
+    unfixable: list[IgnoreStatus] = []
+    for status in plan.ignore_statuses:
+        if status.ignored and not status.tracked:
+            fixed = fix_gitignore_exception(git_root, status, dry_run=args.dry_run)
+            if fixed:
+                gitignore_fixes.append(fixed)
+            else:
+                unfixable.append(status)
+
+    if unfixable:
+        ignored_result = fail_on_ignored(unfixable)
+        if ignored_result:
+            return ignored_result
 
     created: list[str] = []
     updated: list[str] = []
@@ -1278,7 +1338,7 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
             updated.append(path)
         else:
             skipped.append(path)
-    print_summary(created, updated, skipped, plan, args)
+    print_summary(created, updated, skipped, plan, args, gitignore_fixes=gitignore_fixes)
     return 0
 
 
