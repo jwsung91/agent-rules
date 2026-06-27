@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "adopt-agent-rules.py"
+SCRIPT = ROOT / "scripts" / "adopt.py"
 
 spec = importlib.util.spec_from_file_location("adopt_agent_rules", SCRIPT)
 adopt = importlib.util.module_from_spec(spec)

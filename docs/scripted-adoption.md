@@ -1,6 +1,6 @@
 # Scripted Repository Adoption
 
-Use `scripts/adopt-agent-rules.py` when applying `agent-rules` to multiple repositories or when you want repeatable checking and update behavior.
+Use `scripts/adopt.py` when applying `agent-rules` to multiple repositories or when you want repeatable checking and update behavior.
 
 The script creates root-level agent entrypoints and does not copy root-level `rules/` or `templates/` into the target repository. Full local copies, when requested, are written only under `.agents/agent-rules/`.
 
@@ -27,29 +27,29 @@ Each profile creates only the files its agent needs. Use `--profile all` when th
 ## 1. New Repository: Codex
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile codex --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile codex
+python scripts/adopt.py /path/to/repo --profile codex --dry-run
+python scripts/adopt.py /path/to/repo --profile codex
 ```
 
 ## 2. New Repository: Claude
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude
+python scripts/adopt.py /path/to/repo --profile claude --dry-run
+python scripts/adopt.py /path/to/repo --profile claude
 ```
 
 ## 3. New Repository: Gemini
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile gemini --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile gemini
+python scripts/adopt.py /path/to/repo --profile gemini --dry-run
+python scripts/adopt.py /path/to/repo --profile gemini
 ```
 
 ## 4. Multi-Agent Repository
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile all --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile all
+python scripts/adopt.py /path/to/repo --profile all --dry-run
+python scripts/adopt.py /path/to/repo --profile all
 ```
 
 ## 5. Existing File: Sync
@@ -62,8 +62,8 @@ Use `--sync` when the target repository already has an agent file. The helper au
 - **no metadata** → merges shared sections into the existing file without overwriting it (AGENTS.md only).
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --sync --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --sync
+python scripts/adopt.py /path/to/repo --sync --dry-run
+python scripts/adopt.py /path/to/repo --sync
 ```
 
 `--profile` is optional with `--sync`; the helper infers it from the existing file's metadata. Pass `--profile` explicitly to change the profile.
@@ -79,8 +79,8 @@ If `--check` finds a shared source URL but no metadata block, it reports:
 After pulling a new version of `agent-rules`, sync target repositories:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --sync --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --sync
+python scripts/adopt.py /path/to/repo --sync --dry-run
+python scripts/adopt.py /path/to/repo --sync
 ```
 
 If the local `agent-rules` source differs from remote `main`, `--sync` is blocked with an error. Pull from remote first, then re-run.
@@ -88,8 +88,8 @@ If the local `agent-rules` source differs from remote `main`, `--sync` is blocke
 ## 7. Local Copy
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy
+python scripts/adopt.py /path/to/repo --profile claude --local-copy --dry-run
+python scripts/adopt.py /path/to/repo --profile claude --local-copy
 ```
 
 Local copy mode writes:
@@ -109,9 +109,9 @@ Do not copy `rules/` or `templates/` to the target repository root.
 If `.agents/agent-rules/` already exists, a new `--local-copy` apply fails by default. Use `--sync` or `--force` to refresh:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --sync --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --sync
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --local-copy --force
+python scripts/adopt.py /path/to/repo --profile claude --local-copy --sync --dry-run
+python scripts/adopt.py /path/to/repo --profile claude --local-copy --sync
+python scripts/adopt.py /path/to/repo --profile claude --local-copy --force
 ```
 
 ## 8. `.gitignore` Collisions
@@ -148,7 +148,7 @@ When `--validation` is also provided, explicit commands come first and detected 
 ## Check
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --check
+python scripts/adopt.py /path/to/repo --check
 ```
 
 `--check` reports `[OK]`, `[WARN]`, and `[FAIL]` items for:

@@ -11,9 +11,9 @@ Codex and Claude should not compete over the same task. In most workflows, one a
 For repositories that use Codex and Claude, the recommended setup is usually `--profile claude`:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --plan
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --detect --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile claude --detect
+python scripts/adopt.py /path/to/repo --plan
+python scripts/adopt.py /path/to/repo --profile claude --detect --dry-run
+python scripts/adopt.py /path/to/repo --profile claude --detect
 ```
 
 This creates:
@@ -160,8 +160,8 @@ Agents must report validation honestly. If a command was not run, the final repo
 Use `--profile multi` when the repository actively uses Codex, Claude, and Gemini:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/repo --profile multi --detect --dry-run
-python scripts/adopt-agent-rules.py /path/to/repo --profile multi --detect
+python scripts/adopt.py /path/to/repo --profile multi --detect --dry-run
+python scripts/adopt.py /path/to/repo --profile multi --detect
 ```
 
 For Codex + Claude only, prefer `--profile claude`. Adding `GEMINI.md` without using Gemini adds another entrypoint to maintain without improving the Codex + Claude workflow.

@@ -907,7 +907,7 @@ def print_latest(plan: AdoptionPlan, args: argparse.Namespace) -> None:
         print("- Choose a profile and run:")
     profile = args.profile or plan.metadata.get("profile") or "claude"
     print(
-        f"  python scripts/adopt-agent-rules.py {plan.target_repo} "
+        f"  python scripts/adopt.py {plan.target_repo} "
         f"--profile {profile} --update --dry-run"
     )
 

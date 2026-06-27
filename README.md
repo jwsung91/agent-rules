@@ -19,7 +19,7 @@ Supported agents:
 - `GEMINI.md`: Gemini-specific entrypoint.
 - `docs/lightweight-adoption.md`: Guide for applying these rules to target repositories using a lightweight local `AGENTS.md` and optional `.agents/` namespacing.
 - `docs/scripted-adoption.md`: Usage guide for the Python adoption helper script.
-- `scripts/adopt-agent-rules.py`: Helper script for creating or checking lightweight target-repository adoption files.
+- `scripts/adopt.py`: Helper script for creating or checking lightweight target-repository adoption files.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
@@ -52,28 +52,28 @@ This works better than linking to this repository only, because some agent envir
 For repeated use across repositories, prefer the Python helper script:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/target-repo --plan
-python scripts/adopt-agent-rules.py /path/to/target-repo --profile codex --dry-run
-python scripts/adopt-agent-rules.py /path/to/target-repo --profile codex
+python scripts/adopt.py /path/to/target-repo --plan
+python scripts/adopt.py /path/to/target-repo --profile codex --dry-run
+python scripts/adopt.py /path/to/target-repo --profile codex
 ```
 
 Choose the profile that matches the target repository workflow:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/target-repo --profile codex   # AGENTS.md
-python scripts/adopt-agent-rules.py /path/to/target-repo --profile claude  # AGENTS.md + CLAUDE.md
-python scripts/adopt-agent-rules.py /path/to/target-repo --profile gemini  # AGENTS.md + GEMINI.md
-python scripts/adopt-agent-rules.py /path/to/target-repo --profile multi   # all entrypoints
+python scripts/adopt.py /path/to/target-repo --profile codex   # AGENTS.md
+python scripts/adopt.py /path/to/target-repo --profile claude  # AGENTS.md + CLAUDE.md
+python scripts/adopt.py /path/to/target-repo --profile gemini  # AGENTS.md + GEMINI.md
+python scripts/adopt.py /path/to/target-repo --profile multi   # all entrypoints
 ```
 
 Check and update an adopted repository:
 
 ```bash
-python scripts/adopt-agent-rules.py /path/to/target-repo --check
-python scripts/adopt-agent-rules.py /path/to/target-repo --check-latest
-python scripts/adopt-agent-rules.py /path/to/target-repo --check-latest --fail-if-outdated
-python scripts/adopt-agent-rules.py /path/to/target-repo --profile claude --update --dry-run
-python scripts/adopt-agent-rules.py /path/to/target-repo --profile claude --update
+python scripts/adopt.py /path/to/target-repo --check
+python scripts/adopt.py /path/to/target-repo --check-latest
+python scripts/adopt.py /path/to/target-repo --check-latest --fail-if-outdated
+python scripts/adopt.py /path/to/target-repo --profile claude --update --dry-run
+python scripts/adopt.py /path/to/target-repo --profile claude --update
 ```
 
 Use `--check-latest --fail-if-outdated` or `--check-latest --strict-check` in automation when outdated local, target, or local-copy sources should fail the command.
