@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+{{AGENT_RULES_METADATA}}
+
 This is the Claude instruction entrypoint for this repository.
 
 ## Agent Usage Model

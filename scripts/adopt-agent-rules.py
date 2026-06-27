@@ -24,8 +24,8 @@ SOURCE_REF = "main"
 VALID_PROFILES = {"codex", "claude", "gemini", "multi"}
 PROFILE_FILES = {
     "codex": ("AGENTS.md",),
-    "claude": ("AGENTS.md", "CLAUDE.md"),
-    "gemini": ("AGENTS.md", "GEMINI.md"),
+    "claude": ("CLAUDE.md",),
+    "gemini": ("GEMINI.md",),
     "multi": ("AGENTS.md", "CLAUDE.md", "GEMINI.md"),
 }
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
@@ -669,8 +669,9 @@ def extract_managed_block(content: str) -> str | None:
 def replace_metadata_block(content: str, metadata: str) -> str:
     if METADATA_RE.search(content):
         return METADATA_RE.sub(metadata, content, count=1)
-    if content.startswith("# AGENTS.md"):
-        return content.replace("# AGENTS.md\n", f"# AGENTS.md\n\n{metadata}\n", 1)
+    for heading in ("# AGENTS.md", "# CLAUDE.md", "# GEMINI.md"):
+        if content.startswith(heading):
+            return content.replace(f"{heading}\n", f"{heading}\n\n{metadata}\n", 1)
     return f"{metadata}\n\n{content}"
 
 
@@ -763,6 +764,7 @@ def build_entrypoint_plans(
     force: bool,
 ) -> list[FilePlan]:
     plans: list[FilePlan] = []
+    primary_file = required_files_for_profile(profile)[0]
     for relative_path in required_files_for_profile(profile):
         rendered = render_file_for_profile(relative_path, context)
         path = target_repo / relative_path
@@ -772,7 +774,7 @@ def build_entrypoint_plans(
             plans.append(FilePlan(path=relative_path, action="exists"))
             continue
 
-        if relative_path == "AGENTS.md" and path.exists():
+        if relative_path == primary_file and path.exists():
             existing = path.read_text(encoding="utf-8", errors="replace")
             metadata = render_metadata(
                 shared_url=context.shared_rules_url,
@@ -786,7 +788,7 @@ def build_entrypoint_plans(
             elif update:
                 content = None
                 action = "metadata-missing"
-            elif merge:
+            elif merge and relative_path == "AGENTS.md":
                 content = merge_agents_content(
                     existing, rendered, metadata, context.shared_rules_url
                 )
@@ -880,11 +882,14 @@ def build_plan(
     git_root = find_repo_root(target_repo)
     detected = detect_repository_type(target_repo)
     source_status = get_source_status(args.shared_url)
-    metadata = parse_metadata(
-        (target_repo / "AGENTS.md").read_text(encoding="utf-8", errors="replace")
-        if (target_repo / "AGENTS.md").exists()
-        else ""
-    )
+    metadata: dict[str, str] = {}
+    for _name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+        _p = target_repo / _name
+        if _p.exists():
+            _m = parse_metadata(_p.read_text(encoding="utf-8", errors="replace"))
+            if _m:
+                metadata = _m
+                break
     files: list[FilePlan] = []
     warnings = list(source_status.warnings)
     if git_root is not None and git_root != target_repo:
@@ -936,8 +941,8 @@ def print_profile_help() -> None:
     print("No agent profile selected.\n")
     print("Choose one:")
     print("- --profile codex   : create AGENTS.md only")
-    print("- --profile claude  : create AGENTS.md + CLAUDE.md")
-    print("- --profile gemini  : create AGENTS.md + GEMINI.md")
+    print("- --profile claude  : create CLAUDE.md only")
+    print("- --profile gemini  : create GEMINI.md only")
     print("- --profile multi   : create AGENTS.md + CLAUDE.md + GEMINI.md")
 
 
@@ -1119,29 +1124,49 @@ def append_check(results: list[tuple[str, str]], status: str, message: str) -> N
 def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> int:
     results: list[tuple[str, str]] = []
     git_root = find_repo_root(target_repo)
+
+    # Find metadata from any agent instruction file (AGENTS.md takes priority)
+    metadata: dict[str, str] = {}
+    metadata_file: str | None = None
+    primary_content = ""
+    for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+        p = target_repo / name
+        if p.exists():
+            text = p.read_text(encoding="utf-8", errors="replace")
+            m = parse_metadata(text)
+            if m:
+                metadata = m
+                metadata_file = name
+                primary_content = text
+                break
+
     agents_path = target_repo / "AGENTS.md"
-    content = (
+    agents_content = (
         agents_path.read_text(encoding="utf-8", errors="replace")
         if agents_path.exists()
         else ""
     )
-    metadata = parse_metadata(content)
-    has_shared_url = shared_url in content or bool(metadata.get("source"))
-    legacy_adoption = agents_path.exists() and not metadata and shared_url in content
+    if not primary_content:
+        primary_content = agents_content
 
+    has_shared_url = shared_url in primary_content or bool(metadata.get("source"))
+    legacy_adoption = agents_path.exists() and not metadata and shared_url in agents_content
+
+    existing_files = [
+        n for n in ("AGENTS.md", "CLAUDE.md", "GEMINI.md") if (target_repo / n).exists()
+    ]
     append_check(
         results,
-        "OK" if agents_path.exists() else "FAIL",
-        "AGENTS.md exists" if agents_path.exists() else "AGENTS.md is missing",
+        "OK" if existing_files else "FAIL",
+        f"agent file(s) found: {', '.join(existing_files)}"
+        if existing_files
+        else "no agent instruction file found (AGENTS.md, CLAUDE.md, or GEMINI.md)",
     )
+
     if metadata:
-        append_check(results, "OK", "agent-rules metadata block exists")
+        append_check(results, "OK", f"agent-rules metadata block exists ({metadata_file})")
     elif legacy_adoption:
-        append_check(
-            results,
-            "WARN",
-            "legacy adoption detected; run --merge to add metadata",
-        )
+        append_check(results, "WARN", "legacy adoption detected; run --merge to add metadata")
     else:
         append_check(results, "FAIL", "agent-rules metadata block is missing")
 
@@ -1171,7 +1196,11 @@ def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> 
         else "profile is missing or invalid",
     )
 
-    required = required_files_for_profile(profile) if profile in VALID_PROFILES else ["AGENTS.md"]
+    required = (
+        required_files_for_profile(profile)
+        if profile in VALID_PROFILES
+        else existing_files or ["AGENTS.md"]
+    )
     for relative_path in required:
         path = target_repo / relative_path
         append_check(
@@ -1182,16 +1211,16 @@ def check_adoption(target_repo: Path, shared_url: str, strict: bool = False) -> 
             else f"{relative_path} is required by profile but missing",
         )
 
-    if BOUNDARY_PLACEHOLDER in content:
+    if BOUNDARY_PLACEHOLDER in primary_content:
         append_check(
             results,
             "WARN",
             "Repository-specific Boundaries still contains placeholder text",
         )
-    validation_commands = extract_validation_commands(content)
+    validation_commands = extract_validation_commands(primary_content)
     if not validation_commands or validation_commands == ["git diff --check"]:
         append_check(results, "WARN", "Validation only contains git diff --check")
-    if VALIDATION_PLACEHOLDER in content:
+    if VALIDATION_PLACEHOLDER in primary_content:
         append_check(results, "WARN", "Validation still contains placeholder text")
 
     plans = [FilePlan(path=name, action="check") for name in required]

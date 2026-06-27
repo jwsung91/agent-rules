@@ -60,8 +60,8 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
 
     def test_required_files_for_profile(self) -> None:
         self.assertEqual(adopt.required_files_for_profile("codex"), ["AGENTS.md"])
-        self.assertEqual(adopt.required_files_for_profile("claude"), ["AGENTS.md", "CLAUDE.md"])
-        self.assertEqual(adopt.required_files_for_profile("gemini"), ["AGENTS.md", "GEMINI.md"])
+        self.assertEqual(adopt.required_files_for_profile("claude"), ["CLAUDE.md"])
+        self.assertEqual(adopt.required_files_for_profile("gemini"), ["GEMINI.md"])
         self.assertEqual(
             adopt.required_files_for_profile("multi"),
             ["AGENTS.md", "CLAUDE.md", "GEMINI.md"],
@@ -154,7 +154,7 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                 detect=False,
             )
             plan = adopt.build_plan(repo, args, "claude")
-            self.assertEqual([item.path for item in plan.files], ["AGENTS.md", "CLAUDE.md"])
+            self.assertEqual([item.path for item in plan.files], ["CLAUDE.md"])
 
 
 class AdoptAgentRulesIntegrationTests(unittest.TestCase):
@@ -190,28 +190,28 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
     def test_apply_check_latest_and_check(self) -> None:
         result = self.cli("--profile", "claude")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertTrue((self.repo / "AGENTS.md").exists())
+        self.assertFalse((self.repo / "AGENTS.md").exists())
         self.assertTrue((self.repo / "CLAUDE.md").exists())
-        metadata = adopt.parse_metadata((self.repo / "AGENTS.md").read_text(encoding="utf-8"))
+        metadata = adopt.parse_metadata((self.repo / "CLAUDE.md").read_text(encoding="utf-8"))
         self.assertEqual(metadata["profile"], "claude")
         self.assertEqual(self.cli("--check-latest").returncode, 0)
         check = self.cli("--check")
         self.assertEqual(check.returncode, 0, check.stderr + check.stdout)
-        self.assertIn("[OK] AGENTS.md exists", check.stdout)
-        self.assertIn("[OK] agent-rules metadata block exists", check.stdout)
+        self.assertIn("[OK] agent file(s) found: CLAUDE.md", check.stdout)
+        self.assertIn("[OK] agent-rules metadata block exists (CLAUDE.md)", check.stdout)
         self.assertIn("[OK] profile: claude", check.stdout)
         self.assertIn("[OK] CLAUDE.md exists", check.stdout)
 
     def test_claude_profile_dry_run_and_apply(self) -> None:
         dry_run = self.cli("--profile", "claude", "--dry-run")
         self.assertEqual(dry_run.returncode, 0, dry_run.stderr + dry_run.stdout)
-        self.assertIn("Would create: " + str(self.repo / "AGENTS.md"), dry_run.stdout)
+        self.assertNotIn("AGENTS.md", dry_run.stdout)
         self.assertIn("Would create: " + str(self.repo / "CLAUDE.md"), dry_run.stdout)
         self.assertNotIn("GEMINI.md", dry_run.stdout)
 
         result = self.cli("--profile", "claude")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertTrue((self.repo / "AGENTS.md").exists())
+        self.assertFalse((self.repo / "AGENTS.md").exists())
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertFalse((self.repo / "GEMINI.md").exists())
 
@@ -268,7 +268,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
     def test_tracked_ignored_claude_entrypoint_allows_update(self) -> None:
         result = self.cli("--profile", "claude")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        run(["git", "add", "-f", "AGENTS.md", "CLAUDE.md"], self.repo)
+        run(["git", "add", "-f", "CLAUDE.md"], self.repo)
         git_commit(self.repo, "add claude adoption")
         (self.repo / ".gitignore").write_text("CLAUDE.md\n", encoding="utf-8")
 

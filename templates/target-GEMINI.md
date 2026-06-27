@@ -1,5 +1,7 @@
 # GEMINI.md
 
+{{AGENT_RULES_METADATA}}
+
 This is the Gemini instruction entrypoint for this repository.
 
 ## Agent Usage Model
