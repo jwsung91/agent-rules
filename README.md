@@ -41,7 +41,7 @@ Actual agent assignment should be decided per task. This repository intentionall
 The recommended adoption model is **lightweight local adoption**:
 
 1. Keep this repository as the shared source of truth.
-2. Add a root-level agent entrypoint to each target repository using the adoption script.
+2. Add a root-level agent entrypoint to each target repository using the adoption script. The script automatically adds the entrypoint to `.gitignore` — agent files are local-only and not committed.
 3. Add repository-specific boundaries and validation commands.
 4. Explicitly tell the coding agent to follow the entrypoint file when starting a task.
 
@@ -188,7 +188,8 @@ Practical judgment:
 
 Before considering a target repository adopted, check that:
 
-- `AGENTS.md` exists at the repository root.
+- An agent file (AGENTS.md, CLAUDE.md, or GEMINI.md) exists at the repository root.
+- It is listed in `.gitignore` (local-only, not committed).
 - It links to this repository.
 - It includes local summaries of the most important shared rules.
 - It lists repository-specific boundaries.

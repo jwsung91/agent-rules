@@ -39,6 +39,7 @@ MANAGED_START = "<!-- agent-rules-managed:start -->"
 MANAGED_END = "<!-- agent-rules-managed:end -->"
 BOUNDARY_PLACEHOLDER = "Add project-specific rules here."
 VALIDATION_PLACEHOLDER = "# Add project-specific build/test/lint commands here."
+GITIGNORE_AGENT_COMMENT = "# agent-rules (local only)"
 
 
 @dataclass(frozen=True)
@@ -493,39 +494,23 @@ def check_generated_files_ignored(
     return statuses
 
 
-def fix_gitignore_exception(
-    git_root: Path, status: IgnoreStatus, *, dry_run: bool
-) -> str | None:
-    """Add a !<filename> exception to the .gitignore blocking the file.
-    Returns the relative .gitignore path on success, None if not fixable."""
-    if not status.matched_rule or status.tracked:
-        return None
-    # matched_rule format: "<relative_gitignore>:<line>:<pattern>\t<file>"
-    tab_idx = status.matched_rule.find("\t")
-    rule_part = status.matched_rule[:tab_idx] if tab_idx != -1 else status.matched_rule
-    gitignore_rel = rule_part.split(":")[0]
-    gitignore_path = git_root / gitignore_rel
-    if not gitignore_path.exists():
-        return None
-    # Only auto-fix exact filename patterns; skip directory or wildcard patterns
-    tab_idx = status.matched_rule.find("\t")
-    rule_part = status.matched_rule[:tab_idx] if tab_idx != -1 else status.matched_rule
-    pattern = rule_part.rsplit(":", 1)[-1].strip() if ":" in rule_part else ""
-    if pattern.endswith("/") or "*" in pattern or "?" in pattern:
-        return None
-    filename = Path(status.path).name
-    exception = f"!{filename}"
-    content = gitignore_path.read_text(encoding="utf-8")
-    if exception in content.splitlines():
+def add_to_gitignore(git_root: Path, filenames: list[str], *, dry_run: bool) -> str | None:
+    """Add agent file names to .gitignore so they stay local-only.
+    Returns relative .gitignore path if modified, else None."""
+    gitignore_path = git_root / ".gitignore"
+    content = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+    existing_lines = set(content.splitlines())
+    to_add = [f for f in filenames if f not in existing_lines]
+    if not to_add:
         return None
     if dry_run:
-        print(f"Would add '{exception}' to {gitignore_rel}")
-        return gitignore_rel
-    if not content.endswith("\n"):
+        print(f"Would add to .gitignore: {', '.join(to_add)}")
+        return ".gitignore"
+    if content and not content.endswith("\n"):
         content += "\n"
-    content += f"{exception}\n"
+    content += f"\n{GITIGNORE_AGENT_COMMENT}\n" + "\n".join(to_add) + "\n"
     gitignore_path.write_text(content, encoding="utf-8")
-    return gitignore_rel
+    return ".gitignore"
 
 
 def fail_on_ignored(statuses: list[IgnoreStatus]) -> int:
@@ -542,11 +527,8 @@ def fail_on_ignored(statuses: list[IgnoreStatus]) -> int:
             print(f"- {status.matched_rule}")
         print("\nThis file would not be committed by default.\n")
     print("Recommended fixes:")
-    print("1. Remove or narrow the ignore rule.")
-    print("2. Add exceptions to .gitignore:")
-    for status in failing:
-        print(f"   !{status.path}")
-    print("3. Re-run with --dry-run.")
+    print("1. Remove or narrow the ignore rule in .gitignore.")
+    print("2. Re-run with --dry-run to verify.")
     return 1
 
 
@@ -934,61 +916,6 @@ def latest_status_for_local_copy(plan: AdoptionPlan) -> str:
     )
 
 
-def print_latest(plan: AdoptionPlan, args: argparse.Namespace) -> None:
-    source = plan.source_status
-    target_status = latest_status_for_target(plan.metadata, source)
-    local_copy_status = latest_status_for_local_copy(plan)
-    print("Source status:")
-    print(f"- local source HEAD: {source.local_head or 'unknown'}")
-    print(f"- remote main HEAD: {source.remote_head or 'unknown'}")
-    print(f"- local source status: {source.local_status}")
-    for warning in source.warnings:
-        print(f"- {warning}")
-    print("\nTarget status:")
-    print(f"- applied source_commit: {plan.metadata.get('source_commit', 'missing')}")
-    print(f"- applied profile: {plan.metadata.get('profile', 'missing')}")
-    print(f"- latest status: {target_status}")
-    print(f"- local-copy SOURCE_COMMIT: {plan.local_copy_commit or 'missing'}")
-    print(f"- local-copy latest status: {local_copy_status}")
-    if plan.local_copy_commit and local_copy_status != "current":
-        print(f"- WARN: local copy source status is {local_copy_status}")
-    print("\nRecommended:")
-    if source.local_status == "behind":
-        print("- Update local agent-rules first.")
-        print("- Then run:")
-    elif source.local_status in {"different", "diverged"}:
-        print("- Review local agent-rules source versus remote main before updating targets.")
-        print("- Then run:")
-    elif plan.metadata.get("profile"):
-        print("- Run:")
-    else:
-        print("- Choose a profile and run:")
-    profile = args.profile or plan.metadata.get("profile") or "claude"
-    print(
-        f"  python scripts/adopt.py {plan.target_repo} "
-        f"--profile {profile} --update --dry-run"
-    )
-
-
-def check_latest_exit_code(plan: AdoptionPlan, args: argparse.Namespace) -> int:
-    if not args.strict_check:
-        return 0
-    failures: list[str] = []
-    if latest_status_is_outdated(plan.source_status.local_status, local_source=True):
-        failures.append(f"local source status is {plan.source_status.local_status}")
-    target_status = latest_status_for_target(plan.metadata, plan.source_status)
-    if target_status != "current":
-        failures.append(f"target source status is {target_status}")
-    local_copy_status = latest_status_for_local_copy(plan)
-    if plan.local_copy_commit and local_copy_status != "current":
-        failures.append(f"local-copy source status is {local_copy_status}")
-    if failures:
-        print("\nOutdated check failed:")
-        for failure in failures:
-            print(f"- {failure}")
-        return 1
-    return 0
-
 
 
 def check_file_contains(path: Path, required: list[str]) -> tuple[bool, list[str]]:
@@ -1123,10 +1050,18 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
         if not (local_copy_root / "SOURCE_COMMIT").exists():
             append_check(results, "FAIL", ".agents/agent-rules/SOURCE_COMMIT is missing")
     for status in check_generated_files_ignored(target_repo, git_root, plans):
-        if status.ignored and not status.tracked:
-            append_check(results, "FAIL", f"{status.path} is ignored by .gitignore")
-        elif status.warning:
-            append_check(results, "WARN", status.warning)
+        is_entrypoint = Path(status.path).name in {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+        if is_entrypoint:
+            if status.tracked:
+                append_check(results, "WARN", f"{status.path} is tracked; run: git rm --cached {status.path}")
+            elif not status.ignored:
+                append_check(results, "WARN", f"{status.path} is not in .gitignore; run adopt to add it")
+            # ignored+untracked is the expected state; no check entry needed
+        else:
+            if status.ignored and not status.tracked:
+                append_check(results, "FAIL", f"{status.path} is ignored by .gitignore")
+            elif status.warning:
+                append_check(results, "WARN", status.warning)
 
     if (target_repo / "rules" / "commit-guidelines.md").exists():
         append_check(
@@ -1246,8 +1181,7 @@ def print_summary(
     skipped: list[str],
     plan: AdoptionPlan,
     args: argparse.Namespace,
-    gitignore_files: list[str] | None = None,
-    gitignore_fixed: set[str] | None = None,
+    gitignore_file: str | None = None,
 ) -> None:
     print("\nCreated:")
     print("\n".join(f"- {item}" for item in created) if created else "- none")
@@ -1255,10 +1189,9 @@ def print_summary(
     print("\n".join(f"- {item}" for item in updated) if updated else "- none")
     print("\nSkipped:")
     print("\n".join(f"- {item}" for item in skipped) if skipped else "- none")
-    if gitignore_files:
-        print("\n.gitignore fixed:")
-        for f in gitignore_files:
-            print(f"- {f}")
+    if gitignore_file:
+        print(f"\n.gitignore updated (local-only):")
+        print(f"- {gitignore_file}")
 
     print("\nWarnings:")
     warnings = list(plan.warnings)
@@ -1271,18 +1204,28 @@ def print_summary(
             warnings.append(status.warning)
     print("\n".join(f"- {warning}" for warning in warnings) if warnings else "- none")
 
-    fixed = gitignore_fixed or set()
+    entrypoint_basenames = {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
     print("\nGitignore:")
     if plan.ignore_statuses:
         for status in plan.ignore_statuses:
-            if status.ignored and status.tracked:
-                print(f"- OK: {status.path} is tracked despite ignore match")
-            elif status.ignored and status.path in fixed:
-                print(f"- OK: {status.path} was ignored — exception added to .gitignore")
-            elif status.ignored:
-                print(f"- WARN: {status.path} is ignored")
+            path_name = Path(status.path).name
+            is_entrypoint = path_name in {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+            if is_entrypoint:
+                if path_name in entrypoint_basenames and gitignore_file:
+                    print(f"- OK: {status.path} added to .gitignore (local-only)")
+                elif status.ignored and not status.tracked:
+                    print(f"- OK: {status.path} is local-only (already in .gitignore)")
+                elif status.tracked:
+                    print(f"- WARN: {status.path} is tracked (consider untracking to make local-only)")
+                else:
+                    print(f"- NOTE: {status.path} is not effectively in .gitignore")
             else:
-                print(f"- OK: {status.path} is not ignored")
+                if status.ignored and status.tracked:
+                    print(f"- OK: {status.path} is tracked despite ignore match")
+                elif status.ignored:
+                    print(f"- WARN: {status.path} is ignored")
+                else:
+                    print(f"- OK: {status.path} is not ignored")
     else:
         print("- no generated files checked")
 
@@ -1303,9 +1246,8 @@ def print_summary(
     if changed:
         print("- git diff -- " + " ".join(changed))
     print("- git diff --check")
-    all_to_add = list(gitignore_files or []) + changed
-    if all_to_add:
-        print("- git add " + " ".join(all_to_add))
+    if gitignore_file:
+        print(f"- git add {gitignore_file}")
     print('- git commit -m "docs(agent): adopt shared agent rules"')
 
 
@@ -1314,23 +1256,13 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     if preflight_result:
         return preflight_result
 
-    git_root = plan.git_root or plan.target_repo
-    gitignore_files: list[str] = []   # .gitignore paths modified (for git add)
-    gitignore_fixed: set[str] = set() # file paths whose ignore was resolved
-    unfixable: list[IgnoreStatus] = []
-    for status in plan.ignore_statuses:
-        if status.ignored and not status.tracked:
-            fixed = fix_gitignore_exception(git_root, status, dry_run=args.dry_run)
-            if fixed:
-                gitignore_files.append(fixed)
-                gitignore_fixed.add(status.path)
-            else:
-                unfixable.append(status)
-
-    if unfixable:
-        ignored_result = fail_on_ignored(unfixable)
-        if ignored_result:
-            return ignored_result
+    # Local copy files (.agents/) must be committable; fail if they're ignored
+    local_copy_ignored = [
+        s for s in plan.ignore_statuses
+        if s.path.startswith(".agents/") and s.ignored and not s.tracked
+    ]
+    if local_copy_ignored:
+        return fail_on_ignored(local_copy_ignored)
 
     created: list[str] = []
     updated: list[str] = []
@@ -1343,7 +1275,23 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
             updated.append(path)
         else:
             skipped.append(path)
-    print_summary(created, updated, skipped, plan, args, gitignore_files=gitignore_files, gitignore_fixed=gitignore_fixed)
+
+    # Add all three entrypoint names to .gitignore so they remain local-only,
+    # regardless of which profile was applied.
+    git_root = plan.git_root or plan.target_repo
+    any_entrypoint_written = any(
+        Path(p).name in {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+        for p in (created + updated)
+    )
+    gitignore_file: str | None = None
+    if any_entrypoint_written:
+        gitignore_file = add_to_gitignore(
+            git_root,
+            ["AGENTS.md", "CLAUDE.md", "GEMINI.md"],
+            dry_run=args.dry_run,
+        )
+
+    print_summary(created, updated, skipped, plan, args, gitignore_file=gitignore_file)
     return 0
 
 

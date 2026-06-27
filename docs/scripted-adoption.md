@@ -11,7 +11,7 @@ The script creates root-level agent entrypoints and does not copy root-level `ru
 3. Apply the files.
 4. Edit repository-specific boundaries and validation commands.
 5. Run the suggested validation, starting with `git diff --check`.
-6. Commit in the target repository after review.
+6. Commit only `.gitignore` in the target repository — agent files are local-only.
 
 ## Profiles
 
@@ -191,28 +191,22 @@ Exit code is 1 if any repository failed.
 
   Or track it if the paths are stable and shared (e.g. CI server paths).
 
-## 9. `.gitignore` Collisions
+## 9. Local-Only Agent Files
 
-Generated entrypoints must be commit-visible. Before writing, the helper checks each generated file with git:
+Agent entrypoint files (AGENTS.md, CLAUDE.md, GEMINI.md) are **local-only**. The helper automatically adds them to the target repository's `.gitignore` after creating or updating them. They will not be committed to the repository.
+
+This is intentional: agent instruction files are personal workflow tools, not project artifacts.
+
+After adoption, commit only `.gitignore`:
 
 ```bash
-git -C /path/to/repo ls-files --error-unmatch -- CLAUDE.md
-git -C /path/to/repo check-ignore -v -- CLAUDE.md
+git add .gitignore
+git commit -m "docs(agent): adopt shared agent rules"
 ```
 
-If an untracked generated file is ignored, the helper fails with a recommended fix. Remove or narrow the ignore rule, or add narrow exceptions to `.gitignore`:
+If an agent file is already in `.gitignore`, the helper skips the `.gitignore` update (no duplicate entry is added) and proceeds normally.
 
-```gitignore
-!CLAUDE.md
-```
-
-For local copies, add exceptions such as:
-
-```gitignore
-!.agents/
-!.agents/agent-rules/
-!.agents/agent-rules/**
-```
+Local copy files (`.agents/agent-rules/`) are different: they are meant to be committed if you want them shared with the team. If `.agents/` is blocked by `.gitignore`, the helper will fail with a message to remove or narrow the ignore rule.
 
 ## 9. Validation Command Detection
 

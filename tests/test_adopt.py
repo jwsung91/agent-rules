@@ -186,15 +186,22 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
     def test_claude_profile_dry_run_and_apply(self) -> None:
         dry_run = self.cli("--profile", "claude", "--dry-run")
         self.assertEqual(dry_run.returncode, 0, dry_run.stderr + dry_run.stdout)
-        self.assertNotIn("AGENTS.md", dry_run.stdout)
+        # claude 프로필은 CLAUDE.md만 생성하고, AGENTS.md/GEMINI.md 파일은 생성하지 않음
         self.assertIn("Would create: " + str(self.repo / "CLAUDE.md"), dry_run.stdout)
-        self.assertNotIn("GEMINI.md", dry_run.stdout)
+        self.assertNotIn("Would create: " + str(self.repo / "AGENTS.md"), dry_run.stdout)
+        self.assertNotIn("Would create: " + str(self.repo / "GEMINI.md"), dry_run.stdout)
+        # .gitignore에는 세 파일 모두 추가됨
+        self.assertIn("AGENTS.md, CLAUDE.md, GEMINI.md", dry_run.stdout)
 
         result = self.cli("--profile", "claude")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertFalse((self.repo / "AGENTS.md").exists())
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertFalse((self.repo / "GEMINI.md").exists())
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("AGENTS.md", gitignore)
+        self.assertIn("CLAUDE.md", gitignore)
+        self.assertIn("GEMINI.md", gitignore)
 
     def test_codex_profile_creates_only_agents(self) -> None:
         result = self.cli("--profile", "codex")
@@ -233,14 +240,22 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("agent-rules", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
 
-    def test_ignored_file_pattern_is_auto_fixed(self) -> None:
+    def test_agent_files_added_to_gitignore(self) -> None:
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((self.repo / "CLAUDE.md").exists())
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("CLAUDE.md", gitignore)
+        self.assertIn(".gitignore updated", result.stdout)
+
+    def test_existing_gitignore_entry_not_duplicated(self) -> None:
         (self.repo / ".gitignore").write_text("CLAUDE.md\n", encoding="utf-8")
         result = self.cli("--profile", "claude")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
-        self.assertIn("!CLAUDE.md", gitignore)
-        self.assertIn(".gitignore fixed", result.stdout)
+        self.assertNotIn("!CLAUDE.md", gitignore)
+        self.assertEqual(gitignore.count("CLAUDE.md"), 1)
 
     def test_ignored_directory_pattern_fails(self) -> None:
         (self.repo / ".gitignore").write_text(".agents/\n", encoding="utf-8")
