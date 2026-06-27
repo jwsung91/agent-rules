@@ -41,196 +41,63 @@ Actual agent assignment should be decided per task. This repository intentionall
 The recommended adoption model is **lightweight local adoption**:
 
 1. Keep this repository as the shared source of truth.
-2. Add a short root-level `AGENTS.md` to each target repository.
-3. Put only the highest-signal rules, repository-specific boundaries, and validation commands in that local file.
-4. Explicitly tell the coding agent to follow the target repository's `AGENTS.md` when starting a task.
+2. Add a root-level agent entrypoint to each target repository using the adoption script.
+3. Add repository-specific boundaries and validation commands.
+4. Explicitly tell the coding agent to follow the entrypoint file when starting a task.
 
 This works better than linking to this repository only, because some agent environments may not automatically open external links or may lose remote context during a task.
 
 ### Scripted adoption
 
-For repeated use across repositories, prefer the Python helper script:
+Use `scripts/adopt.py` to create or manage agent entrypoints. Choose the profile for the agent used in that repository:
 
 ```bash
-python scripts/adopt.py /path/to/target-repo --plan
-python scripts/adopt.py /path/to/target-repo --profile codex --dry-run
-python scripts/adopt.py /path/to/target-repo --profile codex
+python scripts/adopt.py /path/to/repo --profile codex   # AGENTS.md only
+python scripts/adopt.py /path/to/repo --profile claude  # CLAUDE.md only
+python scripts/adopt.py /path/to/repo --profile gemini  # GEMINI.md only
+python scripts/adopt.py /path/to/repo --profile all     # all three files
 ```
 
-Choose the profile that matches the target repository workflow:
+Preview before applying:
 
 ```bash
-python scripts/adopt.py /path/to/target-repo --profile codex   # AGENTS.md
-python scripts/adopt.py /path/to/target-repo --profile claude  # AGENTS.md + CLAUDE.md
-python scripts/adopt.py /path/to/target-repo --profile gemini  # AGENTS.md + GEMINI.md
-python scripts/adopt.py /path/to/target-repo --profile multi   # all entrypoints
+python scripts/adopt.py /path/to/repo --profile claude --dry-run
 ```
 
-Check and update an adopted repository:
+Check and update an existing adoption:
 
 ```bash
-python scripts/adopt.py /path/to/target-repo --check
-python scripts/adopt.py /path/to/target-repo --check-latest
-python scripts/adopt.py /path/to/target-repo --check-latest --fail-if-outdated
-python scripts/adopt.py /path/to/target-repo --profile claude --update --dry-run
-python scripts/adopt.py /path/to/target-repo --profile claude --update
+# Health check (always strict: warnings also fail)
+python scripts/adopt.py /path/to/repo --check
+
+# Sync after updating agent-rules (update or merge automatically)
+python scripts/adopt.py /path/to/repo --sync
+python scripts/adopt.py /path/to/repo --sync --dry-run
 ```
 
-Use `--check-latest --fail-if-outdated` or `--check-latest --strict-check` in automation when outdated local, target, or local-copy sources should fail the command.
+Apply to multiple repositories at once using a batch file:
 
-For repositories that use Codex and Claude together, see `docs/claude-codex-workflow.md`. The recommended setup is usually `--profile claude`, where `AGENTS.md` acts as the shared entrypoint and `CLAUDE.md` delegates to it.
+```toml
+# repos.toml
+[[repos]]
+path = "/path/to/api"
+profile = "claude"
 
-Use `--local-copy` only when the target repository needs offline or pinned access. The helper copies under `.agents/agent-rules/` only; do not copy shared `rules/` or `templates/` to the target repository root.
-
-See `docs/scripted-adoption.md` for `--merge`, `.gitignore` collision handling, `--detect`, `--force`, `--backup`, custom `--boundary`, and custom `--validation`.
-
-### 1. Add `AGENTS.md` to the target repository
-
-From the root of the target repository:
+[[repos]]
+path = "/path/to/worker"
+profile = "codex"
+```
 
 ```bash
-cat > AGENTS.md <<'EOF'
-# AGENTS.md
-
-This repository follows the shared agent rules from:
-
-- https://github.com/jwsung91/agent-rules
-
-Use this file as the repository-local instruction entrypoint.
-
-If internet access is available, agents may consult the shared rules repository for detailed guidance. The rules below are the local summary that must be followed even when external links are not available.
-
-## Agent Usage Model
-
-Use agent roles as execution modes, not fixed tool identities.
-
-- Primary Mode: implementation, documentation update, investigation, or refactoring.
-- Review Mode: cross-check, review, risk analysis, and validation gap review.
-
-Use the mode requested by the task.
-
-## Core Rules
-
-- Investigate existing code, documentation, and behavior before editing.
-- Keep changes scoped to the requested task.
-- Do not refactor unrelated files.
-- Do not rename public APIs, files, directories, or user-facing concepts unless explicitly requested.
-- Prefer simple, explicit, maintainable changes.
-- Follow repository-local formatter, linter, test, PR template, and verification conventions.
-- Validate changes with the narrowest relevant checks when practical.
-- Use resource-safe build and test commands; avoid full-core parallelism by default.
-- Before committing, run lightweight checks for changed files, such as `git diff --check`.
-- Use Conventional Commits for commit messages.
-- Do not claim validation was run if it was not.
-- Report what changed, what was intentionally not changed, validation results, and any test or documentation impact.
-
-## Repository-specific Boundaries
-
-Add project-specific rules here.
-
-Examples:
-
-- public API compatibility expectations
-- benchmark or performance data boundaries
-- packaging impact expectations
-- supported language or build conventions
-- documentation update expectations
-
-## Validation
-
-Before choosing commands, check repository-local scripts and configuration first.
-
-Preferred checks for this repository:
-
-```bash
-git diff --check
-# Add project-specific build/test/lint commands here.
+python scripts/adopt.py --batch repos.toml --dry-run
+python scripts/adopt.py --batch repos.toml
+python scripts/adopt.py --batch repos.toml --sync
+python scripts/adopt.py --batch repos.toml --check
 ```
 
-Use conservative parallelism for local build or test validation when the environment is unknown. Prefer `-j2`, or `-j1` when memory pressure, OOM, VM/WSL constraints, embedded devices, or previous instability are involved.
+See `docs/scripted-adoption.md` for `--sync`, `--force`, `--local-copy`, `.gitignore` collision handling, custom `--boundary`, and custom `--validation`.
 
-If validation cannot be run, explain why and provide the command that should be run later.
-
-## Final Report
-
-Include:
-
-- Summary
-- Changes
-- Validation
-- Not Included
-- Test or documentation impact
-- Follow-up
-EOF
-```
-
-Then edit the placeholders and commit it:
-
-```bash
-git add AGENTS.md
-git commit -m "docs(agent): adopt shared agent rules"
-```
-
-### 2. Add optional agent-specific entrypoints
-
-Use these only when a specific tool or workflow expects a tool-specific file. Keep them thin so the root `AGENTS.md` stays the source of repository-local truth.
-
-```bash
-cat > CLAUDE.md <<'EOF'
-# CLAUDE.md
-
-Follow `AGENTS.md` as the primary repository instruction file.
-
-If internet access is available, also consult:
-
-- https://github.com/jwsung91/agent-rules
-EOF
-
-cat > GEMINI.md <<'EOF'
-# GEMINI.md
-
-Follow `AGENTS.md` as the primary repository instruction file.
-
-If internet access is available, also consult:
-
-- https://github.com/jwsung91/agent-rules
-EOF
-
-git add CLAUDE.md GEMINI.md
-git commit -m "docs(agent): add agent-specific entrypoints"
-```
-
-### 3. Optional: keep a local copy or pinned reference
-
-Most repositories should not copy this entire repository. Prefer the short root `AGENTS.md` above.
-
-Use a local copy only when the target repository needs offline access, pinned rules, or local agent-specific templates.
-
-Recommended layout:
-
-```text
-target-repo/
-  AGENTS.md
-  .agents/
-    agent-rules/
-      SOURCE_COMMIT
-      rules/
-      templates/
-```
-
-Do **not** copy root-level `rules/` or `templates/` directly into a target repository unless that repository is dedicated to agent instructions. Those names may conflict with project domain rules, issue templates, documentation templates, or generated artifacts.
-
-If you want a pinned reference instead of copying files, use a submodule under `.agents/`:
-
-```bash
-mkdir -p .agents
-git submodule add https://github.com/jwsung91/agent-rules .agents/agent-rules
-git commit -m "docs(agent): add shared agent rules reference"
-```
-
-Use this only when submodule maintenance is acceptable for the target repository.
-
-### 4. Start tasks with an explicit mode and instruction source
+### 1. Start tasks with an explicit mode and instruction source
 
 Primary implementation task:
 
@@ -266,18 +133,16 @@ Before committing, check the diff and run lightweight validation that is relevan
 Do not include unrelated changes.
 ```
 
-### 5. Keep target repositories updated
+### 2. Keep target repositories updated
 
-For lightweight adoption, update the target repository's root `AGENTS.md` when these shared rules change in a way that affects daily work.
-
-For `.agents/` copies, periodically refresh only the files that are actually used by that repository.
-
-For submodules:
+After pulling a new version of `agent-rules`, sync adopted repositories:
 
 ```bash
-git submodule update --remote .agents/agent-rules
-git add .agents/agent-rules
-git commit -m "docs(agent): update shared agent rules reference"
+# Single repository
+python scripts/adopt.py /path/to/repo --sync
+
+# All repositories at once
+python scripts/adopt.py --batch repos.toml --sync
 ```
 
 ## Recommended Usage
