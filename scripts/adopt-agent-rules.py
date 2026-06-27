@@ -21,12 +21,12 @@ from pathlib import Path
 
 DEFAULT_SHARED_URL = "https://github.com/jwsung91/agent-rules"
 SOURCE_REF = "main"
-VALID_PROFILES = {"codex", "claude", "gemini", "multi"}
+VALID_PROFILES = {"codex", "claude", "gemini", "all"}
 PROFILE_FILES = {
     "codex": ("AGENTS.md",),
     "claude": ("CLAUDE.md",),
     "gemini": ("GEMINI.md",),
-    "multi": ("AGENTS.md", "CLAUDE.md", "GEMINI.md"),
+    "all": ("AGENTS.md", "CLAUDE.md", "GEMINI.md"),
 }
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
 METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)
@@ -108,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         choices=sorted(VALID_PROFILES),
-        help="Agent profile to manage: codex, claude, gemini, or multi.",
+        help="Agent profile to manage: codex, claude, gemini, or all.",
     )
     parser.add_argument(
         "--entrypoints",
@@ -256,7 +256,7 @@ def parse_profile(value: str | None) -> str | None:
     profile = value.strip().lower()
     if profile not in VALID_PROFILES:
         raise SystemExit(
-            f"Unsupported profile: {value}. Supported values: codex, claude, gemini, multi."
+            f"Unsupported profile: {value}. Supported values: codex, claude, gemini, all."
         )
     return profile
 
@@ -288,14 +288,14 @@ def profile_from_entrypoints(entrypoints: set[str]) -> str | None:
     if entrypoints == {"gemini"}:
         return "gemini"
     if entrypoints == {"claude", "gemini"}:
-        return "multi"
+        return "all"
     raise SystemExit("Could not infer profile from --entrypoints.")
 
 
 def required_files_for_profile(profile: str) -> list[str]:
     if profile not in PROFILE_FILES:
         raise SystemExit(
-            f"Unsupported profile: {profile}. Supported values: codex, claude, gemini, multi."
+            f"Unsupported profile: {profile}. Supported values: codex, claude, gemini, all."
         )
     return list(PROFILE_FILES[profile])
 
@@ -943,7 +943,7 @@ def print_profile_help() -> None:
     print("- --profile codex   : create AGENTS.md only")
     print("- --profile claude  : create CLAUDE.md only")
     print("- --profile gemini  : create GEMINI.md only")
-    print("- --profile multi   : create AGENTS.md + CLAUDE.md + GEMINI.md")
+    print("- --profile all     : create AGENTS.md + CLAUDE.md + GEMINI.md")
 
 
 def latest_status_for_target(metadata: dict[str, str], source_status: SourceStatus) -> str:
@@ -1083,7 +1083,7 @@ def print_plan(plan: AdoptionPlan, args: argparse.Namespace) -> None:
                 f"--profile {plan.profile} --detect --dry-run"
             )
     else:
-        for profile in ("codex", "claude", "gemini", "multi"):
+        for profile in ("codex", "claude", "gemini", "all"):
             print(
                 f"- python scripts/adopt-agent-rules.py {plan.target_repo} "
                 f"--profile {profile} --dry-run"

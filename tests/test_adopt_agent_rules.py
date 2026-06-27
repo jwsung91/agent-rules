@@ -56,14 +56,14 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         self.assertEqual(adopt.parse_entrypoints(""), set())
         self.assertEqual(adopt.parse_entrypoints("claude"), {"claude"})
         self.assertEqual(adopt.parse_entrypoints("all"), {"claude", "gemini"})
-        self.assertEqual(adopt.profile_from_entrypoints({"claude", "gemini"}), "multi")
+        self.assertEqual(adopt.profile_from_entrypoints({"claude", "gemini"}), "all")
 
     def test_required_files_for_profile(self) -> None:
         self.assertEqual(adopt.required_files_for_profile("codex"), ["AGENTS.md"])
         self.assertEqual(adopt.required_files_for_profile("claude"), ["CLAUDE.md"])
         self.assertEqual(adopt.required_files_for_profile("gemini"), ["GEMINI.md"])
         self.assertEqual(
-            adopt.required_files_for_profile("multi"),
+            adopt.required_files_for_profile("all"),
             ["AGENTS.md", "CLAUDE.md", "GEMINI.md"],
         )
 
@@ -174,7 +174,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
 
     def test_plan_and_profile_dry_runs(self) -> None:
         self.assertEqual(self.cli("--plan").returncode, 0)
-        for profile in ("codex", "claude", "gemini", "multi"):
+        for profile in ("codex", "claude", "gemini", "all"):
             result = self.cli("--profile", profile, "--dry-run")
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             self.assertIn("Would create", result.stdout)
@@ -222,8 +222,8 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertFalse((self.repo / "CLAUDE.md").exists())
         self.assertFalse((self.repo / "GEMINI.md").exists())
 
-    def test_multi_profile_creates_all_entrypoints(self) -> None:
-        result = self.cli("--profile", "multi")
+    def test_all_profile_creates_all_entrypoints(self) -> None:
+        result = self.cli("--profile", "all")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertTrue((self.repo / "AGENTS.md").exists())
         self.assertTrue((self.repo / "CLAUDE.md").exists())
