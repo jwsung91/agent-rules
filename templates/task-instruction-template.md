@@ -1,3 +1,8 @@
+---
+name: task-plan
+description: Structures a task brief for agent work. Use when planning a Primary Mode or Review Mode task — fill in each section before handing off to an agent.
+---
+
 # Task
 
 ## Repository

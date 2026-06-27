@@ -20,6 +20,7 @@ Use the mode requested by the task. Follow `rules/agent-collaboration.md` for mu
 - Prefer simple, explicit, maintainable changes.
 - Preserve existing structure, naming, and documentation tone.
 - Do not expand the task scope unless explicitly requested.
+- Ask for clarification before proceeding when scope is ambiguous, instructions conflict, or a destructive action lacks explicit authorization. See `rules/clarification-protocol.md`.
 - Consider risks, compatibility concerns, and validation gaps appropriate to the task.
 
 ## Commit Messages

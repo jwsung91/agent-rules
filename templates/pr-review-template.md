@@ -1,3 +1,8 @@
+---
+name: pr-review
+description: Structures a PR review request for an agent. Use when requesting a code review, risk analysis, or validation gap review of a pull request or branch.
+---
+
 # PR Review Request
 
 ## Repository

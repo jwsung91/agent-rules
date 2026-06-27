@@ -62,6 +62,38 @@ BREAKING CHANGE: `set_timeout_ms` was renamed to `set_timeout`.
 - Mention validation in the PR body or final report, not necessarily in the commit title.
 - Before committing, follow `rules/test-and-validation.md` for lightweight pre-commit checks.
 
+## Branch Naming
+
+Use the same type prefix as the primary commit:
+
+```text
+<type>/<short-description>
+```
+
+Examples:
+
+```text
+feat/add-transport-option
+fix/udp-large-payload
+docs/agent-usage-model
+ci/vcpkg-port-validation
+refactor/connection-pool
+```
+
+For agent-generated branches, prefix with the agent name:
+
+```text
+codex/adoption-helper-profiles
+claude/fix-auth-middleware
+```
+
+Rules:
+
+- Lowercase only.
+- Use hyphens for spaces.
+- Keep descriptions short and descriptive.
+- Do not reuse branch names across unrelated tasks.
+
 ## Recommended Types by Change
 
 - Documentation-only changes: `docs`

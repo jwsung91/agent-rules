@@ -20,6 +20,7 @@ Use the mode requested by the task. Follow `rules/agent-collaboration.md` for mu
 - Prefer simple, explicit, maintainable changes.
 - Preserve existing structure, naming, and documentation tone.
 - Avoid new dependencies unless they have a clear, task-specific justification.
+- Ask for clarification before proceeding when scope is ambiguous, instructions conflict, or a destructive action lacks explicit authorization. See `rules/clarification-protocol.md`.
 
 ## Commit Messages
 
