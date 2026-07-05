@@ -24,6 +24,7 @@ Supported agents:
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
 - `templates/`: Reusable task, review, and target-repository adoption templates.
+- `.github/workflows/tests.yml`: CI workflow that runs `tests/test_adopt.py` on push and pull request.
 
 ## Agent Usage Model
 

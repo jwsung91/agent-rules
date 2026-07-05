@@ -102,16 +102,26 @@ Use the mode requested by the task.
 
 - Investigate existing code, documentation, and behavior before editing.
 - Keep changes scoped to the requested task.
-- Do not refactor unrelated files.
-- Do not rename public APIs, files, directories, or user-facing concepts unless explicitly requested.
+- Do not refactor unrelated files, or rename public APIs, files, directories, or user-facing concepts, unless explicitly requested.
 - Prefer simple, explicit, maintainable changes.
+- Preserve existing structure, naming, and documentation tone.
+- Avoid new dependencies unless they have a clear, task-specific justification.
 - Follow repository-local formatter, linter, test, PR template, and verification conventions.
-- Validate changes with the narrowest relevant checks when practical.
-- Use resource-safe build and test commands; avoid full-core parallelism by default.
-- Before committing, run lightweight checks for changed files, such as `git diff --check`.
-- Use Conventional Commits for commit messages.
-- Do not claim validation was run if it was not.
-- Report what changed, what was intentionally not changed, validation results, and any test or documentation impact.
+- Consider risks, compatibility concerns, and validation gaps appropriate to the task.
+- Ask for clarification before proceeding when scope is ambiguous, instructions conflict, or a destructive action lacks explicit authorization.
+
+## Commit Messages
+
+Use Conventional Commits:
+
+```text
+<type>[optional scope]: <description>
+```
+
+Common types: `feat`, `fix`, `docs`, `test`, `refactor`, `style`, `perf`, `build`, `ci`, `chore`.
+
+Use `!` or a `BREAKING CHANGE:` footer for compatibility-breaking changes.
+Keep the subject concise, lowercase, imperative mood, no trailing period.
 
 ## Repository-local Conventions
 

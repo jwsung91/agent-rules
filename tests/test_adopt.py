@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import argparse
+import re
 import subprocess
 import sys
 import tempfile
@@ -90,10 +91,32 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
             self.assertEqual(adopt.resolve_latest_status(first, second, repo), "behind")
             self.assertEqual(adopt.resolve_latest_status(second, first, repo), "ahead")
 
-    def test_format_validation_commands(self) -> None:
-        rendered = adopt.format_validation_commands(["git diff --check", "git diff --check"])
+    def test_format_validation_commands_explicit_only(self) -> None:
+        rendered = adopt.format_validation_commands(["git diff --check", "git diff --check"], [])
+        self.assertIn("Confirmed for this repository:", rendered)
+        self.assertNotIn("Auto-detected", rendered)
         self.assertIn("```bash", rendered)
         self.assertEqual(rendered.count("git diff --check"), 1)
+
+    def test_format_validation_commands_splits_detected_candidates(self) -> None:
+        rendered = adopt.format_validation_commands(["make lint"], ["npm test", "git diff --check"])
+        self.assertIn("Confirmed for this repository:", rendered)
+        self.assertIn("make lint", rendered)
+        self.assertIn(
+            "Auto-detected candidates — verify each command works before relying on it:",
+            rendered,
+        )
+        self.assertIn("npm test", rendered)
+        # git diff --check is always a confirmed baseline, never a "detected candidate"
+        self.assertEqual(rendered.count("git diff --check"), 1)
+        confirmed_block, detected_block = rendered.split("Auto-detected")
+        self.assertNotIn("npm test", confirmed_block)
+
+    def test_format_validation_commands_empty_uses_placeholder(self) -> None:
+        rendered = adopt.format_validation_commands([], [])
+        self.assertIn("git diff --check", rendered)
+        self.assertIn(adopt.VALIDATION_PLACEHOLDER, rendered)
+        self.assertNotIn("Auto-detected", rendered)
 
     def test_detect_repository_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -395,6 +418,20 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("npm run lint", result.stdout)
 
+    def test_check_does_not_warn_when_only_detected_commands_present(self) -> None:
+        # No --validation given, only an auto-detected command (npm test via package.json).
+        # The rendered file has two ```bash blocks (confirmed + auto-detected); --check must
+        # look at both, not just the first, when deciding whether validation is unconfigured.
+        (self.repo / "package.json").write_text('{"scripts":{"test":"node test.js"}}', encoding="utf-8")
+        result = self.cli("--profile", "codex")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        content = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("Auto-detected candidates", content)
+        self.assertIn("npm test", content)
+
+        check = self.cli("--check")
+        self.assertNotIn("Validation only contains git diff --check", check.stdout)
+
 
 class AdoptAgentRulesBatchTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -471,7 +508,6 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         result = self.cli("--batch", str(toml_file), "--check")
         # --check is always strict; fresh adoption may have placeholder warnings
         # Verify the batch ran and reported on exactly 1 repository
-        import re
         match = re.search(r"(\d+) succeeded, (\d+) failed", result.stdout)
         self.assertIsNotNone(match, result.stderr + result.stdout)
         self.assertEqual(int(match.group(1)) + int(match.group(2)), 1)
@@ -487,6 +523,53 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("1 succeeded", result.stdout)
         self.assertIn("1 failed", result.stdout)
+
+
+def extract_section(content: str, heading: str) -> str:
+    match = re.search(
+        rf"^##\s+{re.escape(heading)}\s*$(.*?)(?=^##\s+|\Z)",
+        content,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, f"heading '{heading}' not found"
+    return match.group(1).strip()
+
+
+class CoreRulesConsistencyTests(unittest.TestCase):
+    """Guards against re-diverging the hand-maintained Core Rules copies.
+
+    These files intentionally duplicate the same guidance (target files must be
+    self-contained even for agents that don't follow links), so nothing renders
+    them from a single source. This test is the drift guard instead.
+    """
+
+    def test_root_entrypoints_share_core_rules(self) -> None:
+        agents = extract_section((ROOT / "AGENTS.md").read_text(encoding="utf-8"), "Core Rules")
+        claude = extract_section((ROOT / "CLAUDE.md").read_text(encoding="utf-8"), "Core Rules")
+        gemini = extract_section((ROOT / "GEMINI.md").read_text(encoding="utf-8"), "Core Rules")
+        self.assertEqual(agents, claude)
+        self.assertEqual(claude, gemini)
+
+    def test_target_templates_share_core_rules(self) -> None:
+        agents = extract_section(
+            (ROOT / "templates" / "target-AGENTS.md").read_text(encoding="utf-8"), "Core Rules"
+        )
+        claude = extract_section(
+            (ROOT / "templates" / "target-CLAUDE.md").read_text(encoding="utf-8"), "Core Rules"
+        )
+        gemini = extract_section(
+            (ROOT / "templates" / "target-GEMINI.md").read_text(encoding="utf-8"), "Core Rules"
+        )
+        self.assertEqual(agents, claude)
+        self.assertEqual(claude, gemini)
+
+    def test_lightweight_adoption_example_matches_target_template(self) -> None:
+        doc_content = (ROOT / "docs" / "lightweight-adoption.md").read_text(encoding="utf-8")
+        template_content = (ROOT / "templates" / "target-AGENTS.md").read_text(encoding="utf-8")
+        self.assertEqual(
+            extract_section(doc_content, "Core Rules"),
+            extract_section(template_content, "Core Rules"),
+        )
 
 
 if __name__ == "__main__":

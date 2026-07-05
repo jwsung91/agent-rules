@@ -17,12 +17,13 @@ Use the mode requested by the task.
 
 - Investigate existing code, documentation, and behavior before editing.
 - Keep changes scoped to the requested task.
-- Do not refactor unrelated files or rename public APIs unless explicitly requested.
+- Do not refactor unrelated files, or rename public APIs, files, directories, or user-facing concepts, unless explicitly requested.
 - Prefer simple, explicit, maintainable changes.
 - Preserve existing structure, naming, and documentation tone.
-- Do not expand the task scope unless explicitly requested.
-- Consider risks, compatibility concerns, and validation gaps appropriate to the task.
+- Avoid new dependencies unless they have a clear, task-specific justification.
 - Follow repository-local formatter, linter, test, PR template, and verification conventions.
+- Consider risks, compatibility concerns, and validation gaps appropriate to the task.
+- Ask for clarification before proceeding when scope is ambiguous, instructions conflict, or a destructive action lacks explicit authorization.
 
 ## Commit Messages
 
@@ -43,9 +44,7 @@ Keep the subject concise, lowercase, imperative mood, no trailing period.
 - Add or update tests when behavior changes; explain when not.
 - Do not claim validation was run if it was not.
 - Before committing, run at minimum: `git diff --check`.
-- Use resource-safe parallelism: prefer `-j2` by default, `-j1` under memory pressure or constrained environments.
-
-Preferred checks for this repository:
+- Use resource-safe parallelism: prefer `-j2` by default, `-j1` under memory pressure or resource-constrained environments (e.g., WSL, VMs).
 
 {{VALIDATION_COMMANDS}}
 

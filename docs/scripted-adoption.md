@@ -201,20 +201,25 @@ After adoption, commit only `.gitignore`:
 
 ```bash
 git add .gitignore
-git commit -m "docs(agent): adopt shared agent rules"
+git commit -m "chore: ignore local agent entrypoint files"
 ```
 
 If an agent file is already in `.gitignore`, the helper skips the `.gitignore` update (no duplicate entry is added) and proceeds normally.
 
 Local copy files (`.agents/agent-rules/`) are different: they are meant to be committed if you want them shared with the team. If `.agents/` is blocked by `.gitignore`, the helper will fail with a message to remove or narrow the ignore rule.
 
-## 9. Validation Command Detection
+## 10. Validation Command Detection
 
 The helper always inspects the target repository for known build files and suggests matching commands. Detected commands are written into the generated file automatically.
 
 Supported files: `CMakeLists.txt`, `pyproject.toml`, `setup.py`, `requirements.txt`, `package.json`, `Cargo.toml`, `go.mod`, `package.xml`, `colcon.meta`, `.github/workflows/`.
 
-When `--validation` is also provided, explicit commands come first and detected commands are appended without duplicates.
+The generated `## Validation` section separates the two sources by confidence:
+
+- **Confirmed for this repository** — `git diff --check` plus any command passed via `--validation`. These are treated as verified.
+- **Auto-detected candidates** — commands guessed from the presence of a build file (e.g. `cargo test` just because `Cargo.toml` exists). These are unverified guesses and are labeled accordingly; confirm they actually work before relying on them.
+
+When `--validation` is also provided, explicit commands are always confirmed; detected commands never duplicate an explicit or confirmed command.
 
 ## Check
 

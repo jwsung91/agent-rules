@@ -237,14 +237,20 @@ def format_boundaries(items: list[str]) -> str:
     )
 
 
-def format_validation_commands(commands: list[str]) -> str:
-    unique = dedupe(commands)
-    if not unique:
-        unique = [
-            "git diff --check",
-            VALIDATION_PLACEHOLDER,
-        ]
-    return "```bash\n" + "\n".join(unique) + "\n```"
+def format_validation_commands(explicit: list[str], detected: list[str]) -> str:
+    confirmed = dedupe(["git diff --check", *explicit])
+    candidates = dedupe([command for command in detected if command not in confirmed])
+
+    if not candidates and not explicit:
+        confirmed = confirmed + [VALIDATION_PLACEHOLDER]
+
+    blocks = ["Confirmed for this repository:\n\n```bash\n" + "\n".join(confirmed) + "\n```"]
+    if candidates:
+        blocks.append(
+            "Auto-detected candidates — verify each command works before relying on it:\n\n"
+            "```bash\n" + "\n".join(candidates) + "\n```"
+        )
+    return "\n\n".join(blocks)
 
 
 def dedupe(items: list[str]) -> list[str]:
@@ -534,7 +540,7 @@ def fail_on_ignored(statuses: list[IgnoreStatus]) -> int:
 
 def detect_repository_type(target_repo: Path) -> DetectionResult:
     repo_types: list[str] = []
-    commands: list[str] = ["git diff --check"]
+    commands: list[str] = []
 
     if (target_repo / "CMakeLists.txt").exists():
         repo_types.append("cmake")
@@ -580,12 +586,12 @@ def build_render_context(
     source_status: SourceStatus,
     detected: DetectionResult,
 ) -> RenderContext:
-    validation = list(args.validation)
-    validation = dedupe(validation + detected.validation_commands)
     return RenderContext(
         shared_rules_url=args.shared_url,
         boundaries=format_boundaries(list(args.boundary)),
-        validation_commands=format_validation_commands(validation),
+        validation_commands=format_validation_commands(
+            list(args.validation), detected.validation_commands
+        ),
         profile=profile,
         source_commit=source_status.local_head or "unknown",
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -931,14 +937,19 @@ def check_file_contains(path: Path, required: list[str]) -> tuple[bool, list[str
 
 
 def extract_validation_commands(content: str) -> list[str]:
-    match = re.search(r"## Validation\s+.*?```bash\n(.*?)```", content, re.DOTALL)
-    if not match:
+    section = re.search(
+        r"^##\s+Validation\s*$(.*?)(?=^##\s+|\Z)", content, re.MULTILINE | re.DOTALL
+    )
+    if not section:
         return []
-    return [
-        line.strip()
-        for line in match.group(1).splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
+    commands: list[str] = []
+    for block in re.findall(r"```bash\n(.*?)```", section.group(1), re.DOTALL):
+        commands.extend(
+            line.strip()
+            for line in block.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+    return commands
 
 
 def append_check(results: list[tuple[str, str]], status: str, message: str) -> None:
