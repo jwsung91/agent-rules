@@ -2,81 +2,70 @@
 
 ## Purpose
 
-Use this guide when a target repository uses Codex and Claude together. The goal is to keep one shared repository instruction source while giving each agent a clear operating role.
+Use this guide when a target repository uses Codex and Claude together. The goal is to keep one shared repository instruction source while giving each agent a clear operating role **for the current task** — not a fixed role per tool.
+
+Per `rules/agent-collaboration.md`: agent roles are execution modes, not fixed tool identities. Either tool can act as the primary implementation agent or as the review/cross-check agent, depending on the task, the repository, and which tool the user is actively driving. Whichever tool is primary for a given task should not be assumed from a prior task.
 
 Codex and Claude should not compete over the same task. In most workflows, one agent performs the primary implementation work and the other reviews the plan, risks, or diff.
 
-## Recommended Profile
-
-For repositories that use Codex and Claude, the recommended setup is usually `--profile claude`:
-
-```bash
-python scripts/adopt.py /path/to/repo --plan
-python scripts/adopt.py /path/to/repo --profile claude --detect --dry-run
-python scripts/adopt.py /path/to/repo --profile claude --detect
-```
-
-This creates:
-
-```text
-AGENTS.md
-CLAUDE.md
-```
-
-Codex uses `AGENTS.md` as the shared repository entrypoint. Claude uses `CLAUDE.md`, which delegates to `AGENTS.md` as the primary repository instruction file. This keeps policy concentrated in `AGENTS.md` and keeps `CLAUDE.md` as a thin tool-specific entrypoint.
-
 ## Basic Setup
 
-1. Run `--plan` first.
-2. Use `--profile claude` for Codex + Claude repositories.
-3. Add `--detect` when you want detected validation commands written into `AGENTS.md`.
-4. Review the generated files before committing in the target repository.
+Adopt both entrypoints in the target repository:
+
+```bash
+python scripts/adopt.py /path/to/repo --profile codex --dry-run
+python scripts/adopt.py /path/to/repo --profile codex
+python scripts/adopt.py /path/to/repo --profile claude --dry-run
+python scripts/adopt.py /path/to/repo --profile claude
+```
+
+This creates `AGENTS.md` and `CLAUDE.md`. Each profile only touches its own file, so the two commands are independent and order does not matter. (`--profile all` also works if the repository may add Gemini later — it additionally creates `GEMINI.md`, which is harmless to leave unused.)
+
+Codex uses `AGENTS.md` as its entrypoint; Claude uses `CLAUDE.md`. Both are generated from the same shared Core Rules, Commit Messages, Validation, and Final Report content, so neither tool gets materially different guidance from the other — the difference is only in tool-specific phrasing.
+
+1. Run `--dry-run` first.
+2. Adopt both `--profile codex` and `--profile claude` (see above) for Codex + Claude repositories.
+3. Pass `--validation "<command>"` (repeatable) for commands you already know are correct; the helper also auto-detects likely commands from build files and labels them separately as unverified candidates.
+4. Both `AGENTS.md` and `CLAUDE.md` are local-only (gitignored automatically) — review them, but there's nothing to commit for the entrypoints themselves.
 5. Fill in repository-specific boundaries and validation commands.
 
 Do not copy root-level `rules/` or `templates/` into the target repository. If offline or pinned access is needed, use `--local-copy`, which writes under `.agents/agent-rules/`.
 
 ## Role Model
 
-Codex:
+Assign Primary Mode and Review Mode per task, not per tool. A repository might use Claude as primary for most work and bring in Codex only for a second opinion on a specific change — or the reverse. Whichever tool the user is actively directing for a task is Primary by default unless the user says otherwise.
 
-- Best suited to Primary Mode.
-- Handles implementation, refactoring, test additions, and documentation edits.
-- Uses `AGENTS.md` for scope control, repository conventions, and validation expectations.
+- **Primary Mode**: implementation, refactoring, test additions, and documentation edits. Uses its entrypoint (`AGENTS.md` or `CLAUDE.md`) for scope control, repository conventions, and validation expectations.
+- **Review Mode**: design review, risk analysis, compatibility review, and validation gap checks. Uses both entrypoints (its own and the other tool's, if relevant) for review expectations.
 
-Claude:
+For some tasks, one tool can produce a plan or risk review first, then the other implements the approved plan — see `rules/agent-collaboration.md` for the general Primary/Review Mode rules and the tie-breaking order when the two disagree.
 
-- Best suited to Review Mode.
-- Handles design review, risk analysis, compatibility review, and validation gap checks.
-- Uses `CLAUDE.md` and `AGENTS.md` for review expectations.
+## Workflow 1: One Agent Primary, the Other Reviews
 
-For some tasks, Claude can produce a plan or risk review first, then Codex can implement the approved plan.
-
-## Workflow 1: Codex Primary, Claude Review
-
-Use Codex to make the scoped change. Then ask Claude to review the resulting diff for correctness, regressions, missing validation, and documentation impact.
+Use one agent to make the scoped change. Then ask the other to review the resulting diff for correctness, regressions, missing validation, and documentation impact.
 
 This workflow fits most implementation tasks because it separates write authority from review judgment.
 
-## Workflow 2: Codex Implementation, Claude Risk Review
+## Workflow 2: Implementation Plus Targeted Risk Review
 
-Use Codex for the implementation and ask Claude specifically for risk review when the change touches compatibility, public behavior, package metadata, CI, validation, or cross-agent instruction files.
+Use one agent for the implementation and ask the other specifically for risk review when the change touches compatibility, public behavior, package metadata, CI, validation, or cross-agent instruction files.
 
-Claude should separate blocking issues from non-blocking suggestions. Codex should only make follow-up changes that are in scope for the original task or explicitly approved.
+The reviewing agent should separate blocking issues from non-blocking suggestions. The implementing agent should only make follow-up changes that are in scope for the original task or explicitly approved.
 
-## Workflow 3: Claude Planning, Codex Implementation
+## Workflow 3: Planning First, Then Implementation
 
-Use Claude first when the task needs careful planning, tradeoff analysis, or compatibility review before files are modified. Claude should not edit files in this phase.
+Use one agent first when the task needs careful planning, tradeoff analysis, or compatibility review before files are modified. That agent should not edit files during this phase.
 
-After the plan is accepted, use Codex to implement it in Primary Mode and validate with the narrowest relevant checks.
+After the plan is accepted, use the other agent (or the same one) to implement it in Primary Mode and validate with the narrowest relevant checks.
 
 ## Prompt Examples
 
-Codex Primary Mode:
+Primary Mode:
 
 ```text
 Use Primary Mode.
 
-Follow AGENTS.md.
+Follow this repository's entrypoint file (AGENTS.md or CLAUDE.md).
 
 Implement the requested change.
 Keep the change scoped.
@@ -86,12 +75,12 @@ Validate with the narrowest relevant checks.
 Report what changed, what was not changed, and what validation was run.
 ```
 
-Claude Review Mode:
+Review Mode:
 
 ```text
 Use Review Mode.
 
-Follow CLAUDE.md and AGENTS.md.
+Follow this repository's entrypoint files (AGENTS.md and/or CLAUDE.md).
 
 Review the current changes for:
 - correctness
@@ -104,73 +93,74 @@ Separate blocking issues from non-blocking suggestions.
 Do not rewrite the implementation unless explicitly requested.
 ```
 
-Claude Planning to Codex Implementation:
+Planning handoff to implementation:
 
 ```text
-Claude planning request:
+Planning request:
 
 Use Review Mode.
 
-Follow CLAUDE.md and AGENTS.md.
+Follow this repository's entrypoint files.
 Review the requested change and produce an implementation plan.
 Focus on scope, risks, compatibility, and validation.
 Do not modify files.
 
-Codex implementation request:
+Implementation request:
 
 Use Primary Mode.
 
-Follow AGENTS.md.
+Follow this repository's entrypoint file.
 Implement the approved plan.
 Keep the change scoped.
 Validate with the narrowest relevant checks.
 Report changes and validation honestly.
 ```
 
-Codex Implementation to Claude Review:
+Implementation handoff to review:
 
 ```text
-Codex request:
+Implementation request:
 
 Use Primary Mode.
 
-Follow AGENTS.md.
+Follow this repository's entrypoint file.
 Implement the requested change.
 Keep the diff small and focused.
 Run relevant validation if practical.
 
-Claude request:
+Review request:
 
 Use Review Mode.
 
-Follow CLAUDE.md and AGENTS.md.
-Review the Codex changes.
+Follow this repository's entrypoint files.
+Review the changes.
 Check for correctness, regression risk, scope creep, and missing validation.
 Do not rewrite unless requested.
 ```
 
 ## Validation and Reporting
 
-Keep validation commands in `AGENTS.md` specific to the target repository. `--detect` can suggest commands, but detected commands are written only when `--detect` is used on the apply command.
+Keep validation commands in the repository's entrypoint file(s) specific to the target repository. Auto-detected commands are suggested from build files present in the repository, but are labeled as unverified candidates — confirm them with `--validation` (or by hand) once you know they work.
 
 Agents must report validation honestly. If a command was not run, the final report should say that it was not run and explain why.
 
-## When to Use Multi Profile
+## Adding a Third Tool (Gemini)
 
-Use `--profile multi` when the repository actively uses Codex, Claude, and Gemini:
+If the repository later starts using Gemini too, adopt `--profile gemini` the same way as the other two:
 
 ```bash
-python scripts/adopt.py /path/to/repo --profile multi --detect --dry-run
-python scripts/adopt.py /path/to/repo --profile multi --detect
+python scripts/adopt.py /path/to/repo --profile gemini --dry-run
+python scripts/adopt.py /path/to/repo --profile gemini
 ```
 
-For Codex + Claude only, prefer `--profile claude`. Adding `GEMINI.md` without using Gemini adds another entrypoint to maintain without improving the Codex + Claude workflow.
+Don't add `GEMINI.md` speculatively — an unused entrypoint is another file that must be kept in sync (see `rules/agent-collaboration.md`) without improving the actual workflow.
 
 ## Anti-patterns
 
 - Asking Codex and Claude to edit the same files at the same time.
-- Expanding Claude review feedback into a large unrelated refactor.
+- Expanding a Review Mode agent's feedback into a large unrelated refactor.
 - Asking a Review Mode agent to implement changes during the review pass.
-- Duplicating conflicting policy in `AGENTS.md` and `CLAUDE.md`.
+- Duplicating conflicting policy in `AGENTS.md` and `CLAUDE.md` (both should carry the same shared Core Rules).
 - Leaving target repository validation commands empty.
 - Letting an agent report validation that it did not run.
+- Assuming one tool is always primary and the other always reviews — reassign per task.

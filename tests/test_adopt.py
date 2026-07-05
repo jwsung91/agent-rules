@@ -513,6 +513,7 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
             ROOT,
         )
 
+    @unittest.skipUnless(adopt.tomllib is not None, "requires Python 3.11+ (stdlib tomllib)")
     def test_parse_toml_batch(self) -> None:
         repo = self.make_repo("r1")
         toml_file = self.base / "repos.toml"
@@ -535,6 +536,7 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         self.assertEqual(entries[0].path, str(repo1))
         self.assertIsNone(entries[0].profile)
 
+    @unittest.skipUnless(adopt.tomllib is not None, "requires Python 3.11+ (stdlib tomllib)")
     def test_batch_apply(self) -> None:
         repo1 = self.make_repo("r1")
         repo2 = self.make_repo("r2")
@@ -547,6 +549,7 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("2 succeeded", result.stdout)
 
+    @unittest.skipUnless(adopt.tomllib is not None, "requires Python 3.11+ (stdlib tomllib)")
     def test_batch_per_repo_profile_override(self) -> None:
         repo1 = self.make_repo("r1")
         repo2 = self.make_repo("r2")
@@ -560,6 +563,7 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("2 succeeded", result.stdout)
 
+    @unittest.skipUnless(adopt.tomllib is not None, "requires Python 3.11+ (stdlib tomllib)")
     def test_batch_check(self) -> None:
         repo = self.make_repo("r1")
         run([sys.executable, str(SCRIPT), str(repo), "--shared-url", str(ROOT), "--profile", "codex"], ROOT)
@@ -572,6 +576,7 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         self.assertIsNotNone(match, result.stderr + result.stdout)
         self.assertEqual(sum(int(g) for g in match.groups()), 1)
 
+    @unittest.skipUnless(adopt.tomllib is not None, "requires Python 3.11+ (stdlib tomllib)")
     def test_batch_continues_on_failure(self) -> None:
         repo1 = self.make_repo("r1")
         toml_file = self.base / "repos.toml"
@@ -584,6 +589,20 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         self.assertIn("1 succeeded", result.stdout)
         self.assertIn("1 failed", result.stdout)
 
+    def test_toml_batch_without_tomllib_raises_clear_error(self) -> None:
+        # Exercise the Python <3.11 fallback path directly, regardless of
+        # which interpreter runs the test suite.
+        toml_file = self.base / "repos.toml"
+        toml_file.write_text('[[repos]]\npath = "/tmp/x"\n', encoding="utf-8")
+        original = adopt.tomllib
+        adopt.tomllib = None
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                adopt.parse_batch_file(toml_file)
+            self.assertIn("Python 3.11+", str(ctx.exception))
+        finally:
+            adopt.tomllib = original
+
 
 def extract_section(content: str, heading: str) -> str:
     match = re.search(
@@ -593,6 +612,10 @@ def extract_section(content: str, heading: str) -> str:
     )
     assert match is not None, f"heading '{heading}' not found"
     return match.group(1).strip()
+
+
+def normalize_tool_name(content: str) -> str:
+    return re.sub(r"claude|gemini", "TOOL", content, flags=re.IGNORECASE)
 
 
 class CoreRulesConsistencyTests(unittest.TestCase):
@@ -630,6 +653,19 @@ class CoreRulesConsistencyTests(unittest.TestCase):
             extract_section(doc_content, "Core Rules"),
             extract_section(template_content, "Core Rules"),
         )
+
+    def test_root_claude_and_gemini_are_fully_parallel(self) -> None:
+        # CLAUDE.md and GEMINI.md are meant to be identical except for the tool
+        # name itself (unlike AGENTS.md, which intentionally carries extra
+        # local-rules backlinks). Normalize the tool name and diff the rest.
+        claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+        gemini = (ROOT / "GEMINI.md").read_text(encoding="utf-8")
+        self.assertEqual(normalize_tool_name(claude), normalize_tool_name(gemini))
+
+    def test_target_claude_and_gemini_are_fully_parallel(self) -> None:
+        claude = (ROOT / "templates" / "target-CLAUDE.md").read_text(encoding="utf-8")
+        gemini = (ROOT / "templates" / "target-GEMINI.md").read_text(encoding="utf-8")
+        self.assertEqual(normalize_tool_name(claude), normalize_tool_name(gemini))
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ Supported agents:
 - `GEMINI.md`: Gemini-specific entrypoint.
 - `docs/lightweight-adoption.md`: Guide for applying these rules to target repositories using a lightweight local `AGENTS.md` and optional `.agents/` namespacing.
 - `docs/scripted-adoption.md`: Usage guide for the Python adoption helper script.
+- `docs/claude-codex-workflow.md`: Guide for running Codex and Claude together on the same repository.
 - `scripts/adopt.py`: Helper script for creating or checking lightweight target-repository adoption files.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
