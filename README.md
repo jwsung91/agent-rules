@@ -67,7 +67,7 @@ python scripts/adopt.py /path/to/repo --profile claude --dry-run
 Check and update an existing adoption:
 
 ```bash
-# Health check (always strict: warnings also fail)
+# Health check (exit 0 clean, 1 on FAIL, 2 on WARN-only)
 python scripts/adopt.py /path/to/repo --check
 
 # Sync after updating agent-rules (update or merge automatically)

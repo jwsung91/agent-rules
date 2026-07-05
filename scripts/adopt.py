@@ -499,8 +499,8 @@ def add_to_gitignore(git_root: Path, filenames: list[str], *, dry_run: bool) -> 
     Returns relative .gitignore path if modified, else None."""
     gitignore_path = git_root / ".gitignore"
     content = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
-    existing_lines = set(content.splitlines())
-    to_add = [f for f in filenames if f not in existing_lines]
+    existing_normalized = {line.strip().lstrip("/") for line in content.splitlines()}
+    to_add = [f for f in filenames if f not in existing_normalized]
     if not to_add:
         return None
     if dry_run:
@@ -759,8 +759,12 @@ def build_entrypoint_plans(
 
         if relative_path in TOOL_ENTRYPOINTS and path.exists() and update:
             existing = path.read_text(encoding="utf-8", errors="replace")
-            content = rendered
-            action = "no-op" if content == existing else "update"
+            if parse_metadata(existing):
+                content = rendered
+                action = "no-op" if content == existing else "update"
+            else:
+                content = None
+                action = "metadata-missing"
             plans.append(FilePlan(path=relative_path, action=action, content=content))
             continue
 
@@ -986,7 +990,7 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
     if metadata:
         append_check(results, "OK", f"agent-rules metadata block exists ({metadata_file})")
     elif legacy_adoption:
-        append_check(results, "WARN", "legacy adoption detected; run --merge to add metadata")
+        append_check(results, "WARN", "legacy adoption detected; run --sync to add metadata")
     else:
         append_check(results, "FAIL", "agent-rules metadata block is missing")
 
@@ -1000,7 +1004,7 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
         "OK" if metadata.get("source_commit") else "WARN" if legacy_adoption else "FAIL",
         "source_commit found"
         if metadata.get("source_commit")
-        else "legacy adoption detected; run --merge to add metadata"
+        else "legacy adoption detected; run --sync to add metadata"
         if legacy_adoption
         else "source_commit is missing",
     )
@@ -1011,7 +1015,7 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
         "OK" if profile in VALID_PROFILES else "WARN" if legacy_adoption else "FAIL",
         f"profile: {profile}"
         if profile in VALID_PROFILES
-        else "legacy adoption detected; run --merge to add metadata"
+        else "legacy adoption detected; run --sync to add metadata"
         if legacy_adoption
         else "profile is missing or invalid",
     )
@@ -1096,8 +1100,10 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
 
     has_fail = any(status == "FAIL" for status, _ in results)
     has_warn = any(status == "WARN" for status, _ in results)
-    if has_fail or has_warn:
+    if has_fail:
         return 1
+    if has_warn:
+        return 2
     return 0
 
 
@@ -1113,7 +1119,7 @@ def write_plan_file(
     if plan.action == "blocked-existing-local-copy":
         raise SystemExit(
             f"Refusing to apply local copy because .agents/agent-rules already exists: {target_repo / '.agents' / 'agent-rules'}\n"
-            "Use --local-copy --update to refresh the existing local copy, or --force "
+            "Use --local-copy --sync to refresh the existing local copy, or --force "
             "to overwrite intentionally."
         )
     if plan.action == "metadata-missing":
@@ -1242,13 +1248,23 @@ def print_summary(
             print(f"- {command}")
 
     changed = created + updated
+    entrypoint_names = {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+    committable_changed = [p for p in changed if Path(p).name not in entrypoint_names]
+
     print("\nNext commands:")
-    if changed:
-        print("- git diff -- " + " ".join(changed))
+    if committable_changed:
+        print("- git diff -- " + " ".join(committable_changed))
     print("- git diff --check")
     if gitignore_file:
         print(f"- git add {gitignore_file}")
-    print('- git commit -m "docs(agent): adopt shared agent rules"')
+    if committable_changed:
+        print("- git add " + " ".join(committable_changed))
+    if gitignore_file and committable_changed:
+        print('- git commit -m "docs(agent): adopt shared agent rules and ignore local entrypoints"')
+    elif committable_changed:
+        print('- git commit -m "docs(agent): adopt shared agent rules"')
+    elif gitignore_file:
+        print('- git commit -m "chore: ignore local agent entrypoint files"')
 
 
 def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:

@@ -231,7 +231,7 @@ python scripts/adopt.py /path/to/repo --check
 - `.gitignore` visibility
 - version status (local source HEAD vs. remote main HEAD)
 
-Both warnings and failures return exit code 1.
+Exit codes distinguish severity: `0` (clean), `1` (at least one `[FAIL]`), `2` (only `[WARN]`, no `[FAIL]`).
 
 ## Subdirectory Targets
 

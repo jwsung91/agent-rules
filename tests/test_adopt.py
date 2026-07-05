@@ -217,6 +217,22 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertTrue((self.repo / "GEMINI.md").exists())
 
+    def test_sync_all_profile_refuses_claude_without_metadata(self) -> None:
+        self.assertEqual(self.cli("--profile", "all").returncode, 0)
+        claude_path = self.repo / "CLAUDE.md"
+        # Simulate a hand-edited CLAUDE.md that predates the agent-rules metadata block.
+        stripped = adopt.METADATA_RE.sub("", claude_path.read_text(encoding="utf-8"), count=1)
+        claude_path.write_text(stripped.lstrip("\n"), encoding="utf-8")
+
+        result = self.cli("--profile", "all", "--sync")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Refusing to update file without agent-rules metadata",
+            result.stderr + result.stdout,
+        )
+        # The file must be left untouched, not silently overwritten.
+        self.assertEqual(claude_path.read_text(encoding="utf-8"), stripped.lstrip("\n"))
+
     def test_existing_agents_default_fails(self) -> None:
         (self.repo / "AGENTS.md").write_text("# custom\n", encoding="utf-8")
         result = self.cli("--profile", "codex")
@@ -256,6 +272,20 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
         self.assertNotIn("!CLAUDE.md", gitignore)
         self.assertEqual(gitignore.count("CLAUDE.md"), 1)
+
+    def test_gitignore_entry_with_leading_slash_not_duplicated(self) -> None:
+        (self.repo / ".gitignore").write_text("/CLAUDE.md\n", encoding="utf-8")
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((self.repo / "CLAUDE.md").exists())
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertEqual(gitignore.count("CLAUDE.md"), 1)
+
+    def test_next_commands_omit_commit_for_local_only_entrypoints(self) -> None:
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn('git commit -m "chore: ignore local agent entrypoint files"', result.stdout)
+        self.assertNotIn('docs(agent): adopt shared agent rules"', result.stdout)
 
     def test_ignored_directory_pattern_fails(self) -> None:
         (self.repo / ".gitignore").write_text(".agents/\n", encoding="utf-8")
@@ -329,10 +359,16 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             f"# AGENTS.md\n\n{ROOT}\n",
             encoding="utf-8",
         )
-        # --check is always strict; WARN results in exit code 1
+        # --check is always strict; WARN-only results in exit code 2 (FAIL would be 1)
+        result = self.cli("--check")
+        self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+        self.assertIn("legacy adoption detected; run --sync to add metadata", result.stdout)
+
+    def test_check_fail_returns_exit_code_one(self) -> None:
+        # No agent instruction file at all triggers a FAIL, not just a WARN.
         result = self.cli("--check")
         self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
-        self.assertIn("legacy adoption detected; run --merge to add metadata", result.stdout)
+        self.assertIn("[FAIL] no agent instruction file found", result.stdout)
 
     def test_subdir_target_apply_fails(self) -> None:
         subdir = self.repo / "subdir"
