@@ -58,7 +58,8 @@ Default apply refuses to overwrite an existing file.
 
 Use `--sync` when the target repository already has an agent file. The helper automatically selects the right strategy:
 
-- **metadata present** → refreshes the metadata block and managed shared-rule block, preserving repository-specific sections.
+- **metadata present** → refreshes the metadata block and managed shared-rule block, preserving repository-specific sections. All three entrypoints (AGENTS.md, CLAUDE.md, GEMINI.md) carry `<!-- agent-rules-managed:start/end -->` markers; content outside the markers is never touched by sync.
+- **metadata present, no managed markers** → the file was generated before markers were added to CLAUDE.md/GEMINI.md templates; it is fully regenerated once (manual edits in that file are replaced — keep local content outside the managed block afterwards).
 - **no metadata** → merges shared sections into the existing file without overwriting it (AGENTS.md only).
 
 ```bash
@@ -169,13 +170,13 @@ The helper continues on failure and prints a per-repo summary at the end:
 ────────────────────────────────────────────────────────────
 ...
 ════════════════════════════════════════════════════════════
-3 succeeded, 1 failed
+3 succeeded, 0 warned, 1 failed
 
 Failed:
   - /path/to/broken-repo
 ```
 
-Exit code is 1 if any repository failed.
+Exit code is 1 if any repository failed, 2 if none failed but at least one reported only warnings (from `--check`), and 0 otherwise.
 
 ### Where to keep the batch file
 

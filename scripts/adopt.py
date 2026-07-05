@@ -33,6 +33,7 @@ PROFILE_FILES = {
     "gemini": ("GEMINI.md",),
     "all": ("AGENTS.md", "CLAUDE.md", "GEMINI.md"),
 }
+ENTRYPOINT_FILES = PROFILE_FILES["all"]
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
 METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)
 MANAGED_START = "<!-- agent-rules-managed:start -->"
@@ -227,7 +228,7 @@ def format_boundaries(items: list[str]) -> str:
     if items:
         return "\n".join(f"- {item}" for item in items)
     return (
-        "Add project-specific rules here.\n\n"
+        f"{BOUNDARY_PLACEHOLDER}\n\n"
         "Examples:\n\n"
         "- public API compatibility expectations\n"
         "- benchmark or performance data boundaries\n"
@@ -398,13 +399,15 @@ def target_commit_status(
     return "different"
 
 
-def latest_status_is_outdated(status: str, *, local_source: bool = False) -> bool:
-    if local_source:
-        return status in {"behind", "different", "diverged"}
-    return status != "current"
+_SOURCE_STATUS_CACHE: dict[str, SourceStatus] = {}
 
 
 def get_source_status(shared_url: str) -> SourceStatus:
+    # Cached per URL: batch runs would otherwise repeat the same
+    # `git ls-remote` network call once per repository.
+    cached = _SOURCE_STATUS_CACHE.get(shared_url)
+    if cached is not None:
+        return cached
     warnings: list[str] = []
     local_head, local_warning = local_source_head()
     if local_warning:
@@ -412,16 +415,14 @@ def get_source_status(shared_url: str) -> SourceStatus:
     remote_head, remote_warning = remote_main_head(shared_url)
     if remote_warning:
         warnings.append(f"WARN: remote main HEAD unavailable: {remote_warning}")
-    return SourceStatus(
+    status = SourceStatus(
         local_head=local_head,
         remote_head=remote_head,
         local_status=resolve_latest_status(local_head, remote_head, source_repo_root()),
         warnings=warnings,
     )
-
-
-def relative_to_repo(path: Path, repo: Path) -> str:
-    return path.relative_to(repo).as_posix()
+    _SOURCE_STATUS_CACHE[shared_url] = status
+    return status
 
 
 def is_tracked(repo: Path, relative_path: str) -> bool:
@@ -460,16 +461,12 @@ def check_ignore_status(repo: Path, relative_path: str) -> IgnoreStatus:
     return IgnoreStatus(path=relative_path, tracked=tracked, ignored=False)
 
 
-def planned_paths_for_gitignore(files: list[FilePlan]) -> list[str]:
-    return [item.path for item in files if not item.path.endswith(".bak")]
-
-
 def check_generated_files_ignored(
     target_repo: Path,
     git_root: Path | None,
     files: list[FilePlan],
 ) -> list[IgnoreStatus]:
-    paths = planned_paths_for_gitignore(files)
+    paths = [item.path for item in files]
     if git_root is None:
         return [
             IgnoreStatus(
@@ -599,13 +596,9 @@ def build_render_context(
 
 
 def render_file_for_profile(relative_path: str, context: RenderContext) -> str:
-    if relative_path == "AGENTS.md":
-        return render_template(read_template("target-AGENTS.md"), context)
-    if relative_path == "CLAUDE.md":
-        return render_template(read_template("target-CLAUDE.md"), context)
-    if relative_path == "GEMINI.md":
-        return render_template(read_template("target-GEMINI.md"), context)
-    raise SystemExit(f"Unsupported generated file: {relative_path}")
+    if relative_path not in ENTRYPOINT_FILES:
+        raise SystemExit(f"Unsupported generated file: {relative_path}")
+    return render_template(read_template(f"target-{relative_path}"), context)
 
 
 def extract_managed_block(content: str) -> str | None:
@@ -693,6 +686,24 @@ def merge_agents_content(existing: str, rendered: str, metadata: str, shared_url
     return content
 
 
+def plan_generated_update(
+    existing: str, rendered: str, metadata: str, relative_path: str
+) -> tuple[str, str]:
+    """Refresh a generated entrypoint that carries agent-rules metadata.
+
+    Files with managed markers get an in-place managed-block update that
+    preserves local sections. Legacy generated files without markers are fully
+    regenerated (partial update cannot locate the shared content in them).
+    AGENTS.md always takes the in-place path: replace_managed_block knows how
+    to insert the block before its Repository-specific Boundaries section.
+    """
+    if MANAGED_START in existing or relative_path == "AGENTS.md":
+        content = update_agents_content(existing, rendered, metadata)
+    else:
+        content = rendered
+    return content, ("no-op" if content == existing else "update")
+
+
 def file_action(target_repo: Path, relative_path: str, *, update: bool, force: bool) -> str:
     path = target_repo / relative_path
     if path.exists():
@@ -746,8 +757,9 @@ def build_entrypoint_plans(
                 generated_at=context.generated_at,
             )
             if update and parse_metadata(existing):
-                content = update_agents_content(existing, rendered, metadata)
-                action = "no-op" if content == existing else "update"
+                content, action = plan_generated_update(
+                    existing, rendered, metadata, relative_path
+                )
             elif update:
                 content = None
                 action = "metadata-missing"
@@ -766,8 +778,15 @@ def build_entrypoint_plans(
         if relative_path in TOOL_ENTRYPOINTS and path.exists() and update:
             existing = path.read_text(encoding="utf-8", errors="replace")
             if parse_metadata(existing):
-                content = rendered
-                action = "no-op" if content == existing else "update"
+                metadata = render_metadata(
+                    shared_url=context.shared_rules_url,
+                    profile=context.profile,
+                    source_commit=context.source_commit,
+                    generated_at=context.generated_at,
+                )
+                content, action = plan_generated_update(
+                    existing, rendered, metadata, relative_path
+                )
             else:
                 content = None
                 action = "metadata-missing"
@@ -850,7 +869,7 @@ def build_plan(
     detected = detect_repository_type(target_repo)
     source_status = get_source_status(args.shared_url)
     metadata: dict[str, str] = {}
-    for _name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+    for _name in ENTRYPOINT_FILES:
         _p = target_repo / _name
         if _p.exists():
             _m = parse_metadata(_p.read_text(encoding="utf-8", errors="replace"))
@@ -920,22 +939,6 @@ def latest_status_for_target(metadata: dict[str, str], source_status: SourceStat
     )
 
 
-def latest_status_for_local_copy(plan: AdoptionPlan) -> str:
-    return target_commit_status(
-        plan.local_copy_commit, plan.source_status, source_repo_root()
-    )
-
-
-
-
-def check_file_contains(path: Path, required: list[str]) -> tuple[bool, list[str]]:
-    if not path.exists():
-        return False, ["file is missing"]
-    content = path.read_text(encoding="utf-8", errors="replace")
-    missing = [text for text in required if text not in content]
-    return not missing, missing
-
-
 def extract_validation_commands(content: str) -> list[str]:
     section = re.search(
         r"^##\s+Validation\s*$(.*?)(?=^##\s+|\Z)", content, re.MULTILINE | re.DOTALL
@@ -964,7 +967,7 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
     metadata: dict[str, str] = {}
     metadata_file: str | None = None
     primary_content = ""
-    for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+    for name in ENTRYPOINT_FILES:
         p = target_repo / name
         if p.exists():
             text = p.read_text(encoding="utf-8", errors="replace")
@@ -988,7 +991,7 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
     legacy_adoption = agents_path.exists() and not metadata and shared_url in agents_content
 
     existing_files = [
-        n for n in ("AGENTS.md", "CLAUDE.md", "GEMINI.md") if (target_repo / n).exists()
+        n for n in ENTRYPOINT_FILES if (target_repo / n).exists()
     ]
     append_check(
         results,
@@ -1065,7 +1068,7 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
         if not (local_copy_root / "SOURCE_COMMIT").exists():
             append_check(results, "FAIL", ".agents/agent-rules/SOURCE_COMMIT is missing")
     for status in check_generated_files_ignored(target_repo, git_root, plans):
-        is_entrypoint = Path(status.path).name in {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+        is_entrypoint = Path(status.path).name in ENTRYPOINT_FILES
         if is_entrypoint:
             if status.tracked:
                 append_check(results, "WARN", f"{status.path} is tracked; run: git rm --cached {status.path}")
@@ -1108,6 +1111,12 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
     print(f"- applied source_commit: {metadata.get('source_commit', 'missing')}")
     print(f"- applied profile: {metadata.get('profile', 'missing')}")
     print(f"- latest status: {target_status}")
+    if local_copy_commit:
+        local_copy_status = target_commit_status(
+            local_copy_commit, source_status, source_repo_root()
+        )
+        print(f"- local copy commit: {local_copy_commit}")
+        print(f"- local copy status: {local_copy_status}")
 
     has_fail = any(status == "FAIL" for status, _ in results)
     has_warn = any(status == "WARN" for status, _ in results)
@@ -1125,7 +1134,7 @@ def write_plan_file(
     dry_run: bool,
 ) -> tuple[str, str]:
     path = target_repo / plan.path
-    if plan.action in {"skip-existing", "no-op"}:
+    if plan.action == "no-op":
         return "Skipped", plan.path
     if plan.action == "blocked-existing-local-copy":
         raise SystemExit(
@@ -1172,7 +1181,7 @@ def write_plan_file(
     return ("Updated" if existed else "Created", plan.path)
 
 
-def validate_plan_before_write(plan: AdoptionPlan, args: argparse.Namespace) -> int:
+def validate_plan_before_write(plan: AdoptionPlan) -> int:
     if plan.is_subdir_target:
         print(
             "FAIL: target path is inside a Git repository but is not the repository root.\n"
@@ -1197,7 +1206,6 @@ def print_summary(
     updated: list[str],
     skipped: list[str],
     plan: AdoptionPlan,
-    args: argparse.Namespace,
     gitignore_file: str | None = None,
 ) -> None:
     print("\nCreated:")
@@ -1207,7 +1215,7 @@ def print_summary(
     print("\nSkipped:")
     print("\n".join(f"- {item}" for item in skipped) if skipped else "- none")
     if gitignore_file:
-        print(f"\n.gitignore updated (local-only):")
+        print("\n.gitignore updated (local-only):")
         print(f"- {gitignore_file}")
 
     print("\nWarnings:")
@@ -1221,14 +1229,12 @@ def print_summary(
             warnings.append(status.warning)
     print("\n".join(f"- {warning}" for warning in warnings) if warnings else "- none")
 
-    entrypoint_basenames = {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
     print("\nGitignore:")
     if plan.ignore_statuses:
         for status in plan.ignore_statuses:
-            path_name = Path(status.path).name
-            is_entrypoint = path_name in {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+            is_entrypoint = Path(status.path).name in ENTRYPOINT_FILES
             if is_entrypoint:
-                if path_name in entrypoint_basenames and gitignore_file:
+                if gitignore_file:
                     print(f"- OK: {status.path} added to .gitignore (local-only)")
                 elif status.ignored and not status.tracked:
                     print(f"- OK: {status.path} is local-only (already in .gitignore)")
@@ -1259,8 +1265,7 @@ def print_summary(
             print(f"- {command}")
 
     changed = created + updated
-    entrypoint_names = {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
-    committable_changed = [p for p in changed if Path(p).name not in entrypoint_names]
+    committable_changed = [p for p in changed if Path(p).name not in ENTRYPOINT_FILES]
 
     print("\nNext commands:")
     if committable_changed:
@@ -1279,7 +1284,7 @@ def print_summary(
 
 
 def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
-    preflight_result = validate_plan_before_write(plan, args)
+    preflight_result = validate_plan_before_write(plan)
     if preflight_result:
         return preflight_result
 
@@ -1307,18 +1312,17 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     # regardless of which profile was applied.
     git_root = plan.git_root or plan.target_repo
     any_entrypoint_written = any(
-        Path(p).name in {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
-        for p in (created + updated)
+        Path(p).name in ENTRYPOINT_FILES for p in (created + updated)
     )
     gitignore_file: str | None = None
     if any_entrypoint_written:
         gitignore_file = add_to_gitignore(
             git_root,
-            ["AGENTS.md", "CLAUDE.md", "GEMINI.md"],
+            list(ENTRYPOINT_FILES),
             dry_run=args.dry_run,
         )
 
-    print_summary(created, updated, skipped, plan, args, gitignore_file=gitignore_file)
+    print_summary(created, updated, skipped, plan, gitignore_file=gitignore_file)
     return 0
 
 
@@ -1383,7 +1387,7 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
             else:
                 if not profile:
                     print("FAIL: no profile specified and none inferred from existing files.")
-                    results.append((entry.path, 2))
+                    results.append((entry.path, 1))
                     continue
                 plan = build_plan(target_repo, args, profile)
                 if args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
@@ -1399,13 +1403,23 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
 
     print(f"\n{'═' * 60}")
     succeeded = [p for p, c in results if c == 0]
-    failed = [(p, c) for p, c in results if c != 0]
-    print(f"{len(succeeded)} succeeded, {len(failed)} failed")
+    # Exit code 2 means WARN-only (from check_adoption); anything else non-zero failed.
+    warned = [p for p, c in results if c == 2]
+    failed = [p for p, c in results if c not in (0, 2)]
+    print(f"{len(succeeded)} succeeded, {len(warned)} warned, {len(failed)} failed")
+    if warned:
+        print("\nWarnings only:")
+        for p in warned:
+            print(f"  - {p}")
     if failed:
         print("\nFailed:")
-        for p, _ in failed:
+        for p in failed:
             print(f"  - {p}")
-    return 1 if failed else 0
+    if failed:
+        return 1
+    if warned:
+        return 2
+    return 0
 
 
 def validate_args(args: argparse.Namespace, profile: str | None) -> None:
@@ -1420,7 +1434,7 @@ def validate_args(args: argparse.Namespace, profile: str | None) -> None:
 
 
 def infer_profile_from_existing(target_repo: Path) -> str | None:
-    for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+    for name in ENTRYPOINT_FILES:
         p = target_repo / name
         if p.exists():
             m = parse_metadata(p.read_text(encoding="utf-8", errors="replace"))
@@ -1460,10 +1474,6 @@ def main() -> int:
             "Update local agent-rules first."
         )
         return 1
-
-    if profile is None:
-        print_profile_help()
-        return 2
 
     return apply_plan(plan, args)
 

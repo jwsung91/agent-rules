@@ -240,6 +240,66 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertTrue((self.repo / "GEMINI.md").exists())
 
+    def test_sync_refreshes_managed_content_in_claude(self) -> None:
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        path = self.repo / "CLAUDE.md"
+        content = path.read_text(encoding="utf-8")
+        # Simulate outdated shared content inside the managed block, plus a
+        # local section outside it that must survive the sync.
+        content = content.replace(
+            "Investigate existing code, documentation, and behavior before editing.",
+            "Outdated managed rule.",
+        )
+        content += "\n## Local Notes\n\nKeep this local section.\n"
+        path.write_text(content, encoding="utf-8")
+
+        result = self.cli("--profile", "claude", "--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        updated = path.read_text(encoding="utf-8")
+        self.assertNotIn("Outdated managed rule.", updated)
+        self.assertIn(
+            "Investigate existing code, documentation, and behavior before editing.", updated
+        )
+        self.assertIn("Keep this local section.", updated)
+
+    def test_sync_regenerates_legacy_claude_without_markers(self) -> None:
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        path = self.repo / "CLAUDE.md"
+        # Simulate a file generated before managed markers existed: metadata
+        # present, no markers, stale shared content.
+        content = path.read_text(encoding="utf-8")
+        content = content.replace(adopt.MANAGED_START + "\n\n", "")
+        content = content.replace(adopt.MANAGED_END + "\n\n", "")
+        content = content.replace(
+            "Investigate existing code, documentation, and behavior before editing.",
+            "Stale legacy rule.",
+        )
+        path.write_text(content, encoding="utf-8")
+
+        result = self.cli("--profile", "claude", "--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        updated = path.read_text(encoding="utf-8")
+        self.assertNotIn("Stale legacy rule.", updated)
+        self.assertIn(adopt.MANAGED_START, updated)
+        self.assertIn(adopt.MANAGED_END, updated)
+
+    def test_sync_all_preserves_local_edits_in_tool_entrypoints(self) -> None:
+        self.assertEqual(self.cli("--profile", "all").returncode, 0)
+        claude_path = self.repo / "CLAUDE.md"
+        content = claude_path.read_text(encoding="utf-8")
+        content = content.replace(
+            "Investigate existing code, documentation, and behavior before editing.",
+            "Outdated managed rule.",
+        )
+        content += "\n## Local Notes\n\nKeep this local section.\n"
+        claude_path.write_text(content, encoding="utf-8")
+
+        result = self.cli("--profile", "all", "--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        updated = claude_path.read_text(encoding="utf-8")
+        self.assertNotIn("Outdated managed rule.", updated)
+        self.assertIn("Keep this local section.", updated)
+
     def test_sync_all_profile_refuses_claude_without_metadata(self) -> None:
         self.assertEqual(self.cli("--profile", "all").returncode, 0)
         claude_path = self.repo / "CLAUDE.md"
@@ -508,9 +568,9 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         result = self.cli("--batch", str(toml_file), "--check")
         # --check is always strict; fresh adoption may have placeholder warnings
         # Verify the batch ran and reported on exactly 1 repository
-        match = re.search(r"(\d+) succeeded, (\d+) failed", result.stdout)
+        match = re.search(r"(\d+) succeeded, (\d+) warned, (\d+) failed", result.stdout)
         self.assertIsNotNone(match, result.stderr + result.stdout)
-        self.assertEqual(int(match.group(1)) + int(match.group(2)), 1)
+        self.assertEqual(sum(int(g) for g in match.groups()), 1)
 
     def test_batch_continues_on_failure(self) -> None:
         repo1 = self.make_repo("r1")

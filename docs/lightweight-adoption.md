@@ -25,7 +25,7 @@ For that reason, the target repository's `AGENTS.md` should include the most imp
 
 ## Metadata Block
 
-Scripted adoption adds a metadata block near the top of `AGENTS.md`:
+Scripted adoption adds a metadata block near the top of each generated entrypoint (`AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`):
 
 ```md
 <!-- agent-rules:

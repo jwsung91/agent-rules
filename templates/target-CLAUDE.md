@@ -2,6 +2,8 @@
 
 {{AGENT_RULES_METADATA}}
 
+<!-- agent-rules-managed:start -->
+
 This is the Claude instruction entrypoint for this repository.
 
 ## Agent Usage Model
@@ -37,6 +39,8 @@ Common types: `feat`, `fix`, `docs`, `test`, `refactor`, `style`, `perf`, `build
 
 Use `!` or a `BREAKING CHANGE:` footer for compatibility-breaking changes.
 Keep the subject concise, lowercase, imperative mood, no trailing period.
+
+<!-- agent-rules-managed:end -->
 
 ## Validation
 
