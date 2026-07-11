@@ -164,7 +164,10 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
 class AdoptAgentRulesIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.repo = Path(self.tmp.name)
+        # Resolve so this matches adopt.py's own resolve_target_repo() output;
+        # on some Windows hosts tempfile's raw path uses an 8.3 short name
+        # (e.g. RUNNER~1) that only resolve() expands to the long form.
+        self.repo = Path(self.tmp.name).resolve()
         run(["git", "init"], self.repo)
 
     def tearDown(self) -> None:
