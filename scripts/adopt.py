@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -610,7 +611,9 @@ def extract_managed_block(content: str) -> str | None:
 
 def replace_metadata_block(content: str, metadata: str) -> str:
     if METADATA_RE.search(content):
-        return METADATA_RE.sub(metadata, content, count=1)
+        # Use a callable replacement so backslashes in `metadata` (e.g. from a
+        # Windows path in the source URL) aren't parsed as regex escapes.
+        return METADATA_RE.sub(lambda _match: metadata, content, count=1)
     for heading in ("# AGENTS.md", "# CLAUDE.md", "# GEMINI.md"):
         if content.startswith(heading):
             return content.replace(f"{heading}\n", f"{heading}\n\n{metadata}\n", 1)
@@ -1443,6 +1446,13 @@ def infer_profile_from_existing(target_repo: Path) -> str | None:
 
 
 def main() -> int:
+    # Some Windows console code pages (e.g. cp949) can't encode every
+    # character this script prints (box-drawing separators, em dashes).
+    # Fall back instead of crashing mid-run.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
     args = parse_args()
 
     if args.batch:

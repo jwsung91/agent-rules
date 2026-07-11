@@ -518,12 +518,12 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         repo = self.make_repo("r1")
         toml_file = self.base / "repos.toml"
         toml_file.write_text(
-            f'[[repos]]\npath = "{repo}"\nprofile = "codex"\n',
+            f'[[repos]]\npath = "{repo.as_posix()}"\nprofile = "codex"\n',
             encoding="utf-8",
         )
         entries = adopt.parse_batch_file(toml_file)
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].path, str(repo))
+        self.assertEqual(Path(entries[0].path), repo)
         self.assertEqual(entries[0].profile, "codex")
 
     def test_parse_text_batch(self) -> None:
@@ -542,7 +542,7 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         repo2 = self.make_repo("r2")
         toml_file = self.base / "repos.toml"
         toml_file.write_text(
-            f'[[repos]]\npath = "{repo1}"\n\n[[repos]]\npath = "{repo2}"\n',
+            f'[[repos]]\npath = "{repo1.as_posix()}"\n\n[[repos]]\npath = "{repo2.as_posix()}"\n',
             encoding="utf-8",
         )
         result = self.cli("--batch", str(toml_file), "--profile", "codex", "--dry-run")
@@ -555,8 +555,8 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         repo2 = self.make_repo("r2")
         toml_file = self.base / "repos.toml"
         toml_file.write_text(
-            f'[[repos]]\npath = "{repo1}"\nprofile = "codex"\n\n'
-            f'[[repos]]\npath = "{repo2}"\nprofile = "claude"\n',
+            f'[[repos]]\npath = "{repo1.as_posix()}"\nprofile = "codex"\n\n'
+            f'[[repos]]\npath = "{repo2.as_posix()}"\nprofile = "claude"\n',
             encoding="utf-8",
         )
         result = self.cli("--batch", str(toml_file), "--dry-run")
@@ -568,7 +568,7 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         repo = self.make_repo("r1")
         run([sys.executable, str(SCRIPT), str(repo), "--shared-url", str(ROOT), "--profile", "codex"], ROOT)
         toml_file = self.base / "repos.toml"
-        toml_file.write_text(f'[[repos]]\npath = "{repo}"\n', encoding="utf-8")
+        toml_file.write_text(f'[[repos]]\npath = "{repo.as_posix()}"\n', encoding="utf-8")
         result = self.cli("--batch", str(toml_file), "--check")
         # --check is always strict; fresh adoption may have placeholder warnings
         # Verify the batch ran and reported on exactly 1 repository
@@ -581,7 +581,7 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         repo1 = self.make_repo("r1")
         toml_file = self.base / "repos.toml"
         toml_file.write_text(
-            f'[[repos]]\npath = "/nonexistent/repo"\n\n[[repos]]\npath = "{repo1}"\nprofile = "codex"\n',
+            f'[[repos]]\npath = "/nonexistent/repo"\n\n[[repos]]\npath = "{repo1.as_posix()}"\nprofile = "codex"\n',
             encoding="utf-8",
         )
         result = self.cli("--batch", str(toml_file), "--dry-run")
