@@ -102,6 +102,7 @@ class GenerateBatchListTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(output.exists())
 
+    @unittest.skipUnless(sys.version_info >= (3, 11), "requires Python 3.11+ (stdlib tomllib)")
     def test_generated_toml_is_consumable_by_batch(self) -> None:
         repo = self.make_repo("r1")
         output = self.base / "repos.toml"
