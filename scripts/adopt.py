@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +50,7 @@ MANAGED_END = "<!-- agent-rules-managed:end -->"
 BOUNDARY_PLACEHOLDER = "Add project-specific rules here."
 VALIDATION_PLACEHOLDER = "# Add project-specific build/test/lint commands here."
 GITIGNORE_AGENT_COMMENT = "# agent-rules (local only)"
+SYNC_BASE_ROOT = ".agent-rules/bases"
 
 
 @dataclass(frozen=True)
@@ -624,6 +626,83 @@ def render_file_for_profile(relative_path: str, context: RenderContext) -> str:
     return render_template(read_template(f"target-{relative_path}"), context)
 
 
+def sync_base_path(relative_path: str) -> str:
+    return f"{SYNC_BASE_ROOT}/{relative_path}"
+
+
+def three_way_merge(local: str, base: str, upstream: str) -> tuple[str, bool]:
+    """Merge text with Git's deterministic merge-file implementation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        local_path = root / "local"
+        base_path = root / "base"
+        upstream_path = root / "upstream"
+        local_path.write_text(local, encoding="utf-8")
+        base_path.write_text(base, encoding="utf-8")
+        upstream_path.write_text(upstream, encoding="utf-8")
+        result = subprocess.run(
+            [
+                "git",
+                "merge-file",
+                "-p",
+                "-L",
+                "local",
+                "-L",
+                "base",
+                "-L",
+                "upstream",
+                str(local_path),
+                str(base_path),
+                str(upstream_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode not in (0, 1):
+            raise SystemExit(
+                f"git merge-file failed: {result.stderr.strip() or result.stdout.strip()}"
+            )
+        return result.stdout, result.returncode == 1
+
+
+def baseline_plan(
+    target_repo: Path, relative_path: str, upstream: str
+) -> FilePlan:
+    path = sync_base_path(relative_path)
+    target = target_repo / path
+    if not target.exists():
+        action = "create"
+    elif target.read_text(encoding="utf-8", errors="replace") == upstream:
+        action = "no-op"
+    else:
+        action = "update"
+    return FilePlan(path=path, action=action, content=upstream)
+
+
+def plan_three_way_update(
+    target_repo: Path,
+    relative_path: str,
+    existing: str,
+    upstream: str,
+    *,
+    fallback: tuple[str, str] | None = None,
+) -> tuple[str | None, str]:
+    base = target_repo / sync_base_path(relative_path)
+    if not base.exists():
+        if fallback is not None:
+            return fallback
+        return None, "sync-base-missing"
+    merged, conflicted = three_way_merge(
+        existing,
+        base.read_text(encoding="utf-8", errors="replace"),
+        upstream,
+    )
+    if conflicted:
+        return merged, "merge-conflict"
+    return merged, "no-op" if merged == existing else "merge"
+
+
 def extract_managed_block(content: str) -> str | None:
     start = content.find(MANAGED_START)
     end = content.find(MANAGED_END)
@@ -782,8 +861,14 @@ def build_entrypoint_plans(
                 generated_at=context.generated_at,
             )
             if update and parse_metadata(existing):
-                content, action = plan_generated_update(
-                    existing, rendered, metadata, relative_path
+                content, action = plan_three_way_update(
+                    target_repo,
+                    relative_path,
+                    existing,
+                    rendered,
+                    fallback=plan_generated_update(
+                        existing, rendered, metadata, relative_path
+                    ),
                 )
             elif update:
                 content = None
@@ -798,6 +883,7 @@ def build_entrypoint_plans(
             else:
                 content = None
             plans.append(FilePlan(path=relative_path, action=action, content=content))
+            plans.append(baseline_plan(target_repo, relative_path, rendered))
             continue
 
         if relative_path in TOOL_ENTRYPOINTS and path.exists() and update:
@@ -812,13 +898,22 @@ def build_entrypoint_plans(
                 content, action = plan_generated_update(
                     existing, rendered, metadata, relative_path
                 )
+                content, action = plan_three_way_update(
+                    target_repo,
+                    relative_path,
+                    existing,
+                    rendered,
+                    fallback=(content, action),
+                )
             else:
                 content = None
                 action = "metadata-missing"
             plans.append(FilePlan(path=relative_path, action=action, content=content))
+            plans.append(baseline_plan(target_repo, relative_path, rendered))
             continue
 
         plans.append(FilePlan(path=relative_path, action=action, content=rendered))
+        plans.append(baseline_plan(target_repo, relative_path, rendered))
     return plans
 
 
@@ -864,18 +959,29 @@ def build_shared_skill_plans(
     plans: list[FilePlan] = []
     for source, relative_path in shared_skill_file_specs(profile):
         target = target_repo / relative_path
+        upstream = source.read_text(encoding="utf-8")
         if target.exists():
             if update:
-                action = (
-                    "no-op" if target.read_bytes() == source.read_bytes() else "update"
+                content, action = plan_three_way_update(
+                    target_repo,
+                    relative_path,
+                    target.read_text(encoding="utf-8", errors="replace"),
+                    upstream,
+                    fallback=(None, "no-op")
+                    if target.read_text(encoding="utf-8", errors="replace") == upstream
+                    else None,
                 )
             elif force:
                 action = "overwrite"
+                content = upstream
             else:
                 action = "exists"
+                content = None
         else:
             action = "create"
-        plans.append(FilePlan(path=relative_path, action=action, source=source))
+            content = upstream
+        plans.append(FilePlan(path=relative_path, action=action, content=content))
+        plans.append(baseline_plan(target_repo, relative_path, upstream))
     return plans
 
 
@@ -1222,6 +1328,19 @@ def write_plan_file(
             "Use --sync to preserve existing content and add metadata, or --force "
             "to overwrite intentionally."
         )
+    if plan.action == "sync-base-missing":
+        raise SystemExit(
+            f"Refusing to sync a modified generated file without a baseline: {path}\n"
+            "Re-run with --force to establish a new baseline, or restore the generated "
+            "file and run --sync again."
+        )
+    if plan.action == "merge-conflict":
+        preview = f"\n\nConflict preview:\n{plan.content.rstrip()}" if plan.content else ""
+        raise SystemExit(
+            f"Refusing to write unresolved merge conflicts: {path}\n"
+            "Run with --dry-run to inspect the conflict, then reconcile the local "
+            f"changes or use --force intentionally.{preview}"
+        )
     if plan.action == "exists":
         if plan.path.startswith(".agents/agent-rules/"):
             raise SystemExit(
@@ -1266,7 +1385,13 @@ def validate_plan_before_write(plan: AdoptionPlan) -> int:
         return 1
 
     for item in plan.files:
-        if item.action in {"exists", "metadata-missing", "blocked-existing-local-copy"}:
+        if item.action in {
+            "exists",
+            "metadata-missing",
+            "blocked-existing-local-copy",
+            "sync-base-missing",
+            "merge-conflict",
+        }:
             try:
                 write_plan_file(plan.target_repo, item, dry_run=True)
             except SystemExit as exc:
@@ -1344,7 +1469,9 @@ def print_summary(
         p
         for p in changed
         if Path(p).name in ENTRYPOINT_FILES
-        or p.startswith((".codex/skills/", ".claude/skills/"))
+        or p.startswith(
+            (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
+        )
     ]
     committable_changed = [
         p
@@ -1408,7 +1535,9 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
         item.path
         for item in plan.files
         if item.path in ENTRYPOINT_FILES
-        or item.path.startswith((".codex/skills/", ".claude/skills/"))
+        or item.path.startswith(
+            (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
+        )
     ]
     any_local_output_written = any(
         path in generated_local_paths for path in (created + updated)

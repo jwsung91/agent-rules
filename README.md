@@ -222,3 +222,11 @@ python scripts/adopt.py /path/to/repo --profile all --skills --visibility tracke
 Use `--visibility local` (the default) for personal files, or
 `--visibility tracked` when the target repository should share generated
 entrypoints and skills with the team.
+
+The adoption helper records generated baselines under `.agent-rules/bases/`.
+Later `--sync` runs use them for 3-way merges, preserving non-conflicting edits
+to generated entrypoints and skills and stopping before unresolved conflicts
+are written.
+
+See `docs/cross-agent-validation.md` for the shared behavioral evaluation and
+its remaining environment-specific validation gaps.

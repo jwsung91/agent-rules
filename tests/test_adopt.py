@@ -160,7 +160,29 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                 skills=False,
             )
             plan = adopt.build_plan(repo, args, "claude")
-            self.assertEqual([item.path for item in plan.files], ["CLAUDE.md"])
+            self.assertEqual(
+                [item.path for item in plan.files],
+                ["CLAUDE.md", ".agent-rules/bases/CLAUDE.md"],
+            )
+
+    def test_three_way_merge_preserves_independent_changes(self) -> None:
+        merged, conflicted = adopt.three_way_merge(
+            "one local\ntwo\nthree\nfour\n",
+            "one\ntwo\nthree\nfour\n",
+            "one\ntwo\nthree\nfour upstream\n",
+        )
+        self.assertFalse(conflicted)
+        self.assertIn("one local", merged)
+        self.assertIn("four upstream", merged)
+
+    def test_three_way_merge_reports_conflicting_changes(self) -> None:
+        merged, conflicted = adopt.three_way_merge(
+            "one\nlocal\n",
+            "one\nbase\n",
+            "one\nupstream\n",
+        )
+        self.assertTrue(conflicted)
+        self.assertIn("<<<<<<< local", merged)
 
 
 class AdoptAgentRulesIntegrationTests(unittest.TestCase):
@@ -261,6 +283,26 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn(".codex/skills/investigate-bug/SKILL.md", gitignore)
         self.assertNotIn("git add .codex/skills/", result.stdout)
 
+    def test_skill_sync_preserves_local_edits_with_baseline(self) -> None:
+        result = self.cli("--profile", "codex", "--skills", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        skill = self.repo / ".codex" / "skills" / "investigate-bug" / "SKILL.md"
+        skill.write_text(
+            skill.read_text(encoding="utf-8") + "\nLocal repository note.\n",
+            encoding="utf-8",
+        )
+
+        sync = self.cli(
+            "--profile",
+            "codex",
+            "--skills",
+            "--visibility",
+            "tracked",
+            "--sync",
+        )
+        self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+        self.assertIn("Local repository note.", skill.read_text(encoding="utf-8"))
+
     def test_codex_profile_creates_only_agents(self) -> None:
         result = self.cli("--profile", "codex")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -275,7 +317,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertTrue((self.repo / "GEMINI.md").exists())
 
-    def test_sync_refreshes_managed_content_in_claude(self) -> None:
+    def test_sync_preserves_managed_content_edits_in_claude(self) -> None:
         self.assertEqual(self.cli("--profile", "claude").returncode, 0)
         path = self.repo / "CLAUDE.md"
         content = path.read_text(encoding="utf-8")
@@ -291,13 +333,10 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "claude", "--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         updated = path.read_text(encoding="utf-8")
-        self.assertNotIn("Outdated managed rule.", updated)
-        self.assertIn(
-            "Investigate existing code, documentation, and behavior before editing.", updated
-        )
+        self.assertIn("Outdated managed rule.", updated)
         self.assertIn("Keep this local section.", updated)
 
-    def test_sync_regenerates_legacy_claude_without_markers(self) -> None:
+    def test_sync_preserves_removed_markers_when_baseline_exists(self) -> None:
         self.assertEqual(self.cli("--profile", "claude").returncode, 0)
         path = self.repo / "CLAUDE.md"
         # Simulate a file generated before managed markers existed: metadata
@@ -314,9 +353,9 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "claude", "--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         updated = path.read_text(encoding="utf-8")
-        self.assertNotIn("Stale legacy rule.", updated)
-        self.assertIn(adopt.MANAGED_START, updated)
-        self.assertIn(adopt.MANAGED_END, updated)
+        self.assertIn("Stale legacy rule.", updated)
+        self.assertNotIn(adopt.MANAGED_START, updated)
+        self.assertNotIn(adopt.MANAGED_END, updated)
 
     def test_sync_all_preserves_local_edits_in_tool_entrypoints(self) -> None:
         self.assertEqual(self.cli("--profile", "all").returncode, 0)
@@ -332,7 +371,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "all", "--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         updated = claude_path.read_text(encoding="utf-8")
-        self.assertNotIn("Outdated managed rule.", updated)
+        self.assertIn("Outdated managed rule.", updated)
         self.assertIn("Keep this local section.", updated)
 
     def test_sync_all_profile_refuses_claude_without_metadata(self) -> None:
@@ -389,7 +428,10 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
         self.assertNotIn("!CLAUDE.md", gitignore)
-        self.assertEqual(gitignore.count("CLAUDE.md"), 1)
+        self.assertEqual(
+            sum(line.strip().lstrip("/") == "CLAUDE.md" for line in gitignore.splitlines()),
+            1,
+        )
 
     def test_gitignore_entry_with_leading_slash_not_duplicated(self) -> None:
         (self.repo / ".gitignore").write_text("/CLAUDE.md\n", encoding="utf-8")
@@ -397,7 +439,10 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
-        self.assertEqual(gitignore.count("CLAUDE.md"), 1)
+        self.assertEqual(
+            sum(line.strip().lstrip("/") == "CLAUDE.md" for line in gitignore.splitlines()),
+            1,
+        )
 
     def test_next_commands_omit_commit_for_local_only_entrypoints(self) -> None:
         result = self.cli("--profile", "claude")
@@ -453,12 +498,11 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
         self.assertIn("Would update", update.stdout)
 
-    def test_update_refreshes_metadata_and_managed_block(self) -> None:
+    def test_update_preserves_managed_block_edits(self) -> None:
         self.assertEqual(self.cli("--profile", "codex").returncode, 0)
         path = self.repo / "AGENTS.md"
         content = path.read_text(encoding="utf-8")
-        old_content = content.replace("source_commit=", "source_commit=old")
-        old_content = old_content.replace(
+        old_content = content.replace(
             "Use agent roles as execution modes, not fixed tool identities.",
             "Old managed text.",
         )
@@ -468,8 +512,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "codex", "--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         updated = path.read_text(encoding="utf-8")
-        self.assertNotIn("Old managed text.", updated)
-        self.assertIn("Use agent roles as execution modes, not fixed tool identities.", updated)
+        self.assertIn("Old managed text.", updated)
         self.assertIn("Keep this text.", updated)
 
     def test_legacy_adoption_warns_without_strict(self) -> None:
