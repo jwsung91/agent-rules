@@ -70,6 +70,24 @@ The same `SKILL.md` behavioral contract is installed under
 `.codex/skills/investigate-bug/` and `.claude/skills/investigate-bug/`.
 Agent-specific metadata may coexist with that shared contract.
 
+`--skills` also injects a `## Shared Skills` section into the generated
+`AGENTS.md` and `CLAUDE.md` (inside the managed block), directing the agent to
+invoke the installed skill even when the triggering message bundles unrelated
+work. Skill descriptions alone proved unreliable for that case; the
+always-loaded entrypoint is the trigger lever that worked (see
+`docs/cross-agent-validation.md`). `GEMINI.md` is not changed because no
+shared skills are installed for Gemini. Existing adoptions gain the section
+via `--sync --skills`; a plain `--sync` also detects already-installed shared
+skills automatically, so the section is not stripped when the flag is
+omitted.
+
+Claude Code watches an already-known `.claude/skills/` directory for file
+changes, so a later `--skills --sync` update is picked up by an already-running
+Claude Code session without restarting it. The **first** `--skills` install in a
+repository creates the `.claude/skills/` directory itself; if a Claude Code
+session was already running in that repository before the install, restart the
+session so it starts watching the new directory.
+
 ## 5. Existing File: Sync
 
 Default apply refuses to overwrite an existing file.

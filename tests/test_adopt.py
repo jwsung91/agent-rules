@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -185,6 +186,22 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         self.assertTrue(conflicted)
         self.assertIn("<<<<<<< local", merged)
 
+    def test_three_way_merge_handles_non_utf8_locale(self) -> None:
+        # Regression: subprocess.run(text=True) without an explicit encoding
+        # decodes git merge-file's UTF-8 stdout using the process's locale
+        # encoding. On a non-UTF-8 locale (e.g. Windows cp949), non-ASCII
+        # merged content raised UnicodeDecodeError before three_way_merge()
+        # started passing encoding="utf-8" explicitly.
+        with mock.patch("locale.getpreferredencoding", return_value="cp949"):
+            merged, conflicted = adopt.three_way_merge(
+                "one local — note\ntwo\nthree\nfour\n",
+                "one\ntwo\nthree\nfour\n",
+                "one\ntwo\nthree\nfour upstream\n",
+            )
+        self.assertFalse(conflicted)
+        self.assertIn("—", merged)
+        self.assertIn("four upstream", merged)
+
 
 class AdoptAgentRulesIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -278,6 +295,75 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         )
         self.assertFalse(
             (self.repo / ".claude/skills/investigate-bug/agents/openai.yaml").exists()
+        )
+
+    def test_skills_adds_shared_skills_section_to_entrypoints(self) -> None:
+        result = self.cli("--profile", "all", "--skills", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        agents = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        claude = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        gemini = (self.repo / "GEMINI.md").read_text(encoding="utf-8")
+        self.assertIn("## Shared Skills", agents)
+        self.assertIn(".codex/skills", agents)
+        self.assertIn("invoke the `investigate-bug` skill", agents)
+        self.assertIn("## Shared Skills", claude)
+        self.assertIn(".claude/skills", claude)
+        # The section lives inside the managed block so --sync keeps updating it
+        self.assertLess(
+            claude.index(adopt.MANAGED_START), claude.index("## Shared Skills")
+        )
+        self.assertLess(
+            claude.index("## Shared Skills"), claude.index(adopt.MANAGED_END)
+        )
+        self.assertNotIn("## Shared Skills", gemini)
+        for content in (agents, claude, gemini):
+            self.assertNotIn("{{SHARED_SKILLS_SECTION}}", content)
+
+    def test_no_skills_flag_omits_shared_skills_section(self) -> None:
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        content = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertNotIn("## Shared Skills", content)
+        self.assertNotIn("{{SHARED_SKILLS_SECTION}}", content)
+
+    def test_sync_with_skills_adds_section_to_existing_adoption(self) -> None:
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertNotIn(
+            "## Shared Skills", (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        )
+        sync = self.cli("--profile", "claude", "--skills", "--sync")
+        self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+        content = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("## Shared Skills", content)
+        self.assertTrue(
+            (self.repo / ".claude/skills/investigate-bug/SKILL.md").exists()
+        )
+
+    def test_plain_sync_keeps_section_when_skills_are_installed(self) -> None:
+        # Regression guard: --sync without --skills must detect installed
+        # shared skills; otherwise the 3-way merge would render a skill-free
+        # upstream and strip the Shared Skills section it added earlier.
+        result = self.cli("--profile", "claude", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn(
+            "## Shared Skills", (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        )
+        sync = self.cli("--sync")
+        self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+        self.assertIn(
+            "## Shared Skills", (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        )
+
+    def test_check_skills_warns_when_section_is_missing(self) -> None:
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        skill_dir = self.repo / ".claude" / "skills" / "investigate-bug"
+        skill_dir.mkdir(parents=True)
+        shutil.copy2(ROOT / "skills" / "investigate-bug" / "SKILL.md", skill_dir / "SKILL.md")
+        check = self.cli("--check", "--skills")
+        self.assertIn(
+            "CLAUDE.md lacks a Shared Skills trigger section", check.stdout
         )
 
     def test_local_skill_install_is_added_to_gitignore(self) -> None:

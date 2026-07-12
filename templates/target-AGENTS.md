@@ -46,6 +46,8 @@ Common types: `feat`, `fix`, `docs`, `test`, `refactor`, `style`, `perf`, `build
 Use `!` or a `BREAKING CHANGE:` footer for compatibility-breaking changes.
 Keep the subject concise, lowercase, imperative mood, no trailing period.
 
+{{SHARED_SKILLS_SECTION}}
+
 <!-- agent-rules-managed:end -->
 
 ## Repository-specific Boundaries

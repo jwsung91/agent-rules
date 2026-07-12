@@ -43,6 +43,24 @@ PROFILE_SKILL_ROOTS = {
     "gemini": (),
     "all": (".codex/skills", ".claude/skills"),
 }
+ENTRYPOINT_SKILL_ROOTS = {
+    "AGENTS.md": ".codex/skills",
+    "CLAUDE.md": ".claude/skills",
+    "GEMINI.md": None,
+}
+# Trigger rules injected into generated entrypoints when --skills is active.
+# Skill descriptions compete for salience at invocation time and can lose to
+# competing requests bundled into the same message; the always-loaded
+# entrypoint is the reliable trigger lever (see docs/cross-agent-validation.md).
+SKILL_TRIGGER_RULES = {
+    "investigate-bug": (
+        "When a message reports a bug or unexpected behavior, invoke the "
+        "`investigate-bug` skill before planning any fix — even when the same "
+        "message also requests unrelated work such as refactoring, new tests, "
+        "or cleanup. Investigate the bug under that workflow first and treat "
+        "the unrelated work as a separate request."
+    ),
+}
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
 METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)
 MANAGED_START = "<!-- agent-rules-managed:start -->"
@@ -61,6 +79,7 @@ class RenderContext:
     profile: str
     source_commit: str
     generated_at: str
+    install_skills: bool = False
 
 
 @dataclass
@@ -189,6 +208,7 @@ def run_command(command: list[str], cwd: Path | None = None) -> tuple[int, str, 
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
         )
     except FileNotFoundError as exc:
@@ -616,13 +636,38 @@ def build_render_context(
         profile=profile,
         source_commit=source_status.local_head or "unknown",
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+        install_skills=args.skills,
     )
+
+
+def shared_skills_section(relative_path: str) -> str:
+    root = ENTRYPOINT_SKILL_ROOTS.get(relative_path)
+    if not root:
+        return ""
+    names = ", ".join(f"`{name}`" for name in SHARED_SKILLS)
+    lines = [
+        "## Shared Skills",
+        "",
+        f"- This repository installs shared skills under `{root}/`: {names}.",
+    ]
+    for name in SHARED_SKILLS:
+        rule = SKILL_TRIGGER_RULES.get(name)
+        if rule:
+            lines.append(f"- {rule}")
+    return "\n".join(lines)
 
 
 def render_file_for_profile(relative_path: str, context: RenderContext) -> str:
     if relative_path not in ENTRYPOINT_FILES:
         raise SystemExit(f"Unsupported generated file: {relative_path}")
-    return render_template(read_template(f"target-{relative_path}"), context)
+    rendered = render_template(read_template(f"target-{relative_path}"), context)
+    section = shared_skills_section(relative_path) if context.install_skills else ""
+    if section:
+        rendered = rendered.replace("{{SHARED_SKILLS_SECTION}}", section)
+    else:
+        rendered = rendered.replace("{{SHARED_SKILLS_SECTION}}\n\n", "")
+        rendered = rendered.replace("{{SHARED_SKILLS_SECTION}}", "")
+    return rendered
 
 
 def sync_base_path(relative_path: str) -> str:
@@ -656,6 +701,7 @@ def three_way_merge(local: str, base: str, upstream: str) -> tuple[str, bool]:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
         )
         if result.returncode not in (0, 1):
@@ -1304,6 +1350,21 @@ def check_adoption(
                 "Claude skill contains Codex-only agents/openai.yaml metadata; remove it",
             )
 
+        for relative_path in required:
+            if not ENTRYPOINT_SKILL_ROOTS.get(relative_path):
+                continue
+            path = target_repo / relative_path
+            if not path.exists():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            append_check(
+                results,
+                "OK" if "## Shared Skills" in content else "WARN",
+                f"{relative_path} contains a Shared Skills trigger section"
+                if "## Shared Skills" in content
+                else f"{relative_path} lacks a Shared Skills trigger section; run --sync --skills to add it",
+            )
+
     if BOUNDARY_PLACEHOLDER in primary_content:
         append_check(
             results,
@@ -1743,12 +1804,21 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
                     print("FAIL: no profile specified and none inferred from existing files.")
                     results.append((entry.path, 1))
                     continue
-                plan = build_plan(target_repo, args, profile)
-                if args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
+                # Per-entry copy: skills inference for one repository must not
+                # leak into the rest of the batch.
+                entry_args = argparse.Namespace(**vars(args))
+                if (
+                    entry_args.sync
+                    and not entry_args.skills
+                    and skills_installed(target_repo, profile)
+                ):
+                    entry_args.skills = True
+                plan = build_plan(target_repo, entry_args, profile)
+                if entry_args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
                     print(f"FAIL: local source is {plan.source_status.local_status}. Update agent-rules first.")
                     results.append((entry.path, 1))
                     continue
-                code = apply_plan(plan, args)
+                code = apply_plan(plan, entry_args)
         except (SystemExit, Exception) as exc:
             print(f"FAIL: {exc}")
             code = 1
@@ -1797,6 +1867,14 @@ def infer_profile_from_existing(target_repo: Path) -> str | None:
     return None
 
 
+def skills_installed(target_repo: Path, profile: str) -> bool:
+    for root in PROFILE_SKILL_ROOTS.get(profile, ()):
+        for skill_name in SHARED_SKILLS:
+            if (target_repo / root / skill_name / "SKILL.md").exists():
+                return True
+    return False
+
+
 def main() -> int:
     # Some Windows console code pages (e.g. cp949) can't encode every
     # character this script prints (box-drawing separators, em dashes).
@@ -1821,6 +1899,12 @@ def main() -> int:
     # Auto-detect profile from existing files when --check or --sync is requested
     if profile is None and (args.check or args.sync):
         profile = infer_profile_from_existing(target_repo)
+
+    # Without this, --sync would render entrypoints skill-free and the 3-way
+    # merge would strip the Shared Skills section from repositories whose
+    # skills were installed by an earlier --skills run.
+    if args.sync and not args.skills and profile and skills_installed(target_repo, profile):
+        args.skills = True
 
     validate_args(args, profile)
 

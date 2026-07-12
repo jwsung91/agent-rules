@@ -1,6 +1,6 @@
 ---
 name: investigate-bug
-description: Investigate reported bugs and unexpected behavior before changing code. Use when an agent needs to reproduce or understand a defect, distinguish expected from actual behavior, identify the root cause, implement or recommend the smallest appropriate fix, and report focused validation and remaining gaps.
+description: Investigate reported bugs and unexpected behavior before changing code. Use when an agent needs to reproduce or understand a defect, distinguish expected from actual behavior, identify the root cause, implement or recommend the smallest appropriate fix, and report focused validation and remaining gaps. Applies even when the same message also asks for unrelated work (a refactor, a new feature, cleanup) alongside the bug report — investigate the bug under this workflow first and treat the rest as a separate request.
 ---
 
 # Investigate Bug
@@ -23,6 +23,7 @@ Follow an evidence-first workflow. Do not modify code until the expected behavio
 ## Guardrails
 
 - Keep investigation and changes within the requested scope.
+- When a request bundles a bug report with unrelated work (a refactor, a new feature, cleanup) in the same message, apply this workflow to the bug only and call out the rest as a separate request instead of folding it into the same change.
 - Preserve public APIs and user-visible behavior unless the requested fix requires a change.
 - Do not hide failures by weakening tests, suppressing errors, or adding unexplained retries.
 - Do not claim reproduction, validation, or root-cause certainty without evidence.

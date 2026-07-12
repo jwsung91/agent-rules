@@ -224,6 +224,12 @@ Use `--visibility local` (the default) for personal files, or
 `--visibility tracked` when the target repository should share generated
 entrypoints and skills with the team.
 
+`--skills` also injects a `## Shared Skills` trigger section into the
+generated `AGENTS.md` and `CLAUDE.md` so the installed skill is invoked
+reliably, even when a bug report arrives bundled with unrelated requests
+(see `docs/cross-agent-validation.md` for why the entrypoint is the trigger
+lever that works).
+
 The adoption helper records generated baselines under `.agent-rules/bases/`.
 Later `--sync` runs use them for 3-way merges, preserving non-conflicting edits
 to generated entrypoints and skills and stopping before unresolved conflicts
