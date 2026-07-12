@@ -156,6 +156,8 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                 check=False,
                 sync=False,
                 local_copy=False,
+                visibility="local",
+                skills=False,
             )
             plan = adopt.build_plan(repo, args, "claude")
             self.assertEqual([item.path for item in plan.files], ["CLAUDE.md"])
@@ -216,8 +218,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("Would create: " + str(self.repo / "CLAUDE.md"), dry_run.stdout)
         self.assertNotIn("Would create: " + str(self.repo / "AGENTS.md"), dry_run.stdout)
         self.assertNotIn("Would create: " + str(self.repo / "GEMINI.md"), dry_run.stdout)
-        # .gitignore에는 세 파일 모두 추가됨
-        self.assertIn("AGENTS.md, CLAUDE.md, GEMINI.md", dry_run.stdout)
+        self.assertIn("Would add to .gitignore: CLAUDE.md", dry_run.stdout)
 
         result = self.cli("--profile", "claude")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -225,9 +226,40 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertFalse((self.repo / "GEMINI.md").exists())
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
-        self.assertIn("AGENTS.md", gitignore)
         self.assertIn("CLAUDE.md", gitignore)
-        self.assertIn("GEMINI.md", gitignore)
+        self.assertNotIn("AGENTS.md", gitignore)
+        self.assertNotIn("GEMINI.md", gitignore)
+
+    def test_tracked_visibility_does_not_modify_gitignore(self) -> None:
+        result = self.cli("--profile", "codex", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((self.repo / "AGENTS.md").exists())
+        self.assertFalse((self.repo / ".gitignore").exists())
+
+    def test_tracked_visibility_refuses_ignored_output(self) -> None:
+        (self.repo / ".gitignore").write_text("AGENTS.md\n", encoding="utf-8")
+        result = self.cli("--profile", "codex", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ignored by target repository ignore rules", result.stdout)
+
+    def test_all_profile_installs_shared_skill_for_codex_and_claude(self) -> None:
+        result = self.cli("--profile", "all", "--skills", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        codex_skill = self.repo / ".codex" / "skills" / "investigate-bug" / "SKILL.md"
+        claude_skill = self.repo / ".claude" / "skills" / "investigate-bug" / "SKILL.md"
+        self.assertTrue(codex_skill.exists())
+        self.assertTrue(claude_skill.exists())
+        self.assertEqual(
+            codex_skill.read_text(encoding="utf-8"),
+            claude_skill.read_text(encoding="utf-8"),
+        )
+
+    def test_local_skill_install_is_added_to_gitignore(self) -> None:
+        result = self.cli("--profile", "codex", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".codex/skills/investigate-bug/SKILL.md", gitignore)
+        self.assertNotIn("git add .codex/skills/", result.stdout)
 
     def test_codex_profile_creates_only_agents(self) -> None:
         result = self.cli("--profile", "codex")

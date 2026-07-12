@@ -206,4 +206,19 @@ Before considering a target repository adopted, check that:
 - Task prompts mention Primary Mode or Review Mode.
 - Final reports include validation status and any intentionally skipped checks.
 
-This repository intentionally focuses on rules, templates, and lightweight adoption helpers. It does not define full agent skills, CI, package metadata, or runtime automation.
+This repository intentionally focuses on rules, templates, lightweight adoption
+helpers, and a small set of cross-agent workflow skills. It is not intended to
+be a comprehensive agent-skill catalog or runtime automation framework.
+
+## Shared Skills
+
+The repository includes a shared `investigate-bug` skill whose behavioral
+contract is usable by Codex and Claude. Install it together with an entrypoint:
+
+```bash
+python scripts/adopt.py /path/to/repo --profile all --skills --visibility tracked
+```
+
+Use `--visibility local` (the default) for personal files, or
+`--visibility tracked` when the target repository should share generated
+entrypoints and skills with the team.

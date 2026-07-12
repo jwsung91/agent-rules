@@ -7,11 +7,12 @@ The script creates root-level agent entrypoints and does not copy root-level `ru
 ## Recommended Workflow
 
 1. Choose an agent profile: `codex`, `claude`, `gemini`, or `all`.
-2. Run with `--dry-run`.
-3. Apply the files.
-4. Edit repository-specific boundaries and validation commands.
-5. Run the suggested validation, starting with `git diff --check`.
-6. Commit only `.gitignore` in the target repository — agent files are local-only.
+2. Choose `--visibility local` (default) or `--visibility tracked`.
+3. Add `--skills` when the repository should receive shared agent skills.
+4. Run with `--dry-run`.
+5. Apply the files.
+6. Edit repository-specific boundaries and validation commands.
+7. Run the suggested validation, starting with `git diff --check`.
 
 ## Profiles
 
@@ -51,6 +52,17 @@ python scripts/adopt.py /path/to/repo --profile gemini
 python scripts/adopt.py /path/to/repo --profile all --dry-run
 python scripts/adopt.py /path/to/repo --profile all
 ```
+
+Install the shared `investigate-bug` skill for Codex and Claude:
+
+```bash
+python scripts/adopt.py /path/to/repo --profile all --skills --dry-run
+python scripts/adopt.py /path/to/repo --profile all --skills
+```
+
+The same `SKILL.md` behavioral contract is installed under
+`.codex/skills/investigate-bug/` and `.claude/skills/investigate-bug/`.
+Agent-specific metadata may coexist with that shared contract.
 
 ## 5. Existing File: Sync
 
@@ -212,11 +224,24 @@ Exit code is 1 if any repository failed, 2 if none failed but at least one repor
 
   Or track it if the paths are stable and shared (e.g. CI server paths).
 
-## 9. Local-Only Agent Files
+## 9. Generated File Visibility
 
-Agent entrypoint files (AGENTS.md, CLAUDE.md, GEMINI.md) are **local-only**. The helper automatically adds them to the target repository's `.gitignore` after creating or updating them. They will not be committed to the repository.
+The default, `--visibility local`, adds generated entrypoints and installed
+skill files to the target repository's `.gitignore`.
 
-This is intentional: agent instruction files are personal workflow tools, not project artifacts.
+Use `--visibility tracked` to make the generated files team-visible:
+
+```bash
+python scripts/adopt.py /path/to/repo --profile codex --skills --visibility tracked
+```
+
+Tracked mode refuses to proceed when a generated output is ignored and
+untracked. Remove or narrow the matching ignore rule first.
+
+### Local-only files
+
+Local visibility ignores only the entrypoints and skills selected by the active
+profile. It does not add unused agent entrypoint names.
 
 After adoption, commit only `.gitignore`:
 

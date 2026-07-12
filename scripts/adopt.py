@@ -34,6 +34,14 @@ PROFILE_FILES = {
     "all": ("AGENTS.md", "CLAUDE.md", "GEMINI.md"),
 }
 ENTRYPOINT_FILES = PROFILE_FILES["all"]
+VALID_VISIBILITIES = {"local", "tracked"}
+SHARED_SKILLS = ("investigate-bug",)
+PROFILE_SKILL_ROOTS = {
+    "codex": (".codex/skills",),
+    "claude": (".claude/skills",),
+    "gemini": (),
+    "all": (".codex/skills", ".claude/skills"),
+}
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
 METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)
 MANAGED_START = "<!-- agent-rules-managed:start -->"
@@ -152,6 +160,17 @@ def parse_args() -> argparse.Namespace:
         "--local-copy",
         action="store_true",
         help="Copy shared rules under .agents/agent-rules/ for pinned/offline use.",
+    )
+    parser.add_argument(
+        "--visibility",
+        choices=sorted(VALID_VISIBILITIES),
+        default="local",
+        help="Keep generated files local (default) or make them trackable.",
+    )
+    parser.add_argument(
+        "--skills",
+        action="store_true",
+        help="Install shared skills for the selected agent profile.",
     )
     parser.add_argument(
         "--batch",
@@ -810,7 +829,7 @@ def local_copy_file_specs(profile: str) -> list[tuple[Path, str]]:
     for name in required_files_for_profile(profile):
         source_name = name
         specs.append((root / source_name, f".agents/agent-rules/{name}"))
-    for directory in ("rules", "templates"):
+    for directory in ("rules", "templates", "skills"):
         for source in sorted((root / directory).rglob("*")):
             if source.is_file():
                 specs.append((source, f".agents/agent-rules/{source.relative_to(root).as_posix()}"))
@@ -818,6 +837,46 @@ def local_copy_file_specs(profile: str) -> list[tuple[Path, str]]:
         source = root / "docs" / name
         specs.append((source, f".agents/agent-rules/docs/{name}"))
     return specs
+
+
+def shared_skill_file_specs(profile: str) -> list[tuple[Path, str]]:
+    root = source_repo_root()
+    specs: list[tuple[Path, str]] = []
+    for skill_name in SHARED_SKILLS:
+        skill_root = root / "skills" / skill_name
+        for destination_root in PROFILE_SKILL_ROOTS[profile]:
+            for source in sorted(skill_root.rglob("*")):
+                if source.is_file():
+                    relative = source.relative_to(skill_root).as_posix()
+                    specs.append(
+                        (source, f"{destination_root}/{skill_name}/{relative}")
+                    )
+    return specs
+
+
+def build_shared_skill_plans(
+    target_repo: Path,
+    profile: str,
+    *,
+    update: bool,
+    force: bool,
+) -> list[FilePlan]:
+    plans: list[FilePlan] = []
+    for source, relative_path in shared_skill_file_specs(profile):
+        target = target_repo / relative_path
+        if target.exists():
+            if update:
+                action = (
+                    "no-op" if target.read_bytes() == source.read_bytes() else "update"
+                )
+            elif force:
+                action = "overwrite"
+            else:
+                action = "exists"
+        else:
+            action = "create"
+        plans.append(FilePlan(path=relative_path, action=action, source=source))
+    return plans
 
 
 def build_local_copy_plans(
@@ -908,6 +967,15 @@ def build_plan(
                     target_repo,
                     profile,
                     source_status.local_head or "unknown",
+                    update=args.sync,
+                    force=args.force,
+                )
+            )
+        if args.skills:
+            files.extend(
+                build_shared_skill_plans(
+                    target_repo,
+                    profile,
                     update=args.sync,
                     force=args.force,
                 )
@@ -1213,6 +1281,7 @@ def print_summary(
     skipped: list[str],
     plan: AdoptionPlan,
     gitignore_file: str | None = None,
+    visibility: str = "local",
 ) -> None:
     print("\nCreated:")
     print("\n".join(f"- {item}" for item in created) if created else "- none")
@@ -1271,7 +1340,17 @@ def print_summary(
             print(f"- {command}")
 
     changed = created + updated
-    committable_changed = [p for p in changed if Path(p).name not in ENTRYPOINT_FILES]
+    generated_agent_files = [
+        p
+        for p in changed
+        if Path(p).name in ENTRYPOINT_FILES
+        or p.startswith((".codex/skills/", ".claude/skills/"))
+    ]
+    committable_changed = [
+        p
+        for p in changed
+        if visibility == "tracked" or p not in generated_agent_files
+    ]
 
     print("\nNext commands:")
     if committable_changed:
@@ -1302,6 +1381,15 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     if local_copy_ignored:
         return fail_on_ignored(local_copy_ignored)
 
+    if args.visibility == "tracked":
+        tracked_outputs_ignored = [
+            status
+            for status in plan.ignore_statuses
+            if status.ignored and not status.tracked
+        ]
+        if tracked_outputs_ignored:
+            return fail_on_ignored(tracked_outputs_ignored)
+
     created: list[str] = []
     updated: list[str] = []
     skipped: list[str] = []
@@ -1314,21 +1402,33 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
         else:
             skipped.append(path)
 
-    # Add all three entrypoint names to .gitignore so they remain local-only,
-    # regardless of which profile was applied.
+    # Local visibility ignores only files generated for the selected profile.
     git_root = plan.git_root or plan.target_repo
-    any_entrypoint_written = any(
-        Path(p).name in ENTRYPOINT_FILES for p in (created + updated)
+    generated_local_paths = [
+        item.path
+        for item in plan.files
+        if item.path in ENTRYPOINT_FILES
+        or item.path.startswith((".codex/skills/", ".claude/skills/"))
+    ]
+    any_local_output_written = any(
+        path in generated_local_paths for path in (created + updated)
     )
     gitignore_file: str | None = None
-    if any_entrypoint_written:
+    if any_local_output_written and args.visibility == "local":
         gitignore_file = add_to_gitignore(
             git_root,
-            list(ENTRYPOINT_FILES),
+            generated_local_paths,
             dry_run=args.dry_run,
         )
 
-    print_summary(created, updated, skipped, plan, gitignore_file=gitignore_file)
+    print_summary(
+        created,
+        updated,
+        skipped,
+        plan,
+        gitignore_file=gitignore_file,
+        visibility=args.visibility,
+    )
     return 0
 
 
