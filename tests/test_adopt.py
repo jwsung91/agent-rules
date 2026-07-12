@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import argparse
+import io
 import re
 import shutil
 import subprocess
@@ -185,6 +187,56 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         )
         self.assertTrue(conflicted)
         self.assertIn("<<<<<<< local", merged)
+
+    def test_check_skills_generalizes_to_a_second_shared_skill(self) -> None:
+        # Regression guard: the Codex/Claude contract-parity check and the
+        # Codex-only-file leak check used to hardcode "investigate-bug".
+        # Simulate a second shared skill (no real skills/second-skill/ source
+        # directory needed, since check_adoption only reads already-installed
+        # files in the target repo) and confirm both checks cover it.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            run(["git", "init"], repo)
+            second_codex = repo / ".codex" / "skills" / "second-skill"
+            second_claude = repo / ".claude" / "skills" / "second-skill"
+            (second_codex).mkdir(parents=True)
+            (second_claude / "agents").mkdir(parents=True)
+            (second_codex / "SKILL.md").write_text("codex version\n", encoding="utf-8")
+            (second_claude / "SKILL.md").write_text("claude version\n", encoding="utf-8")
+            (second_claude / "agents" / "openai.yaml").write_text(
+                "leaked\n", encoding="utf-8"
+            )
+
+            with (
+                mock.patch.object(
+                    adopt, "SHARED_SKILLS", ("investigate-bug", "second-skill")
+                ),
+                mock.patch.object(
+                    adopt,
+                    "CODEX_ONLY_SKILL_FILES",
+                    {
+                        "investigate-bug": ("agents/openai.yaml",),
+                        "second-skill": ("agents/openai.yaml",),
+                    },
+                ),
+            ):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    adopt.check_adoption(
+                        repo,
+                        str(ROOT),
+                        check_skills=True,
+                        visibility="local",
+                        profile_override="all",
+                    )
+                output = buf.getvalue()
+
+        self.assertIn("Codex and Claude second-skill contracts differ", output)
+        self.assertIn(
+            "Claude second-skill skill contains Codex-only agents/openai.yaml "
+            "metadata; remove it",
+            output,
+        )
 
     def test_three_way_merge_handles_non_utf8_locale(self) -> None:
         # Regression: subprocess.run(text=True) without an explicit encoding

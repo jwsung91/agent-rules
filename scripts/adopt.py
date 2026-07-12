@@ -48,6 +48,13 @@ ENTRYPOINT_SKILL_ROOTS = {
     "CLAUDE.md": ".claude/skills",
     "GEMINI.md": None,
 }
+# Per-skill files that carry agent-specific metadata and must not leak into
+# other agents' installs, even though the rest of the skill is a shared
+# contract. Keyed by skill name so adding a second shared skill doesn't
+# require touching every place that checks or excludes these files.
+CODEX_ONLY_SKILL_FILES: dict[str, tuple[str, ...]] = {
+    "investigate-bug": ("agents/openai.yaml",),
+}
 # Trigger rules injected into generated entrypoints when --skills is active.
 # Skill descriptions compete for salience at invocation time and can lose to
 # competing requests bundled into the same message; the always-loaded
@@ -1013,13 +1020,14 @@ def shared_skill_file_specs(profile: str) -> list[tuple[Path, str]]:
     specs: list[tuple[Path, str]] = []
     for skill_name in SHARED_SKILLS:
         skill_root = root / "skills" / skill_name
+        codex_only_files = CODEX_ONLY_SKILL_FILES.get(skill_name, ())
         for destination_root in PROFILE_SKILL_ROOTS[profile]:
             for source in sorted(skill_root.rglob("*")):
                 if source.is_file():
                     relative = source.relative_to(skill_root).as_posix()
                     if (
                         destination_root == ".claude/skills"
-                        and relative == "agents/openai.yaml"
+                        and relative in codex_only_files
                     ):
                         continue
                     specs.append(
@@ -1358,26 +1366,29 @@ def check_adoption(
                     else f"sync baseline missing for {relative_path}",
                 )
 
-        codex_skill = target_repo / ".codex/skills/investigate-bug/SKILL.md"
-        claude_skill = target_repo / ".claude/skills/investigate-bug/SKILL.md"
-        if codex_skill.exists() and claude_skill.exists():
-            contracts_match = codex_skill.read_bytes() == claude_skill.read_bytes()
-            append_check(
-                results,
-                "OK" if contracts_match else "FAIL",
-                "Codex and Claude investigate-bug contracts match"
-                if contracts_match
-                else "Codex and Claude investigate-bug contracts differ",
-            )
-        claude_openai_metadata = (
-            target_repo / ".claude/skills/investigate-bug/agents/openai.yaml"
-        )
-        if claude_openai_metadata.exists():
-            append_check(
-                results,
-                "WARN",
-                "Claude skill contains Codex-only agents/openai.yaml metadata; remove it",
-            )
+        codex_root = PROFILE_SKILL_ROOTS["codex"][0]
+        claude_root = PROFILE_SKILL_ROOTS["claude"][0]
+        for skill_name in SHARED_SKILLS:
+            codex_skill = target_repo / codex_root / skill_name / "SKILL.md"
+            claude_skill = target_repo / claude_root / skill_name / "SKILL.md"
+            if codex_skill.exists() and claude_skill.exists():
+                contracts_match = codex_skill.read_bytes() == claude_skill.read_bytes()
+                append_check(
+                    results,
+                    "OK" if contracts_match else "FAIL",
+                    f"Codex and Claude {skill_name} contracts match"
+                    if contracts_match
+                    else f"Codex and Claude {skill_name} contracts differ",
+                )
+            for codex_only_file in CODEX_ONLY_SKILL_FILES.get(skill_name, ()):
+                leaked = target_repo / claude_root / skill_name / codex_only_file
+                if leaked.exists():
+                    append_check(
+                        results,
+                        "WARN",
+                        f"Claude {skill_name} skill contains Codex-only "
+                        f"{codex_only_file} metadata; remove it",
+                    )
 
         for relative_path in required:
             if not ENTRYPOINT_SKILL_ROOTS.get(relative_path):
