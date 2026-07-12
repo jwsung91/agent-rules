@@ -271,6 +271,16 @@ def required_files_for_profile(profile: str) -> list[str]:
     return list(PROFILE_FILES[profile])
 
 
+def profile_skill_support(profile: str) -> tuple[list[str], list[str]]:
+    """Split a profile's required entrypoints into ones with a shared-skill
+    installation path (ENTRYPOINT_SKILL_ROOTS) and ones without (currently
+    just GEMINI.md, since Gemini has no shared-skill convention yet)."""
+    required = required_files_for_profile(profile)
+    supported = [f for f in required if ENTRYPOINT_SKILL_ROOTS.get(f)]
+    unsupported = [f for f in required if not ENTRYPOINT_SKILL_ROOTS.get(f)]
+    return supported, unsupported
+
+
 def format_boundaries(items: list[str]) -> str:
     if items:
         return "\n".join(f"- {item}" for item in items)
@@ -1141,6 +1151,21 @@ def build_plan(
             f"WARN: target path is inside a Git repository but is not the root: {git_root}"
         )
 
+    if profile and args.skills:
+        supported, unsupported = profile_skill_support(profile)
+        if not supported:
+            raise SystemExit(
+                f"--skills has no effect for --profile {profile}: no shared-skill "
+                "installation path exists for it yet. Remove --skills, or use "
+                "--profile codex or --profile claude."
+            )
+        if unsupported:
+            warnings.append(
+                "WARN: shared skills are not supported for "
+                f"{', '.join(unsupported)} ({profile} profile); it was generated "
+                "without a Shared Skills section."
+            )
+
     if profile:
         context = build_render_context(args, profile, source_status, detected)
         files.extend(
@@ -1345,6 +1370,21 @@ def check_adoption(
 
     skill_paths: list[str] = []
     if check_skills and profile in VALID_PROFILES:
+        supported, unsupported = profile_skill_support(profile)
+        if not supported:
+            append_check(
+                results,
+                "FAIL",
+                f"--skills has no effect for the {profile} profile: no "
+                "shared-skill installation path exists for it yet",
+            )
+        elif unsupported:
+            append_check(
+                results,
+                "WARN",
+                "shared skills are not supported for "
+                f"{', '.join(unsupported)} ({profile} profile)",
+            )
         for root in PROFILE_SKILL_ROOTS[profile]:
             for skill_name in SHARED_SKILLS:
                 relative_path = f"{root}/{skill_name}/SKILL.md"

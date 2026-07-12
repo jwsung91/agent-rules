@@ -576,6 +576,38 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
         self.assertIn("is required by --skills but missing", check.stdout)
 
+    def test_skills_refused_for_gemini_only_profile(self) -> None:
+        result = self.cli("--profile", "gemini", "--skills")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "--skills has no effect for --profile gemini",
+            result.stderr + result.stdout,
+        )
+        self.assertFalse((self.repo / "GEMINI.md").exists())
+        self.assertFalse((self.repo / ".gemini").exists())
+
+    def test_check_skills_fails_for_gemini_only_profile(self) -> None:
+        self.assertEqual(self.cli("--profile", "gemini").returncode, 0)
+        check = self.cli("--check", "--skills", "--profile", "gemini")
+        self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
+        self.assertIn("--skills has no effect for the gemini profile", check.stdout)
+
+    def test_skills_warns_but_proceeds_for_all_profile(self) -> None:
+        result = self.cli("--profile", "all", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn(
+            "shared skills are not supported for GEMINI.md", result.stdout
+        )
+        self.assertTrue((self.repo / "GEMINI.md").exists())
+        self.assertTrue(
+            (self.repo / ".codex/skills/investigate-bug/SKILL.md").exists()
+        )
+
+        check = self.cli("--check", "--skills", "--profile", "all")
+        self.assertIn(
+            "shared skills are not supported for GEMINI.md", check.stdout
+        )
+
     def test_sync_preserves_managed_content_edits_in_claude(self) -> None:
         self.assertEqual(self.cli("--profile", "claude").returncode, 0)
         path = self.repo / "CLAUDE.md"
