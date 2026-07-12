@@ -614,6 +614,30 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         update = self.cli("--profile", "codex", "--sync", "--dry-run")
         self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
 
+    def test_legacy_merge_with_skills_adds_shared_skills_section(self) -> None:
+        # Regression: a legacy AGENTS.md that already has Agent Usage Model
+        # and Core Rules (so the whole managed block is not re-added) used to
+        # silently skip the Shared Skills section entirely on `--sync
+        # --skills`, even though the skill files themselves were installed.
+        (self.repo / "AGENTS.md").write_text(
+            "# AGENTS.md\n\n"
+            "This repository follows the shared agent rules from:\n\n"
+            f"- {ROOT}\n\n"
+            "## Agent Usage Model\n\n"
+            "Use agent roles as execution modes, not fixed tool identities.\n\n"
+            "## Core Rules\n\n"
+            "- Investigate existing code, documentation, and behavior before editing.\n",
+            encoding="utf-8",
+        )
+        result = self.cli("--profile", "codex", "--skills", "--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        content = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("## Shared Skills", content)
+        self.assertIn("investigate-bug", content)
+        self.assertTrue(
+            (self.repo / ".codex/skills/investigate-bug/SKILL.md").exists()
+        )
+
     def test_force_overwrites_existing(self) -> None:
         (self.repo / "AGENTS.md").write_text("# old\n", encoding="utf-8")
         result = self.cli("--profile", "codex", "--force")

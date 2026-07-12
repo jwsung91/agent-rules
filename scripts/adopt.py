@@ -795,7 +795,14 @@ def section_present(content: str, heading: str) -> bool:
     return re.search(rf"^##\s+{re.escape(heading)}\s*$", content, re.MULTILINE) is not None
 
 
-def merge_agents_content(existing: str, rendered: str, metadata: str, shared_url: str) -> str:
+def merge_agents_content(
+    existing: str,
+    rendered: str,
+    metadata: str,
+    shared_url: str,
+    *,
+    skills_section: str = "",
+) -> str:
     content = replace_metadata_block(existing, metadata)
     additions: list[str] = []
 
@@ -806,11 +813,15 @@ def merge_agents_content(existing: str, rendered: str, metadata: str, shared_url
         )
 
     rendered_block = extract_managed_block(rendered)
+    # The managed block already carries Shared Skills when rendered fresh, so
+    # track whether it was added here to avoid duplicating that section below.
+    managed_block_added = False
     if rendered_block and (
         not section_present(content, "Agent Usage Model")
         or not section_present(content, "Core Rules")
     ):
         additions.append(rendered_block)
+        managed_block_added = True
 
     for heading in ("Repository-specific Boundaries", "Validation", "Final Report"):
         if section_present(content, heading):
@@ -827,6 +838,16 @@ def merge_agents_content(existing: str, rendered: str, metadata: str, shared_url
                 f"## {heading}\n\n"
                 f"<!-- TODO(agent-rules): add repository-specific {heading.lower()} guidance. -->"
             )
+
+    # A legacy file commonly already has Agent Usage Model and Core Rules
+    # (so managed_block_added is False above) but predates --skills, so it
+    # needs Shared Skills added on its own rather than via the whole block.
+    if (
+        skills_section
+        and not managed_block_added
+        and not section_present(content, "Shared Skills")
+    ):
+        additions.append(skills_section)
 
     if additions:
         content = content.rstrip() + "\n\n" + "\n\n".join(additions).strip() + "\n"
@@ -920,7 +941,15 @@ def build_entrypoint_plans(
                 action = "metadata-missing"
             elif merge and relative_path == "AGENTS.md":
                 content = merge_agents_content(
-                    existing, rendered, metadata, context.shared_rules_url
+                    existing,
+                    rendered,
+                    metadata,
+                    context.shared_rules_url,
+                    skills_section=(
+                        shared_skills_section("AGENTS.md")
+                        if context.install_skills
+                        else ""
+                    ),
                 )
                 action = "no-op" if content == existing else "merge"
             elif force:
