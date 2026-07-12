@@ -216,7 +216,8 @@ The repository includes a shared `investigate-bug` skill whose behavioral
 contract is usable by Codex and Claude. Install it together with an entrypoint:
 
 ```bash
-python scripts/adopt.py /path/to/repo --profile all --skills --visibility tracked
+python scripts/adopt.py /path/to/repo --profile codex --skills --visibility tracked
+python scripts/adopt.py /path/to/repo --profile claude --skills --visibility tracked
 ```
 
 Use `--visibility local` (the default) for personal files, or

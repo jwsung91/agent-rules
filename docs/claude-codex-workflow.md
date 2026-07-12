@@ -19,12 +19,14 @@ python scripts/adopt.py /path/to/repo --profile claude --dry-run
 python scripts/adopt.py /path/to/repo --profile claude
 ```
 
-This creates `AGENTS.md` and `CLAUDE.md`. Each profile only touches its own file, so the two commands are independent and order does not matter. (`--profile all` also works if the repository may add Gemini later — it additionally creates `GEMINI.md`, which is harmless to leave unused.)
+This creates `AGENTS.md` and `CLAUDE.md`. Each profile only touches its own
+entrypoint, so the commands are independent and order does not matter. Use
+`--profile all` only when Gemini is also used.
 
 Codex uses `AGENTS.md` as its entrypoint; Claude uses `CLAUDE.md`. Both are generated from the same shared Core Rules, Commit Messages, Validation, and Final Report content, so neither tool gets materially different guidance from the other — the difference is only in tool-specific phrasing.
 
 1. Run `--dry-run` first.
-2. Adopt both `--profile codex` and `--profile claude` (see above) for Codex + Claude repositories.
+2. Adopt both `--profile codex` and `--profile claude` for Codex + Claude repositories.
 3. Pass `--validation "<command>"` (repeatable) for commands you already know are correct; the helper also auto-detects likely commands from build files and labels them separately as unverified candidates.
 4. Both `AGENTS.md` and `CLAUDE.md` are local-only (gitignored automatically) — review them, but there's nothing to commit for the entrypoints themselves.
 5. Fill in repository-specific boundaries and validation commands.

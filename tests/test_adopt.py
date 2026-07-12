@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -275,6 +276,9 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             codex_skill.read_text(encoding="utf-8"),
             claude_skill.read_text(encoding="utf-8"),
         )
+        self.assertFalse(
+            (self.repo / ".claude/skills/investigate-bug/agents/openai.yaml").exists()
+        )
 
     def test_local_skill_install_is_added_to_gitignore(self) -> None:
         result = self.cli("--profile", "codex", "--skills")
@@ -303,6 +307,96 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
         self.assertIn("Local repository note.", skill.read_text(encoding="utf-8"))
 
+    def test_skill_sync_merges_upstream_changes_and_stops_on_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as source_tmp:
+            source = Path(source_tmp).resolve()
+            for directory in ("scripts", "templates", "skills", "rules", "docs"):
+                shutil.copytree(ROOT / directory, source / directory)
+            for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+                shutil.copy2(ROOT / name, source / name)
+            run(["git", "init", "-b", "main"], source)
+            run(["git", "add", "."], source)
+            git_commit(source, "initial source")
+
+            script = source / "scripts" / "adopt.py"
+
+            def source_cli(*args: str) -> subprocess.CompletedProcess[str]:
+                return run(
+                    [
+                        sys.executable,
+                        str(script),
+                        str(self.repo),
+                        "--shared-url",
+                        str(source),
+                        *args,
+                    ],
+                    source,
+                )
+
+            apply = source_cli(
+                "--profile", "all", "--skills", "--visibility", "tracked"
+            )
+            self.assertEqual(apply.returncode, 0, apply.stderr + apply.stdout)
+
+            skill = self.repo / ".codex/skills/investigate-bug/SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8").replace(
+                    "# Investigate Bug", "# Investigate Repository Bug"
+                ),
+                encoding="utf-8",
+            )
+            source_skill = source / "skills/investigate-bug/SKILL.md"
+            source_skill.write_text(
+                source_skill.read_text(encoding="utf-8")
+                + "\nUpstream compatibility note.\n",
+                encoding="utf-8",
+            )
+            run(["git", "add", "."], source)
+            git_commit(source, "update skill")
+
+            sync = source_cli(
+                "--profile",
+                "all",
+                "--skills",
+                "--visibility",
+                "tracked",
+                "--sync",
+            )
+            self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+            merged = skill.read_text(encoding="utf-8")
+            self.assertIn("# Investigate Repository Bug", merged)
+            self.assertIn("Upstream compatibility note.", merged)
+
+            local_before = merged.replace(
+                "# Investigate Repository Bug", "# Local Conflicting Title"
+            )
+            skill.write_text(local_before, encoding="utf-8")
+            source_skill.write_text(
+                source_skill.read_text(encoding="utf-8").replace(
+                    "# Investigate Bug", "# Upstream Conflicting Title"
+                ),
+                encoding="utf-8",
+            )
+            run(["git", "add", "."], source)
+            git_commit(source, "conflict skill title")
+            baseline = self.repo / adopt.sync_base_path(
+                ".codex/skills/investigate-bug/SKILL.md"
+            )
+            baseline_before = baseline.read_text(encoding="utf-8")
+
+            conflict = source_cli(
+                "--profile",
+                "all",
+                "--skills",
+                "--visibility",
+                "tracked",
+                "--sync",
+            )
+            self.assertEqual(conflict.returncode, 1, conflict.stderr + conflict.stdout)
+            self.assertIn("Refusing to write unresolved merge conflicts", conflict.stdout)
+            self.assertEqual(skill.read_text(encoding="utf-8"), local_before)
+            self.assertEqual(baseline.read_text(encoding="utf-8"), baseline_before)
+
     def test_codex_profile_creates_only_agents(self) -> None:
         result = self.cli("--profile", "codex")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -316,6 +410,33 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "AGENTS.md").exists())
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertTrue((self.repo / "GEMINI.md").exists())
+
+    def test_check_skills_reports_contract_and_baselines(self) -> None:
+        codex = self.cli("--profile", "codex", "--skills", "--visibility", "local")
+        claude = self.cli("--profile", "claude", "--skills", "--visibility", "local")
+        self.assertEqual(codex.returncode, 0, codex.stderr + codex.stdout)
+        self.assertEqual(claude.returncode, 0, claude.stderr + claude.stdout)
+
+        codex_check = self.cli(
+            "--check", "--profile", "codex", "--skills", "--visibility", "local"
+        )
+        claude_check = self.cli(
+            "--check", "--profile", "claude", "--skills", "--visibility", "local"
+        )
+        self.assertNotEqual(codex_check.returncode, 1, codex_check.stderr + codex_check.stdout)
+        self.assertNotEqual(claude_check.returncode, 1, claude_check.stderr + claude_check.stdout)
+        self.assertIn(
+            "Codex and Claude investigate-bug contracts match", claude_check.stdout
+        )
+        self.assertIn("sync baseline exists for AGENTS.md", codex_check.stdout)
+        self.assertIn("sync baseline exists for CLAUDE.md", claude_check.stdout)
+
+    def test_check_skills_fails_when_required_skill_is_missing(self) -> None:
+        result = self.cli("--profile", "all", "--visibility", "local")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        check = self.cli("--check", "--skills", "--visibility", "local")
+        self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
+        self.assertIn("is required by --skills but missing", check.stdout)
 
     def test_sync_preserves_managed_content_edits_in_claude(self) -> None:
         self.assertEqual(self.cli("--profile", "claude").returncode, 0)

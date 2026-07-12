@@ -231,16 +231,15 @@ def parse_profile(value: str | None) -> str | None:
     profile = value.strip().lower()
     if profile not in VALID_PROFILES:
         raise SystemExit(
-            f"Unsupported profile: {value}. Supported values: codex, claude, gemini, all."
+            f"Unsupported profile: {value}. Supported values: {', '.join(sorted(VALID_PROFILES))}."
         )
     return profile
-
 
 
 def required_files_for_profile(profile: str) -> list[str]:
     if profile not in PROFILE_FILES:
         raise SystemExit(
-            f"Unsupported profile: {profile}. Supported values: codex, claude, gemini, all."
+            f"Unsupported profile: {profile}. Supported values: {', '.join(sorted(VALID_PROFILES))}."
         )
     return list(PROFILE_FILES[profile])
 
@@ -943,6 +942,11 @@ def shared_skill_file_specs(profile: str) -> list[tuple[Path, str]]:
             for source in sorted(skill_root.rglob("*")):
                 if source.is_file():
                     relative = source.relative_to(skill_root).as_posix()
+                    if (
+                        destination_root == ".claude/skills"
+                        and relative == "agents/openai.yaml"
+                    ):
+                        continue
                     specs.append(
                         (source, f"{destination_root}/{skill_name}/{relative}")
                     )
@@ -1139,7 +1143,14 @@ def append_check(results: list[tuple[str, str]], status: str, message: str) -> N
     results.append((status, message))
 
 
-def check_adoption(target_repo: Path, shared_url: str) -> int:
+def check_adoption(
+    target_repo: Path,
+    shared_url: str,
+    *,
+    check_skills: bool = False,
+    visibility: str = "local",
+    profile_override: str | None = None,
+) -> int:
     results: list[tuple[str, str]] = []
     git_root = find_repo_root(target_repo)
 
@@ -1147,7 +1158,12 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
     metadata: dict[str, str] = {}
     metadata_file: str | None = None
     primary_content = ""
-    for name in ENTRYPOINT_FILES:
+    metadata_candidates = (
+        required_files_for_profile(profile_override)
+        if profile_override in VALID_PROFILES
+        else list(ENTRYPOINT_FILES)
+    )
+    for name in metadata_candidates:
         p = target_repo / name
         if p.exists():
             text = p.read_text(encoding="utf-8", errors="replace")
@@ -1203,12 +1219,19 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
         else "source_commit is missing",
     )
 
-    profile = metadata.get("profile")
+    metadata_profile = metadata.get("profile")
+    profile = profile_override or metadata_profile
+    profile_matches = (
+        profile in VALID_PROFILES
+        and (profile_override is None or metadata_profile == profile_override)
+    )
     append_check(
         results,
-        "OK" if profile in VALID_PROFILES else "WARN" if legacy_adoption else "FAIL",
+        "OK" if profile_matches else "WARN" if legacy_adoption else "FAIL",
         f"profile: {profile}"
-        if profile in VALID_PROFILES
+        if profile_matches
+        else f"profile mismatch: expected {profile_override}, found {metadata_profile}"
+        if profile_override and metadata_profile
         else "legacy adoption detected; run --sync to add metadata"
         if legacy_adoption
         else "profile is missing or invalid",
@@ -1228,6 +1251,58 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
             if path.exists()
             else f"{relative_path} is required by profile but missing",
         )
+        baseline = target_repo / sync_base_path(relative_path)
+        append_check(
+            results,
+            "OK" if baseline.exists() else "WARN",
+            f"sync baseline exists for {relative_path}"
+            if baseline.exists()
+            else f"sync baseline missing for {relative_path}; run --sync to establish it",
+        )
+
+    skill_paths: list[str] = []
+    if check_skills and profile in VALID_PROFILES:
+        for root in PROFILE_SKILL_ROOTS[profile]:
+            for skill_name in SHARED_SKILLS:
+                relative_path = f"{root}/{skill_name}/SKILL.md"
+                skill_paths.append(relative_path)
+                path = target_repo / relative_path
+                append_check(
+                    results,
+                    "OK" if path.exists() else "FAIL",
+                    f"{relative_path} exists"
+                    if path.exists()
+                    else f"{relative_path} is required by --skills but missing",
+                )
+                baseline = target_repo / sync_base_path(relative_path)
+                append_check(
+                    results,
+                    "OK" if baseline.exists() else "WARN",
+                    f"sync baseline exists for {relative_path}"
+                    if baseline.exists()
+                    else f"sync baseline missing for {relative_path}",
+                )
+
+        codex_skill = target_repo / ".codex/skills/investigate-bug/SKILL.md"
+        claude_skill = target_repo / ".claude/skills/investigate-bug/SKILL.md"
+        if codex_skill.exists() and claude_skill.exists():
+            contracts_match = codex_skill.read_bytes() == claude_skill.read_bytes()
+            append_check(
+                results,
+                "OK" if contracts_match else "FAIL",
+                "Codex and Claude investigate-bug contracts match"
+                if contracts_match
+                else "Codex and Claude investigate-bug contracts differ",
+            )
+        claude_openai_metadata = (
+            target_repo / ".claude/skills/investigate-bug/agents/openai.yaml"
+        )
+        if claude_openai_metadata.exists():
+            append_check(
+                results,
+                "WARN",
+                "Claude skill contains Codex-only agents/openai.yaml metadata; remove it",
+            )
 
     if BOUNDARY_PLACEHOLDER in primary_content:
         append_check(
@@ -1242,6 +1317,13 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
         append_check(results, "WARN", "Validation still contains placeholder text")
 
     plans = [FilePlan(path=name, action="check") for name in required]
+    plans.extend(
+        FilePlan(path=sync_base_path(name), action="check") for name in required
+    )
+    plans.extend(FilePlan(path=name, action="check") for name in skill_paths)
+    plans.extend(
+        FilePlan(path=sync_base_path(name), action="check") for name in skill_paths
+    )
     local_copy_root = target_repo / ".agents" / "agent-rules"
     if local_copy_root.exists():
         plans.append(FilePlan(path=".agents/agent-rules/SOURCE_COMMIT", action="check"))
@@ -1249,8 +1331,19 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
             append_check(results, "FAIL", ".agents/agent-rules/SOURCE_COMMIT is missing")
     for status in check_generated_files_ignored(target_repo, git_root, plans):
         is_entrypoint = Path(status.path).name in ENTRYPOINT_FILES
-        if is_entrypoint:
-            if status.tracked:
+        is_generated = (
+            is_entrypoint
+            or status.path in skill_paths
+            or status.path.startswith(f"{SYNC_BASE_ROOT}/")
+        )
+        if is_generated:
+            if visibility == "tracked" and status.ignored and not status.tracked:
+                append_check(results, "FAIL", f"{status.path} is ignored but should be tracked")
+            elif visibility == "tracked" and status.tracked:
+                append_check(results, "OK", f"{status.path} is tracked")
+            elif visibility == "tracked":
+                append_check(results, "WARN", f"{status.path} is trackable but untracked")
+            elif status.tracked:
                 append_check(results, "WARN", f"{status.path} is tracked; run: git rm --cached {status.path}")
             elif not status.ignored:
                 append_check(results, "WARN", f"{status.path} is not in .gitignore; run adopt to add it")
@@ -1625,8 +1718,7 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
             continue
 
         try:
-            profile_str = entry.profile or args.profile
-            profile = parse_profile(profile_str)
+            profile = parse_profile(entry.profile or args.profile)
             if profile is None and (args.check or args.sync):
                 profile = infer_profile_from_existing(target_repo)
         except (SystemExit, Exception) as exc:
@@ -1639,7 +1731,13 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
 
         try:
             if args.check:
-                code = check_adoption(target_repo, args.shared_url)
+                code = check_adoption(
+                    target_repo,
+                    args.shared_url,
+                    check_skills=args.skills,
+                    visibility=args.visibility,
+                    profile_override=profile,
+                )
             else:
                 if not profile:
                     print("FAIL: no profile specified and none inferred from existing files.")
@@ -1727,7 +1825,13 @@ def main() -> int:
     validate_args(args, profile)
 
     if args.check:
-        return check_adoption(target_repo, args.shared_url)
+        return check_adoption(
+            target_repo,
+            args.shared_url,
+            check_skills=args.skills,
+            visibility=args.visibility,
+            profile_override=profile,
+        )
 
     plan = build_plan(target_repo, args, profile)
 

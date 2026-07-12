@@ -23,7 +23,9 @@ gemini -> GEMINI.md
 all    -> AGENTS.md + CLAUDE.md + GEMINI.md
 ```
 
-Each profile creates only the files its agent needs. Use `--profile all` when the repository is used by multiple agent tools.
+Each profile creates only the files its agent needs. Apply the `codex` and
+`claude` profiles separately when both tools are used without Gemini. Keep
+`--profile all` for repositories that also use Gemini.
 
 ## 1. New Repository: Codex
 
@@ -49,15 +51,19 @@ python scripts/adopt.py /path/to/repo --profile gemini
 ## 4. Multi-Agent Repository
 
 ```bash
-python scripts/adopt.py /path/to/repo --profile all --dry-run
-python scripts/adopt.py /path/to/repo --profile all
+python scripts/adopt.py /path/to/repo --profile codex --dry-run
+python scripts/adopt.py /path/to/repo --profile codex
+python scripts/adopt.py /path/to/repo --profile claude --dry-run
+python scripts/adopt.py /path/to/repo --profile claude
 ```
 
 Install the shared `investigate-bug` skill for Codex and Claude:
 
 ```bash
-python scripts/adopt.py /path/to/repo --profile all --skills --dry-run
-python scripts/adopt.py /path/to/repo --profile all --skills
+python scripts/adopt.py /path/to/repo --profile codex --skills --dry-run
+python scripts/adopt.py /path/to/repo --profile codex --skills
+python scripts/adopt.py /path/to/repo --profile claude --skills --dry-run
+python scripts/adopt.py /path/to/repo --profile claude --skills
 ```
 
 The same `SKILL.md` behavioral contract is installed under
@@ -289,6 +295,14 @@ python scripts/adopt.py /path/to/repo --check
 - source URL and commit traceability
 - `.gitignore` visibility
 - version status (local source HEAD vs. remote main HEAD)
+
+Add `--skills` to verify shared Skill installation, sync baselines, and the
+Codex/Claude `SKILL.md` contract. Pass the intended visibility so tracked and
+local files are evaluated correctly:
+
+```bash
+python scripts/adopt.py /path/to/repo --check --skills --visibility tracked
+```
 
 Exit codes distinguish severity: `0` (clean), `1` (at least one `[FAIL]`), `2` (only `[WARN]`, no `[FAIL]`).
 
