@@ -501,7 +501,11 @@ def add_to_gitignore(git_root: Path, filenames: list[str], *, dry_run: bool) -> 
     """Add agent file names to .gitignore so they stay local-only.
     Returns relative .gitignore path if modified, else None."""
     gitignore_path = git_root / ".gitignore"
-    content = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+    content = (
+        gitignore_path.read_text(encoding="utf-8", errors="replace")
+        if gitignore_path.exists()
+        else ""
+    )
     existing_normalized = {line.strip().lstrip("/") for line in content.splitlines()}
     to_add = [f for f in filenames if f not in existing_normalized]
     if not to_add:
@@ -553,7 +557,7 @@ def detect_repository_type(target_repo: Path) -> DetectionResult:
         repo_types.append("node")
         commands.append("npm test")
         try:
-            package_data = json.loads(package_json.read_text(encoding="utf-8"))
+            package_data = json.loads(package_json.read_text(encoding="utf-8", errors="replace"))
         except json.JSONDecodeError:
             package_data = {}
         scripts = package_data.get("scripts", {}) if isinstance(package_data, dict) else {}
@@ -1328,6 +1332,16 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_batch_file_text(batch_file: Path) -> str:
+    try:
+        return batch_file.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(
+            f"Batch file is not valid UTF-8: {batch_file}\n"
+            f"({exc}). Re-save it as UTF-8 (e.g. from Notepad's 'Save As' encoding option)."
+        ) from exc
+
+
 def parse_batch_file(batch_file: Path) -> list[BatchEntry]:
     if batch_file.suffix == ".toml":
         return _parse_toml_batch(batch_file)
@@ -1337,7 +1351,7 @@ def parse_batch_file(batch_file: Path) -> list[BatchEntry]:
 def _parse_toml_batch(batch_file: Path) -> list[BatchEntry]:
     if tomllib is None:
         raise SystemExit("TOML batch files require Python 3.11+.")
-    data = tomllib.loads(batch_file.read_text(encoding="utf-8"))
+    data = tomllib.loads(_read_batch_file_text(batch_file))
     repos = data.get("repos", [])
     if not isinstance(repos, list):
         raise SystemExit("TOML batch file must contain a [[repos]] array.")
@@ -1351,7 +1365,7 @@ def _parse_toml_batch(batch_file: Path) -> list[BatchEntry]:
 
 def _parse_text_batch(batch_file: Path) -> list[BatchEntry]:
     entries: list[BatchEntry] = []
-    for line in batch_file.read_text(encoding="utf-8").splitlines():
+    for line in _read_batch_file_text(batch_file).splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -1373,15 +1387,26 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
 
         try:
             target_repo = resolve_target_repo(entry.path)
-        except SystemExit as exc:
+        except (SystemExit, Exception) as exc:
+            # Catch broadly, not just SystemExit: a single misbehaving
+            # repository (bad encoding, unexpected git state, ...) must not
+            # abort the rest of the batch.
             print(f"FAIL: {exc}")
             results.append((entry.path, 1))
             continue
 
-        profile_str = entry.profile or args.profile
-        profile = parse_profile(profile_str)
-        if profile is None and (args.check or args.sync):
-            profile = infer_profile_from_existing(target_repo)
+        try:
+            profile_str = entry.profile or args.profile
+            profile = parse_profile(profile_str)
+            if profile is None and (args.check or args.sync):
+                profile = infer_profile_from_existing(target_repo)
+        except (SystemExit, Exception) as exc:
+            # Catch broadly, not just SystemExit: a single misbehaving
+            # repository (bad encoding, unexpected git state, ...) must not
+            # abort the rest of the batch.
+            print(f"FAIL: {exc}")
+            results.append((entry.path, 1))
+            continue
 
         try:
             if args.check:
@@ -1397,7 +1422,7 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
                     results.append((entry.path, 1))
                     continue
                 code = apply_plan(plan, args)
-        except SystemExit as exc:
+        except (SystemExit, Exception) as exc:
             print(f"FAIL: {exc}")
             code = 1
 
