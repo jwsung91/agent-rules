@@ -21,11 +21,12 @@ Supported agents:
 - `docs/scripted-adoption.md`: Usage guide for the Python adoption helper script.
 - `docs/claude-codex-workflow.md`: Guide for running Codex and Claude together on the same repository.
 - `scripts/adopt.py`: Helper script for creating or checking lightweight target-repository adoption files.
+- `scripts/generate_batch_list.py`: Builds a `repos.toml`/`repos.txt` batch file from explicitly given repository paths.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
 - `templates/`: Reusable task, review, and target-repository adoption templates.
-- `.github/workflows/tests.yml`: CI workflow that runs `tests/test_adopt.py` on push and pull request.
+- `.github/workflows/tests.yml`: CI workflow that runs the test suite under `tests/` on push and pull request.
 
 ## Agent Usage Model
 
@@ -77,7 +78,13 @@ python scripts/adopt.py /path/to/repo --sync
 python scripts/adopt.py /path/to/repo --sync --dry-run
 ```
 
-Apply to multiple repositories at once using a batch file:
+Apply to multiple repositories at once using a batch file. Build one from repo paths you already know with `scripts/generate_batch_list.py`:
+
+```bash
+python scripts/generate_batch_list.py /path/to/api /path/to/worker --output repos.toml
+```
+
+Or write it by hand:
 
 ```toml
 # repos.toml
@@ -97,7 +104,7 @@ python scripts/adopt.py --batch repos.toml --sync
 python scripts/adopt.py --batch repos.toml --check
 ```
 
-See `docs/scripted-adoption.md` for `--sync`, `--force`, `--local-copy`, `.gitignore` collision handling, custom `--boundary`, and custom `--validation`.
+See `docs/scripted-adoption.md` for `--sync`, `--force`, `--local-copy`, `.gitignore` collision handling, custom `--boundary`, custom `--validation`, and `generate_batch_list.py` details.
 
 ### 1. Start tasks with an explicit mode and instruction source
 
