@@ -150,20 +150,23 @@ Per-repo `profile` overrides the `--profile` flag on the command line.
 
 ### Generating the batch file
 
-`scripts/generate_batch_list.py` builds a `repos.toml`/`repos.txt` from repository
-paths you give it directly (it does not scan directories for you):
+`scripts/generate_batch_list.py` builds a `repos.toml`/`repos.txt` by scanning a
+root folder for Git repositories:
 
 ```bash
-python scripts/generate_batch_list.py /path/to/api /path/to/worker /path/to/frontend \
-  --output repos.toml
+python scripts/generate_batch_list.py /path/to/workspace --output repos.toml
 ```
 
-Each path must already exist. For every repo, it checks for existing agent-rules
-metadata (via the same lookup `--sync`/`--check` use) and fills in `profile` when
-found; otherwise the entry is left without a `profile` (same fallback behavior as
-a hand-written entry: `--batch --profile` on the command line applies, or it's
-inferred at `--check`/`--sync` time). Output format is chosen by the `--output`
-extension (`.toml` or `.txt`); `--force` overwrites an existing output file.
+It walks the root recursively looking for a `.git` entry; once a directory is
+identified as a repo, it does not search inside it further, so a submodule or
+vendored repo nested inside a found repo isn't picked up as a separate entry.
+For every repo found, it checks for existing agent-rules metadata (via the same
+lookup `--sync`/`--check` use) and fills in `profile` when found; otherwise the
+entry is left without a `profile` (same fallback behavior as a hand-written
+entry: `--batch --profile` on the command line applies, or it's inferred at
+`--check`/`--sync` time). Output format is chosen by the `--output` extension
+(`.toml` or `.txt`); `--force` overwrites an existing output file. It's an error
+if the root doesn't exist or no repositories are found under it.
 
 ### Usage
 
