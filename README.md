@@ -21,7 +21,7 @@ Supported agents:
 - `docs/scripted-adoption.md`: Usage guide for the Python adoption helper script.
 - `docs/claude-codex-workflow.md`: Guide for running Codex and Claude together on the same repository.
 - `scripts/adopt.py`: Helper script for creating or checking lightweight target-repository adoption files.
-- `scripts/generate_batch_list.py`: Builds a `repos.toml`/`repos.txt` batch file from explicitly given repository paths.
+- `scripts/generate_batch_list.py`: Builds a `repos.toml`/`repos.txt` batch file by scanning a root folder for Git repositories.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
@@ -78,10 +78,10 @@ python scripts/adopt.py /path/to/repo --sync
 python scripts/adopt.py /path/to/repo --sync --dry-run
 ```
 
-Apply to multiple repositories at once using a batch file. Build one from repo paths you already know with `scripts/generate_batch_list.py`:
+Apply to multiple repositories at once using a batch file. Build one by scanning a parent folder for Git repos with `scripts/generate_batch_list.py`:
 
 ```bash
-python scripts/generate_batch_list.py /path/to/api /path/to/worker --output repos.toml
+python scripts/generate_batch_list.py /path/to/workspace --output repos.toml
 ```
 
 Or write it by hand:
