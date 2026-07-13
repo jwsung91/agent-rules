@@ -1401,7 +1401,7 @@ def check_adoption(
         # so every installed file is checked, not just SKILL.md — a deleted
         # supporting file (e.g. a script or asset a skill ships alongside
         # SKILL.md) is caught the same way a deleted SKILL.md already was.
-        for _source, relative_path in shared_skill_file_specs(profile):
+        for source, relative_path in shared_skill_file_specs(profile):
             skill_paths.append(relative_path)
             path = target_repo / relative_path
             append_check(
@@ -1419,6 +1419,35 @@ def check_adoption(
                 if baseline.exists()
                 else f"sync baseline missing for {relative_path}",
             )
+            if baseline.exists():
+                # Compares the recorded baseline (upstream content as of the
+                # last --sync) against the *current local shared source* —
+                # i.e. the literal file on disk under source_repo_root(),
+                # same as every other read in this module (read_template(),
+                # shared_skill_file_specs(), etc.) — not the installed copy
+                # (which may carry intentional local edits and shouldn't be
+                # flagged) and not a git commit (this check has no concept of
+                # "committed"; an uncommitted edit to the local agent-rules
+                # checkout counts as "the local shared source changed," same
+                # as everywhere else --sync reads from). Catches a target
+                # repo whose installed skill is stale relative to that local
+                # source, which a codex-vs-claude parity check alone cannot
+                # see since both installed copies can be equally stale.
+                # Compared as decoded text, not raw bytes: writing the
+                # baseline goes through write_text(), which normalizes line
+                # endings to the platform default (CRLF on Windows), so a
+                # byte comparison against the source's on-disk LF would
+                # always report "stale" even with identical content.
+                up_to_date = baseline.read_text(
+                    encoding="utf-8", errors="replace"
+                ) == source.read_text(encoding="utf-8")
+                append_check(
+                    results,
+                    "OK" if up_to_date else "WARN",
+                    f"{relative_path} is current with the local shared source"
+                    if up_to_date
+                    else f"{relative_path} is behind the local shared source; run --sync to update",
+                )
 
         codex_root = PROFILE_SKILL_ROOTS["codex"][0]
         claude_root = PROFILE_SKILL_ROOTS["claude"][0]
