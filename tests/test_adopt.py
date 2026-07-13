@@ -1244,8 +1244,21 @@ class CoreRulesConsistencyTests(unittest.TestCase):
         # A future edit to one and not the other would otherwise go unnoticed.
         doc_content = (ROOT / "docs" / "lightweight-adoption.md").read_text(encoding="utf-8")
         template_content = (ROOT / "templates" / "target-AGENTS.md").read_text(encoding="utf-8")
+        doc_section = extract_section(doc_content, "Final Report")
+        # lightweight-adoption.md wraps its example in an outer fence, so its
+        # copy of the section is followed by that fence's closing marker.
+        # Verify the exact marker instead of rstrip("`"), which would strip
+        # any number of trailing backticks and silently accept a corrupted
+        # fence (e.g. ``` instead of ````) without failing.
+        closing_fence = "\n````"
+        self.assertTrue(
+            doc_section.endswith(closing_fence),
+            f"expected docs/lightweight-adoption.md's Final Report section to "
+            f"end with the outer fence marker {closing_fence!r}, got: "
+            f"{doc_section[-20:]!r}",
+        )
         self.assertEqual(
-            extract_section(doc_content, "Final Report").rstrip("`").rstrip(),
+            doc_section.removesuffix(closing_fence),
             extract_section(template_content, "Final Report").rstrip(),
         )
 
