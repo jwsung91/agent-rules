@@ -569,6 +569,75 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("sync baseline exists for AGENTS.md", codex_check.stdout)
         self.assertIn("sync baseline exists for CLAUDE.md", claude_check.stdout)
 
+    def test_check_skills_detects_staleness_against_local_shared_source(self) -> None:
+        # Regression: check_adoption's Codex/Claude contract-parity check only
+        # compared the two installed copies to each other, so a target repo
+        # whose installed skill predates an upstream change had both copies
+        # equally stale and reported "OK" with exit 0. Compare the recorded
+        # baseline (upstream content as of the last --sync) against the
+        # *current local shared source* instead.
+        #
+        # The source file below is deliberately edited but never committed:
+        # "local shared source" means the literal file on disk, matching how
+        # every other read in adopt.py (read_template(), etc.) already
+        # works — this is not meant to detect only committed upstream
+        # changes, so the test intentionally exercises the uncommitted case.
+        with tempfile.TemporaryDirectory() as source_tmp:
+            source = Path(source_tmp).resolve()
+            for directory in ("scripts", "templates", "skills", "rules", "docs"):
+                shutil.copytree(ROOT / directory, source / directory)
+            for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+                shutil.copy2(ROOT / name, source / name)
+            run(["git", "init", "-b", "main"], source)
+            run(["git", "add", "."], source)
+            git_commit(source, "initial source")
+            script = source / "scripts" / "adopt.py"
+
+            def source_cli(*args: str) -> subprocess.CompletedProcess[str]:
+                return run(
+                    [
+                        sys.executable,
+                        str(script),
+                        str(self.repo),
+                        "--shared-url",
+                        str(source),
+                        *args,
+                    ],
+                    source,
+                )
+
+            apply = source_cli(
+                "--profile", "codex", "--skills", "--visibility", "tracked"
+            )
+            self.assertEqual(apply.returncode, 0, apply.stderr + apply.stdout)
+
+            check_before = source_cli(
+                "--check", "--profile", "codex", "--skills", "--visibility", "tracked"
+            )
+            self.assertNotIn("behind the local shared source", check_before.stdout)
+
+            # Simulate an upstream change to the skill that the target repo
+            # never synced. The two installed copies (there's only one, for
+            # profile codex) obviously still "match themselves" — the point
+            # is this must be caught some other way.
+            (source / "skills/investigate-bug/SKILL.md").write_text(
+                (source / "skills/investigate-bug/SKILL.md").read_text(encoding="utf-8")
+                + "\nUpstream compatibility note.\n",
+                encoding="utf-8",
+            )
+
+            check_after = source_cli(
+                "--check", "--profile", "codex", "--skills", "--visibility", "tracked"
+            )
+            self.assertIn(
+                ".codex/skills/investigate-bug/SKILL.md is behind the local shared "
+                "source; run --sync to update",
+                check_after.stdout,
+            )
+            self.assertEqual(
+                check_after.returncode, 2, check_after.stderr + check_after.stdout
+            )
+
     def test_check_skills_fails_when_required_skill_is_missing(self) -> None:
         result = self.cli("--profile", "all", "--visibility", "local")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)

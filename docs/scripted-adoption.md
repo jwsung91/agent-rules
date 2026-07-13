@@ -322,6 +322,15 @@ local files are evaluated correctly:
 python scripts/adopt.py /path/to/repo --check --skills --visibility tracked
 ```
 
+`--check --skills` also compares each installed skill file's sync baseline
+against the **local shared source** — the literal file on disk in the
+`agent-rules` checkout the helper is running from, not a Git commit. An
+uncommitted edit to a local skill file already counts as a change to sync,
+consistent with every other read the helper does from that checkout. `[WARN]
+... is behind the local shared source; run --sync to update` means the target
+repository's installed skill predates that local change and needs `--sync`,
+even if both its Codex and Claude copies still match each other.
+
 Exit codes distinguish severity: `0` (clean), `1` (at least one `[FAIL]`), `2` (only `[WARN]`, no `[FAIL]`).
 
 ## Subdirectory Targets
