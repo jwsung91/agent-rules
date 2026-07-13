@@ -48,13 +48,10 @@ ENTRYPOINT_SKILL_ROOTS = {
     "CLAUDE.md": ".claude/skills",
     "GEMINI.md": None,
 }
-# Per-skill files that carry agent-specific metadata and must not leak into
-# other agents' installs, even though the rest of the skill is a shared
-# contract. Keyed by skill name so adding a second shared skill doesn't
-# require touching every place that checks or excludes these files.
-CODEX_ONLY_SKILL_FILES: dict[str, tuple[str, ...]] = {
-    "investigate-bug": ("agents/openai.yaml",),
-}
+# Paths that carry Codex-specific metadata and must not leak into another
+# agent's install, even though the rest of each skill is a shared contract.
+# This convention applies to every shared skill without per-skill registration.
+CODEX_ONLY_SKILL_PATHS = ("agents/openai.yaml",)
 # Trigger rules injected into generated entrypoints when --skills is active.
 # Skill descriptions compete for salience at invocation time and can lose to
 # competing requests bundled into the same message; the always-loaded
@@ -1038,14 +1035,13 @@ def shared_skill_file_specs(profile: str) -> list[tuple[Path, str]]:
     specs: list[tuple[Path, str]] = []
     for skill_name in SHARED_SKILLS:
         skill_root = root / "skills" / skill_name
-        codex_only_files = CODEX_ONLY_SKILL_FILES.get(skill_name, ())
         for destination_root in PROFILE_SKILL_ROOTS[profile]:
             for source in sorted(skill_root.rglob("*")):
                 if source.is_file():
                     relative = source.relative_to(skill_root).as_posix()
                     if (
                         destination_root == ".claude/skills"
-                        and relative in codex_only_files
+                        and relative in CODEX_ONLY_SKILL_PATHS
                     ):
                         continue
                     specs.append(
@@ -1463,7 +1459,7 @@ def check_adoption(
                     if contracts_match
                     else f"Codex and Claude {skill_name} contracts differ",
                 )
-            for codex_only_file in CODEX_ONLY_SKILL_FILES.get(skill_name, ()):
+            for codex_only_file in CODEX_ONLY_SKILL_PATHS:
                 leaked = target_repo / claude_root / skill_name / codex_only_file
                 if leaked.exists():
                     append_check(

@@ -13,7 +13,7 @@ This guidance exists because a repository that installs the skill typically alre
 
 ## agents/openai.yaml (Codex-only)
 
-Optional per-skill file under `skills/<name>/agents/openai.yaml`, excluded from Claude installs (`scripts/adopt.py`'s `CODEX_ONLY_SKILL_FILES`). Schema per Codex's own authoritative reference, `~/.codex/skills/.system/skill-creator/references/openai_yaml.md` (a local file installed by the Codex CLI itself — re-check it directly if this drifts, don't treat this doc as the source of truth):
+Optional per-skill file under `skills/<name>/agents/openai.yaml`. The adoption script treats this path as Codex-only for every shared skill and automatically excludes it from Claude installs; adding a skill does not require a separate registry entry. Schema per Codex's own authoritative reference, `~/.codex/skills/.system/skill-creator/references/openai_yaml.md` (a local file installed by the Codex CLI itself — re-check it directly if this drifts, don't treat this doc as the source of truth):
 
 ```yaml
 interface:

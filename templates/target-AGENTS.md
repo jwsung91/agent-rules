@@ -66,11 +66,18 @@ If validation cannot be run, explain why and provide the command that should be 
 
 ## Final Report
 
-Include:
+Include in every final response or PR summary:
 
-- Summary
-- Changes
-- Validation
-- Not Included
-- Test or documentation impact
-- Follow-up
+Before sending the response, verify that these Markdown headings appear verbatim, exactly once, and in this order; do not rename, omit, or combine them. Additional sections may appear after `## Changes` and before `## Validation`.
+
+1. `## Summary`
+2. `## Changes`
+3. `## Validation`
+4. `## Not Included`
+5. `## Follow-up`
+
+- **Summary**: what changed and why
+- **Changes**: files and behaviors affected
+- **Validation**: what was run and results
+- **Not Included**: what was intentionally left out
+- **Follow-up**: known gaps or deferred work
