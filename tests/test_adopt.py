@@ -190,7 +190,8 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
 
     def test_check_skills_generalizes_to_a_second_shared_skill(self) -> None:
         # Regression guard: the Codex/Claude contract-parity check and the
-        # Codex-only-file leak check used to hardcode "investigate-bug".
+        # Codex-only-file leak check used to hardcode "investigate-bug" or
+        # require a separate per-skill metadata registry.
         # Simulate a second shared skill (no real skills/second-skill/ source
         # directory needed, since check_adoption only reads already-installed
         # files in the target repo) and confirm both checks cover it.
@@ -207,18 +208,8 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                 "leaked\n", encoding="utf-8"
             )
 
-            with (
-                mock.patch.object(
-                    adopt, "SHARED_SKILLS", ("investigate-bug", "second-skill")
-                ),
-                mock.patch.object(
-                    adopt,
-                    "CODEX_ONLY_SKILL_FILES",
-                    {
-                        "investigate-bug": ("agents/openai.yaml",),
-                        "second-skill": ("agents/openai.yaml",),
-                    },
-                ),
+            with mock.patch.object(
+                adopt, "SHARED_SKILLS", ("investigate-bug", "second-skill")
             ):
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
@@ -236,6 +227,36 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
             "Claude second-skill skill contains Codex-only agents/openai.yaml "
             "metadata; remove it",
             output,
+        )
+
+    def test_shared_skill_files_automatically_exclude_openai_metadata_from_claude(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = Path(tmp)
+            skill_root = source_root / "skills" / "second-skill"
+            (skill_root / "agents").mkdir(parents=True)
+            (skill_root / "SKILL.md").write_text("shared\n", encoding="utf-8")
+            (skill_root / "agents" / "openai.yaml").write_text(
+                "codex only\n", encoding="utf-8"
+            )
+
+            with (
+                mock.patch.object(adopt, "SHARED_SKILLS", ("second-skill",)),
+                mock.patch.object(adopt, "source_repo_root", return_value=source_root),
+            ):
+                destinations = {
+                    destination
+                    for _, destination in adopt.shared_skill_file_specs("all")
+                }
+
+        self.assertIn(".codex/skills/second-skill/SKILL.md", destinations)
+        self.assertIn(
+            ".codex/skills/second-skill/agents/openai.yaml", destinations
+        )
+        self.assertIn(".claude/skills/second-skill/SKILL.md", destinations)
+        self.assertNotIn(
+            ".claude/skills/second-skill/agents/openai.yaml", destinations
         )
 
     def test_three_way_merge_handles_non_utf8_locale(self) -> None:
@@ -1215,6 +1236,32 @@ class CoreRulesConsistencyTests(unittest.TestCase):
             extract_section(template_content, "Core Rules"),
         )
 
+    def test_lightweight_adoption_final_report_matches_target_template(self) -> None:
+        # Regression guard: docs/lightweight-adoption.md's "Final Report"
+        # section is a hand-maintained copy of templates/target-AGENTS.md's,
+        # not rendered from it, and unlike the entrypoint files themselves it
+        # was not covered by test_entrypoints_require_distinct_final_report_headings.
+        # A future edit to one and not the other would otherwise go unnoticed.
+        doc_content = (ROOT / "docs" / "lightweight-adoption.md").read_text(encoding="utf-8")
+        template_content = (ROOT / "templates" / "target-AGENTS.md").read_text(encoding="utf-8")
+        doc_section = extract_section(doc_content, "Final Report")
+        # lightweight-adoption.md wraps its example in an outer fence, so its
+        # copy of the section is followed by that fence's closing marker.
+        # Verify the exact marker instead of rstrip("`"), which would strip
+        # any number of trailing backticks and silently accept a corrupted
+        # fence (e.g. ``` instead of ````) without failing.
+        closing_fence = "\n````"
+        self.assertTrue(
+            doc_section.endswith(closing_fence),
+            f"expected docs/lightweight-adoption.md's Final Report section to "
+            f"end with the outer fence marker {closing_fence!r}, got: "
+            f"{doc_section[-20:]!r}",
+        )
+        self.assertEqual(
+            doc_section.removesuffix(closing_fence),
+            extract_section(template_content, "Final Report").rstrip(),
+        )
+
     def test_root_claude_and_gemini_are_fully_parallel(self) -> None:
         # CLAUDE.md and GEMINI.md are meant to be identical except for the tool
         # name itself (unlike AGENTS.md, which intentionally carries extra
@@ -1227,6 +1274,51 @@ class CoreRulesConsistencyTests(unittest.TestCase):
         claude = (ROOT / "templates" / "target-CLAUDE.md").read_text(encoding="utf-8")
         gemini = (ROOT / "templates" / "target-GEMINI.md").read_text(encoding="utf-8")
         self.assertEqual(normalize_tool_name(claude), normalize_tool_name(gemini))
+
+    def test_entrypoints_require_distinct_final_report_headings(self) -> None:
+        paths = (
+            ROOT / "AGENTS.md",
+            ROOT / "CLAUDE.md",
+            ROOT / "GEMINI.md",
+            ROOT / "templates" / "target-AGENTS.md",
+            ROOT / "templates" / "target-CLAUDE.md",
+            ROOT / "templates" / "target-GEMINI.md",
+        )
+        required = (
+            "Before sending the response, verify that these Markdown headings appear "
+            "verbatim, exactly once, and in this order; do not rename, omit, or combine them."
+        )
+        required_headings = [
+            "## Summary",
+            "## Changes",
+            "## Validation",
+            "## Not Included",
+            "## Follow-up",
+        ]
+        expected_items = [
+            "- **Summary**: what changed and why",
+            "- **Changes**: files and behaviors affected",
+            "- **Validation**: what was run and results",
+            "- **Not Included**: what was intentionally left out",
+            "- **Follow-up**: known gaps or deferred work",
+        ]
+
+        for path in paths:
+            with self.subTest(path=path):
+                final_report = extract_section(
+                    path.read_text(encoding="utf-8"), "Final Report"
+                )
+                self.assertIn(required, final_report)
+                heading_directives = [
+                    f"{index}. `{heading}`"
+                    for index, heading in enumerate(required_headings, start=1)
+                ]
+                heading_positions = [
+                    final_report.index(directive) for directive in heading_directives
+                ]
+                self.assertEqual(heading_positions, sorted(heading_positions))
+                positions = [final_report.index(item) for item in expected_items]
+                self.assertEqual(positions, sorted(positions))
 
 
 if __name__ == "__main__":

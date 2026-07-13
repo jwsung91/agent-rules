@@ -157,6 +157,36 @@ These are execution-environment gaps, not behavioral-contract failures. Repeat
 the evaluation in CI or another environment before treating command execution
 parity as verified.
 
+## Final-Report Precedence Revalidation (2026-07-13)
+
+A fresh repository was adopted with `--profile all --skills`, then the same
+diagnosis-only failing-test prompt was run through Codex and Claude. The first
+Claude rule wording only required the five report items to be included. Claude
+preserved the investigation fields but omitted, renamed, or combined required
+top-level sections in 2/2 runs. A first wording change that required separate
+headings improved this to 1/2 runs, which was still not reliable enough.
+
+The final rule now lists the literal Markdown headings, requires them exactly
+once and in order, and prohibits renaming, omission, or combination. With that
+wording:
+
+- **Claude**: 2/2 completed runs included `## Summary`, `## Changes`,
+  `## Validation`, `## Not Included`, and `## Follow-up` verbatim and in order,
+  while retaining all investigation fields. One additional run was excluded
+  because the API connection closed before a response completed. In one valid
+  low-effort run, the additional Investigation block appeared before Summary
+  rather than between Changes and Validation; required sections and content
+  were still preserved, but extra-section placement is not fully stable.
+- **Codex**: 1/1 run included all five required sections in order and placed
+  Investigation between Changes and Validation. Local command execution again
+  failed with `CreateProcessWithLogonW failed: 2`, and Codex correctly reported
+  the evidence gap without inventing a root cause or claiming validation.
+
+No source files in the fixture were edited by either agent. Claude's test run
+could create Python cache artifacts unless `PYTHONDONTWRITEBYTECODE=1` was set;
+later runs used that environment setting so repository cleanliness could be
+checked independently of the model response.
+
 ## Revalidation Checklist
 
 For each supported agent:
