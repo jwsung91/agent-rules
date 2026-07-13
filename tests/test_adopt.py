@@ -1236,6 +1236,19 @@ class CoreRulesConsistencyTests(unittest.TestCase):
             extract_section(template_content, "Core Rules"),
         )
 
+    def test_lightweight_adoption_final_report_matches_target_template(self) -> None:
+        # Regression guard: docs/lightweight-adoption.md's "Final Report"
+        # section is a hand-maintained copy of templates/target-AGENTS.md's,
+        # not rendered from it, and unlike the entrypoint files themselves it
+        # was not covered by test_entrypoints_require_distinct_final_report_headings.
+        # A future edit to one and not the other would otherwise go unnoticed.
+        doc_content = (ROOT / "docs" / "lightweight-adoption.md").read_text(encoding="utf-8")
+        template_content = (ROOT / "templates" / "target-AGENTS.md").read_text(encoding="utf-8")
+        self.assertEqual(
+            extract_section(doc_content, "Final Report").rstrip("`").rstrip(),
+            extract_section(template_content, "Final Report").rstrip(),
+        )
+
     def test_root_claude_and_gemini_are_fully_parallel(self) -> None:
         # CLAUDE.md and GEMINI.md are meant to be identical except for the tool
         # name itself (unlike AGENTS.md, which intentionally carries extra
