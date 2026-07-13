@@ -18,7 +18,7 @@ Follow an evidence-first workflow. Do not modify code until the expected behavio
 7. If the task authorizes a fix, make the smallest change that addresses the cause and preserves unrelated behavior. If the task only asks for diagnosis, stop before editing.
 8. Add or update a focused regression test when behavior changes, unless a test is impractical; explain any omission.
 9. Run the narrowest relevant validation first. Report commands and outcomes accurately.
-10. Report the result using the format below.
+10. Report the result using the format below while preserving any repository-required final report structure.
 
 ## Guardrails
 
@@ -30,6 +30,10 @@ Follow an evidence-first workflow. Do not modify code until the expected behavio
 - Pause for clarification when multiple fixes have meaningfully different compatibility or product trade-offs.
 
 ## Report
+
+<!-- skill-report-policy: honor-repository-format -->
+
+Honor the repository's required final report structure when one exists. Include the fields below in a dedicated `Investigation` section or within the repository's required sections; do not replace required top-level sections. Otherwise, use this format:
 
 ```text
 Investigation:
