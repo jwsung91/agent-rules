@@ -212,8 +212,9 @@ be a comprehensive agent-skill catalog or runtime automation framework.
 
 ## Shared Skills
 
-The repository includes a shared `investigate-bug` skill whose behavioral
-contract is usable by Codex and Claude. Install it together with an entrypoint:
+The repository includes shared `investigate-bug` and `review-change` skills
+whose behavioral contracts are usable by Codex and Claude. Install them
+together with an entrypoint:
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile codex --skills --visibility tracked
@@ -225,15 +226,17 @@ Use `--visibility local` (the default) for personal files, or
 entrypoints and skills with the team.
 
 `--skills` also injects a `## Shared Skills` trigger section into the
-generated `AGENTS.md` and `CLAUDE.md` so the installed skill is invoked
-reliably, even when a bug report arrives bundled with unrelated requests
-(see `docs/cross-agent-validation.md` for why the entrypoint is the trigger
-lever that works).
+generated `AGENTS.md` and `CLAUDE.md` so the appropriate installed skill is
+invoked reliably for bug investigations and change reviews. See
+`docs/cross-agent-validation.md` for why the entrypoint is the trigger lever
+that works when requests compete for attention.
 
 The adoption helper records generated baselines under `.agent-rules/bases/`.
 Later `--sync` runs use them for 3-way merges, preserving non-conflicting edits
 to generated entrypoints and skills and stopping before unresolved conflicts
 are written.
 
-See `docs/cross-agent-validation.md` for the shared behavioral evaluation and
-its remaining environment-specific validation gaps.
+See `docs/cross-agent-validation.md` for the `investigate-bug` behavioral
+evaluation and its remaining environment-specific validation gaps.
+`review-change` has deterministic structure and deployment coverage; live
+cross-agent behavioral evaluation remains a separate follow-up.

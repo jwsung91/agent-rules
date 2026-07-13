@@ -57,7 +57,8 @@ python scripts/adopt.py /path/to/repo --profile claude --dry-run
 python scripts/adopt.py /path/to/repo --profile claude
 ```
 
-Install the shared `investigate-bug` skill for Codex and Claude:
+Install the shared `investigate-bug` and `review-change` skills for Codex and
+Claude:
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile codex --skills --dry-run
@@ -66,20 +67,20 @@ python scripts/adopt.py /path/to/repo --profile claude --skills --dry-run
 python scripts/adopt.py /path/to/repo --profile claude --skills
 ```
 
-The same `SKILL.md` behavioral contract is installed under
-`.codex/skills/investigate-bug/` and `.claude/skills/investigate-bug/`.
-Agent-specific metadata may coexist with that shared contract.
+The same `SKILL.md` behavioral contracts are installed under each skill name
+in `.codex/skills/` and `.claude/skills/`. Agent-specific metadata may coexist
+with those shared contracts.
 
 `--skills` also injects a `## Shared Skills` section into the generated
 `AGENTS.md` and `CLAUDE.md` (inside the managed block), directing the agent to
-invoke the installed skill even when the triggering message bundles unrelated
-work. Skill descriptions alone proved unreliable for that case; the
-always-loaded entrypoint is the trigger lever that worked (see
-`docs/cross-agent-validation.md`). `GEMINI.md` is not changed because no
-shared skills are installed for Gemini. Existing adoptions gain the section
-via `--sync --skills`; a plain `--sync` also detects already-installed shared
-skills automatically, so the section is not stripped when the flag is
-omitted.
+invoke the appropriate installed skill. The always-loaded entrypoint proved
+necessary when a bug report bundled unrelated work; it also carries the
+explicit review trigger. See `docs/cross-agent-validation.md` for the tested
+bug-investigation behavior and the remaining review-skill evaluation gap.
+`GEMINI.md` is not changed because no shared skills are installed for Gemini.
+Existing adoptions gain the section via `--sync --skills`; a plain `--sync`
+also detects already-installed shared skills automatically, so the section is
+not stripped when the flag is omitted.
 
 Claude Code watches an already-known `.claude/skills/` directory for file
 changes, so a later `--skills --sync` update is picked up by an already-running

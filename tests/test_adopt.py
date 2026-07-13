@@ -51,6 +51,27 @@ def git_commit(repo: Path, message: str) -> str:
 
 
 class AdoptAgentRulesUnitTests(unittest.TestCase):
+    def test_shared_skill_registries_match_skill_directories(self) -> None:
+        skill_names = {
+            path.name for path in (ROOT / "skills").iterdir() if path.is_dir()
+        }
+        self.assertEqual(set(adopt.SHARED_SKILLS), skill_names)
+        self.assertEqual(set(adopt.SKILL_TRIGGER_RULES), skill_names)
+
+    def test_skill_trigger_priority_note_only_appears_with_both_skills(self) -> None:
+        with mock.patch.object(adopt, "SHARED_SKILLS", ("investigate-bug",)):
+            self.assertNotIn(
+                adopt.SKILL_TRIGGER_PRIORITY_NOTE,
+                adopt.shared_skills_section("CLAUDE.md"),
+            )
+        with mock.patch.object(
+            adopt, "SHARED_SKILLS", ("investigate-bug", "review-change")
+        ):
+            self.assertIn(
+                adopt.SKILL_TRIGGER_PRIORITY_NOTE,
+                adopt.shared_skills_section("CLAUDE.md"),
+            )
+
     def test_parse_profile(self) -> None:
         self.assertEqual(adopt.parse_profile("codex"), "codex")
         self.assertEqual(adopt.parse_profile("CLAUDE"), "claude")
@@ -355,20 +376,30 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("ignored by target repository ignore rules", result.stdout)
 
-    def test_all_profile_installs_shared_skill_for_codex_and_claude(self) -> None:
+    def test_all_profile_installs_shared_skills_for_codex_and_claude(self) -> None:
         result = self.cli("--profile", "all", "--skills", "--visibility", "tracked")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        codex_skill = self.repo / ".codex" / "skills" / "investigate-bug" / "SKILL.md"
-        claude_skill = self.repo / ".claude" / "skills" / "investigate-bug" / "SKILL.md"
-        self.assertTrue(codex_skill.exists())
-        self.assertTrue(claude_skill.exists())
-        self.assertEqual(
-            codex_skill.read_text(encoding="utf-8"),
-            claude_skill.read_text(encoding="utf-8"),
-        )
-        self.assertFalse(
-            (self.repo / ".claude/skills/investigate-bug/agents/openai.yaml").exists()
-        )
+        for skill_name in adopt.SHARED_SKILLS:
+            with self.subTest(skill=skill_name):
+                codex_skill = self.repo / ".codex" / "skills" / skill_name / "SKILL.md"
+                claude_skill = self.repo / ".claude" / "skills" / skill_name / "SKILL.md"
+                self.assertTrue(codex_skill.exists())
+                self.assertTrue(claude_skill.exists())
+                self.assertEqual(
+                    codex_skill.read_text(encoding="utf-8"),
+                    claude_skill.read_text(encoding="utf-8"),
+                )
+                # agents/openai.yaml is optional per skill (docs/skill-authoring.md);
+                # only assert it was installed for Codex when the skill actually
+                # ships one, but Claude must never have it either way.
+                source_openai_yaml = ROOT / "skills" / skill_name / "agents" / "openai.yaml"
+                if source_openai_yaml.exists():
+                    self.assertTrue(
+                        (codex_skill.parent / "agents" / "openai.yaml").exists()
+                    )
+                self.assertFalse(
+                    (claude_skill.parent / "agents" / "openai.yaml").exists()
+                )
 
     def test_skills_adds_shared_skills_section_to_entrypoints(self) -> None:
         result = self.cli("--profile", "all", "--skills", "--visibility", "tracked")
@@ -379,8 +410,16 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("## Shared Skills", agents)
         self.assertIn(".codex/skills", agents)
         self.assertIn("invoke the `investigate-bug` skill", agents)
+        self.assertIn("invoke the `review-change` skill", agents)
         self.assertIn("## Shared Skills", claude)
         self.assertIn(".claude/skills", claude)
+        self.assertIn("invoke the `review-change` skill", claude)
+        # Both trigger rules can match the same request (e.g. reviewing a PR
+        # that fixes a bug); the priority note must be present whenever both
+        # skills are installed together, so an agent doesn't pick one
+        # arbitrarily or mix both report structures.
+        self.assertIn(adopt.SKILL_TRIGGER_PRIORITY_NOTE, agents)
+        self.assertIn(adopt.SKILL_TRIGGER_PRIORITY_NOTE, claude)
         # The section lives inside the managed block so --sync keeps updating it
         self.assertLess(
             claude.index(adopt.MANAGED_START), claude.index("## Shared Skills")

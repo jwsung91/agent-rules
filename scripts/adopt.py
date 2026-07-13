@@ -36,7 +36,7 @@ PROFILE_FILES = {
 }
 ENTRYPOINT_FILES = PROFILE_FILES["all"]
 VALID_VISIBILITIES = {"local", "tracked"}
-SHARED_SKILLS = ("investigate-bug",)
+SHARED_SKILLS = ("investigate-bug", "review-change")
 PROFILE_SKILL_ROOTS = {
     "codex": (".codex/skills",),
     "claude": (".claude/skills",),
@@ -64,7 +64,28 @@ SKILL_TRIGGER_RULES = {
         "or cleanup. Investigate the bug under that workflow first and treat "
         "the unrelated work as a separate request."
     ),
+    "review-change": (
+        "When asked to review code, documentation, a diff, working tree, commit, "
+        "branch, patch, pull request, or completed implementation, invoke the "
+        "`review-change` skill before reporting findings. Stay in Review Mode "
+        "and do not modify files unless the user separately authorizes changes."
+    ),
 }
+# investigate-bug's and review-change's trigger rules above can both match
+# the same request (e.g. "review this PR that fixes a bug"); without an
+# explicit priority, an agent could run only investigate-bug's workflow or
+# mix both report structures. Specific to this pair of skills, not a general
+# N-skill priority mechanism — there is nothing to generalize with only two
+# skills, and the tiebreak content is inherently skill-specific judgment.
+SKILL_TRIGGER_PRIORITY_NOTE = (
+    "When a request could match more than one shared skill's trigger (for "
+    "example, reviewing a pull request that fixes a bug), prioritize "
+    "`review-change` if the primary ask is judging the quality of an "
+    "existing change, diff, or pull request; use `investigate-bug` if the "
+    "primary ask is reproducing or root-causing a defect that has no fix "
+    "yet. Report defects found while reviewing within `review-change`'s "
+    "structure unless the user separately asks for a fix."
+)
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
 METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)
 MANAGED_START = "<!-- agent-rules-managed:start -->"
@@ -676,6 +697,8 @@ def shared_skills_section(relative_path: str) -> str:
         rule = SKILL_TRIGGER_RULES.get(name)
         if rule:
             lines.append(f"- {rule}")
+    if {"investigate-bug", "review-change"} <= set(SHARED_SKILLS):
+        lines.append(f"- {SKILL_TRIGGER_PRIORITY_NOTE}")
     return "\n".join(lines)
 
 
