@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,39 @@ PROFILE_FILES = {
     "all": ("AGENTS.md", "CLAUDE.md", "GEMINI.md"),
 }
 ENTRYPOINT_FILES = PROFILE_FILES["all"]
+VALID_VISIBILITIES = {"local", "tracked"}
+SHARED_SKILLS = ("investigate-bug",)
+PROFILE_SKILL_ROOTS = {
+    "codex": (".codex/skills",),
+    "claude": (".claude/skills",),
+    "gemini": (),
+    "all": (".codex/skills", ".claude/skills"),
+}
+ENTRYPOINT_SKILL_ROOTS = {
+    "AGENTS.md": ".codex/skills",
+    "CLAUDE.md": ".claude/skills",
+    "GEMINI.md": None,
+}
+# Per-skill files that carry agent-specific metadata and must not leak into
+# other agents' installs, even though the rest of the skill is a shared
+# contract. Keyed by skill name so adding a second shared skill doesn't
+# require touching every place that checks or excludes these files.
+CODEX_ONLY_SKILL_FILES: dict[str, tuple[str, ...]] = {
+    "investigate-bug": ("agents/openai.yaml",),
+}
+# Trigger rules injected into generated entrypoints when --skills is active.
+# Skill descriptions compete for salience at invocation time and can lose to
+# competing requests bundled into the same message; the always-loaded
+# entrypoint is the reliable trigger lever (see docs/cross-agent-validation.md).
+SKILL_TRIGGER_RULES = {
+    "investigate-bug": (
+        "When a message reports a bug or unexpected behavior, invoke the "
+        "`investigate-bug` skill before planning any fix — even when the same "
+        "message also requests unrelated work such as refactoring, new tests, "
+        "or cleanup. Investigate the bug under that workflow first and treat "
+        "the unrelated work as a separate request."
+    ),
+}
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
 METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)
 MANAGED_START = "<!-- agent-rules-managed:start -->"
@@ -41,6 +75,7 @@ MANAGED_END = "<!-- agent-rules-managed:end -->"
 BOUNDARY_PLACEHOLDER = "Add project-specific rules here."
 VALIDATION_PLACEHOLDER = "# Add project-specific build/test/lint commands here."
 GITIGNORE_AGENT_COMMENT = "# agent-rules (local only)"
+SYNC_BASE_ROOT = ".agent-rules/bases"
 
 
 @dataclass(frozen=True)
@@ -51,6 +86,7 @@ class RenderContext:
     profile: str
     source_commit: str
     generated_at: str
+    install_skills: bool = False
 
 
 @dataclass
@@ -154,6 +190,17 @@ def parse_args() -> argparse.Namespace:
         help="Copy shared rules under .agents/agent-rules/ for pinned/offline use.",
     )
     parser.add_argument(
+        "--visibility",
+        choices=sorted(VALID_VISIBILITIES),
+        default="local",
+        help="Keep generated files local (default) or make them trackable.",
+    )
+    parser.add_argument(
+        "--skills",
+        action="store_true",
+        help="Install shared skills for the selected agent profile.",
+    )
+    parser.add_argument(
         "--batch",
         metavar="FILE",
         help="Apply to multiple repositories listed in a .toml or .txt file.",
@@ -168,6 +215,7 @@ def run_command(command: list[str], cwd: Path | None = None) -> tuple[int, str, 
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
         )
     except FileNotFoundError as exc:
@@ -210,18 +258,27 @@ def parse_profile(value: str | None) -> str | None:
     profile = value.strip().lower()
     if profile not in VALID_PROFILES:
         raise SystemExit(
-            f"Unsupported profile: {value}. Supported values: codex, claude, gemini, all."
+            f"Unsupported profile: {value}. Supported values: {', '.join(sorted(VALID_PROFILES))}."
         )
     return profile
-
 
 
 def required_files_for_profile(profile: str) -> list[str]:
     if profile not in PROFILE_FILES:
         raise SystemExit(
-            f"Unsupported profile: {profile}. Supported values: codex, claude, gemini, all."
+            f"Unsupported profile: {profile}. Supported values: {', '.join(sorted(VALID_PROFILES))}."
         )
     return list(PROFILE_FILES[profile])
+
+
+def profile_skill_support(profile: str) -> tuple[list[str], list[str]]:
+    """Split a profile's required entrypoints into ones with a shared-skill
+    installation path (ENTRYPOINT_SKILL_ROOTS) and ones without (currently
+    just GEMINI.md, since Gemini has no shared-skill convention yet)."""
+    required = required_files_for_profile(profile)
+    supported = [f for f in required if ENTRYPOINT_SKILL_ROOTS.get(f)]
+    unsupported = [f for f in required if not ENTRYPOINT_SKILL_ROOTS.get(f)]
+    return supported, unsupported
 
 
 def format_boundaries(items: list[str]) -> str:
@@ -515,7 +572,15 @@ def add_to_gitignore(git_root: Path, filenames: list[str], *, dry_run: bool) -> 
         return ".gitignore"
     if content and not content.endswith("\n"):
         content += "\n"
-    content += f"\n{GITIGNORE_AGENT_COMMENT}\n" + "\n".join(to_add) + "\n"
+    # A bare pattern with no slash (e.g. "AGENTS.md") matches at any depth in
+    # gitignore semantics, not just the repo root — without the leading "/"
+    # it would also match .agents/agent-rules/AGENTS.md from --local-copy,
+    # silently excluding a file that's meant to be tracked.
+    content += (
+        f"\n{GITIGNORE_AGENT_COMMENT}\n"
+        + "\n".join(f"/{f}" for f in to_add)
+        + "\n"
+    )
     gitignore_path.write_text(content, encoding="utf-8")
     return ".gitignore"
 
@@ -596,13 +661,116 @@ def build_render_context(
         profile=profile,
         source_commit=source_status.local_head or "unknown",
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+        install_skills=args.skills,
     )
+
+
+def shared_skills_section(relative_path: str) -> str:
+    root = ENTRYPOINT_SKILL_ROOTS.get(relative_path)
+    if not root:
+        return ""
+    names = ", ".join(f"`{name}`" for name in SHARED_SKILLS)
+    lines = [
+        "## Shared Skills",
+        "",
+        f"- This repository installs shared skills under `{root}/`: {names}.",
+    ]
+    for name in SHARED_SKILLS:
+        rule = SKILL_TRIGGER_RULES.get(name)
+        if rule:
+            lines.append(f"- {rule}")
+    return "\n".join(lines)
 
 
 def render_file_for_profile(relative_path: str, context: RenderContext) -> str:
     if relative_path not in ENTRYPOINT_FILES:
         raise SystemExit(f"Unsupported generated file: {relative_path}")
-    return render_template(read_template(f"target-{relative_path}"), context)
+    rendered = render_template(read_template(f"target-{relative_path}"), context)
+    section = shared_skills_section(relative_path) if context.install_skills else ""
+    if section:
+        rendered = rendered.replace("{{SHARED_SKILLS_SECTION}}", section)
+    else:
+        rendered = rendered.replace("{{SHARED_SKILLS_SECTION}}\n\n", "")
+        rendered = rendered.replace("{{SHARED_SKILLS_SECTION}}", "")
+    return rendered
+
+
+def sync_base_path(relative_path: str) -> str:
+    return f"{SYNC_BASE_ROOT}/{relative_path}"
+
+
+def three_way_merge(local: str, base: str, upstream: str) -> tuple[str, bool]:
+    """Merge text with Git's deterministic merge-file implementation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        local_path = root / "local"
+        base_path = root / "base"
+        upstream_path = root / "upstream"
+        local_path.write_text(local, encoding="utf-8")
+        base_path.write_text(base, encoding="utf-8")
+        upstream_path.write_text(upstream, encoding="utf-8")
+        result = subprocess.run(
+            [
+                "git",
+                "merge-file",
+                "-p",
+                "-L",
+                "local",
+                "-L",
+                "base",
+                "-L",
+                "upstream",
+                str(local_path),
+                str(base_path),
+                str(upstream_path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if result.returncode not in (0, 1):
+            raise SystemExit(
+                f"git merge-file failed: {result.stderr.strip() or result.stdout.strip()}"
+            )
+        return result.stdout, result.returncode == 1
+
+
+def baseline_plan(
+    target_repo: Path, relative_path: str, upstream: str
+) -> FilePlan:
+    path = sync_base_path(relative_path)
+    target = target_repo / path
+    if not target.exists():
+        action = "create"
+    elif target.read_text(encoding="utf-8", errors="replace") == upstream:
+        action = "no-op"
+    else:
+        action = "update"
+    return FilePlan(path=path, action=action, content=upstream)
+
+
+def plan_three_way_update(
+    target_repo: Path,
+    relative_path: str,
+    existing: str,
+    upstream: str,
+    *,
+    fallback: tuple[str, str] | None = None,
+) -> tuple[str | None, str]:
+    base = target_repo / sync_base_path(relative_path)
+    if not base.exists():
+        if fallback is not None:
+            return fallback
+        return None, "sync-base-missing"
+    merged, conflicted = three_way_merge(
+        existing,
+        base.read_text(encoding="utf-8", errors="replace"),
+        upstream,
+    )
+    if conflicted:
+        return merged, "merge-conflict"
+    return merged, "no-op" if merged == existing else "merge"
 
 
 def extract_managed_block(content: str) -> str | None:
@@ -652,7 +820,14 @@ def section_present(content: str, heading: str) -> bool:
     return re.search(rf"^##\s+{re.escape(heading)}\s*$", content, re.MULTILINE) is not None
 
 
-def merge_agents_content(existing: str, rendered: str, metadata: str, shared_url: str) -> str:
+def merge_agents_content(
+    existing: str,
+    rendered: str,
+    metadata: str,
+    shared_url: str,
+    *,
+    skills_section: str = "",
+) -> str:
     content = replace_metadata_block(existing, metadata)
     additions: list[str] = []
 
@@ -663,11 +838,15 @@ def merge_agents_content(existing: str, rendered: str, metadata: str, shared_url
         )
 
     rendered_block = extract_managed_block(rendered)
+    # The managed block already carries Shared Skills when rendered fresh, so
+    # track whether it was added here to avoid duplicating that section below.
+    managed_block_added = False
     if rendered_block and (
         not section_present(content, "Agent Usage Model")
         or not section_present(content, "Core Rules")
     ):
         additions.append(rendered_block)
+        managed_block_added = True
 
     for heading in ("Repository-specific Boundaries", "Validation", "Final Report"):
         if section_present(content, heading):
@@ -684,6 +863,16 @@ def merge_agents_content(existing: str, rendered: str, metadata: str, shared_url
                 f"## {heading}\n\n"
                 f"<!-- TODO(agent-rules): add repository-specific {heading.lower()} guidance. -->"
             )
+
+    # A legacy file commonly already has Agent Usage Model and Core Rules
+    # (so managed_block_added is False above) but predates --skills, so it
+    # needs Shared Skills added on its own rather than via the whole block.
+    if (
+        skills_section
+        and not managed_block_added
+        and not section_present(content, "Shared Skills")
+    ):
+        additions.append(skills_section)
 
     if additions:
         content = content.rstrip() + "\n\n" + "\n\n".join(additions).strip() + "\n"
@@ -763,15 +952,29 @@ def build_entrypoint_plans(
                 generated_at=context.generated_at,
             )
             if update and parse_metadata(existing):
-                content, action = plan_generated_update(
-                    existing, rendered, metadata, relative_path
+                content, action = plan_three_way_update(
+                    target_repo,
+                    relative_path,
+                    existing,
+                    rendered,
+                    fallback=plan_generated_update(
+                        existing, rendered, metadata, relative_path
+                    ),
                 )
             elif update:
                 content = None
                 action = "metadata-missing"
             elif merge and relative_path == "AGENTS.md":
                 content = merge_agents_content(
-                    existing, rendered, metadata, context.shared_rules_url
+                    existing,
+                    rendered,
+                    metadata,
+                    context.shared_rules_url,
+                    skills_section=(
+                        shared_skills_section("AGENTS.md")
+                        if context.install_skills
+                        else ""
+                    ),
                 )
                 action = "no-op" if content == existing else "merge"
             elif force:
@@ -779,6 +982,7 @@ def build_entrypoint_plans(
             else:
                 content = None
             plans.append(FilePlan(path=relative_path, action=action, content=content))
+            plans.append(baseline_plan(target_repo, relative_path, rendered))
             continue
 
         if relative_path in TOOL_ENTRYPOINTS and path.exists() and update:
@@ -793,13 +997,22 @@ def build_entrypoint_plans(
                 content, action = plan_generated_update(
                     existing, rendered, metadata, relative_path
                 )
+                content, action = plan_three_way_update(
+                    target_repo,
+                    relative_path,
+                    existing,
+                    rendered,
+                    fallback=(content, action),
+                )
             else:
                 content = None
                 action = "metadata-missing"
             plans.append(FilePlan(path=relative_path, action=action, content=content))
+            plans.append(baseline_plan(target_repo, relative_path, rendered))
             continue
 
         plans.append(FilePlan(path=relative_path, action=action, content=rendered))
+        plans.append(baseline_plan(target_repo, relative_path, rendered))
     return plans
 
 
@@ -810,7 +1023,7 @@ def local_copy_file_specs(profile: str) -> list[tuple[Path, str]]:
     for name in required_files_for_profile(profile):
         source_name = name
         specs.append((root / source_name, f".agents/agent-rules/{name}"))
-    for directory in ("rules", "templates"):
+    for directory in ("rules", "templates", "skills"):
         for source in sorted((root / directory).rglob("*")):
             if source.is_file():
                 specs.append((source, f".agents/agent-rules/{source.relative_to(root).as_posix()}"))
@@ -818,6 +1031,63 @@ def local_copy_file_specs(profile: str) -> list[tuple[Path, str]]:
         source = root / "docs" / name
         specs.append((source, f".agents/agent-rules/docs/{name}"))
     return specs
+
+
+def shared_skill_file_specs(profile: str) -> list[tuple[Path, str]]:
+    root = source_repo_root()
+    specs: list[tuple[Path, str]] = []
+    for skill_name in SHARED_SKILLS:
+        skill_root = root / "skills" / skill_name
+        codex_only_files = CODEX_ONLY_SKILL_FILES.get(skill_name, ())
+        for destination_root in PROFILE_SKILL_ROOTS[profile]:
+            for source in sorted(skill_root.rglob("*")):
+                if source.is_file():
+                    relative = source.relative_to(skill_root).as_posix()
+                    if (
+                        destination_root == ".claude/skills"
+                        and relative in codex_only_files
+                    ):
+                        continue
+                    specs.append(
+                        (source, f"{destination_root}/{skill_name}/{relative}")
+                    )
+    return specs
+
+
+def build_shared_skill_plans(
+    target_repo: Path,
+    profile: str,
+    *,
+    update: bool,
+    force: bool,
+) -> list[FilePlan]:
+    plans: list[FilePlan] = []
+    for source, relative_path in shared_skill_file_specs(profile):
+        target = target_repo / relative_path
+        upstream = source.read_text(encoding="utf-8")
+        if target.exists():
+            if update:
+                content, action = plan_three_way_update(
+                    target_repo,
+                    relative_path,
+                    target.read_text(encoding="utf-8", errors="replace"),
+                    upstream,
+                    fallback=(None, "no-op")
+                    if target.read_text(encoding="utf-8", errors="replace") == upstream
+                    else None,
+                )
+            elif force:
+                action = "overwrite"
+                content = upstream
+            else:
+                action = "exists"
+                content = None
+        else:
+            action = "create"
+            content = upstream
+        plans.append(FilePlan(path=relative_path, action=action, content=content))
+        plans.append(baseline_plan(target_repo, relative_path, upstream))
+    return plans
 
 
 def build_local_copy_plans(
@@ -889,6 +1159,21 @@ def build_plan(
             f"WARN: target path is inside a Git repository but is not the root: {git_root}"
         )
 
+    if profile and args.skills:
+        supported, unsupported = profile_skill_support(profile)
+        if not supported:
+            raise SystemExit(
+                f"--skills has no effect for --profile {profile}: no shared-skill "
+                "installation path exists for it yet. Remove --skills, or use "
+                "--profile codex or --profile claude."
+            )
+        if unsupported:
+            warnings.append(
+                "WARN: shared skills are not supported for "
+                f"{', '.join(unsupported)} ({profile} profile); it was generated "
+                "without a Shared Skills section."
+            )
+
     if profile:
         context = build_render_context(args, profile, source_status, detected)
         files.extend(
@@ -908,6 +1193,15 @@ def build_plan(
                     target_repo,
                     profile,
                     source_status.local_head or "unknown",
+                    update=args.sync,
+                    force=args.force,
+                )
+            )
+        if args.skills:
+            files.extend(
+                build_shared_skill_plans(
+                    target_repo,
+                    profile,
                     update=args.sync,
                     force=args.force,
                 )
@@ -965,7 +1259,14 @@ def append_check(results: list[tuple[str, str]], status: str, message: str) -> N
     results.append((status, message))
 
 
-def check_adoption(target_repo: Path, shared_url: str) -> int:
+def check_adoption(
+    target_repo: Path,
+    shared_url: str,
+    *,
+    check_skills: bool = False,
+    visibility: str = "local",
+    profile_override: str | None = None,
+) -> int:
     results: list[tuple[str, str]] = []
     git_root = find_repo_root(target_repo)
 
@@ -973,7 +1274,12 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
     metadata: dict[str, str] = {}
     metadata_file: str | None = None
     primary_content = ""
-    for name in ENTRYPOINT_FILES:
+    metadata_candidates = (
+        required_files_for_profile(profile_override)
+        if profile_override in VALID_PROFILES
+        else list(ENTRYPOINT_FILES)
+    )
+    for name in metadata_candidates:
         p = target_repo / name
         if p.exists():
             text = p.read_text(encoding="utf-8", errors="replace")
@@ -1029,12 +1335,23 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
         else "source_commit is missing",
     )
 
-    profile = metadata.get("profile")
+    metadata_profile = metadata.get("profile")
+    profile = profile_override or metadata_profile
+    profile_matches = profile in VALID_PROFILES and (
+        profile_override is None
+        or metadata_profile == profile_override
+        # "all" is a superset: a repo adopted with --profile all legitimately
+        # has every agent's entrypoint, so checking one agent's slice of it
+        # with an explicit --profile isn't a mismatch.
+        or metadata_profile == "all"
+    )
     append_check(
         results,
-        "OK" if profile in VALID_PROFILES else "WARN" if legacy_adoption else "FAIL",
+        "OK" if profile_matches else "WARN" if legacy_adoption else "FAIL",
         f"profile: {profile}"
-        if profile in VALID_PROFILES
+        if profile_matches
+        else f"profile mismatch: expected {profile_override}, found {metadata_profile}"
+        if profile_override and metadata_profile
         else "legacy adoption detected; run --sync to add metadata"
         if legacy_adoption
         else "profile is missing or invalid",
@@ -1054,6 +1371,93 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
             if path.exists()
             else f"{relative_path} is required by profile but missing",
         )
+        baseline = target_repo / sync_base_path(relative_path)
+        append_check(
+            results,
+            "OK" if baseline.exists() else "WARN",
+            f"sync baseline exists for {relative_path}"
+            if baseline.exists()
+            else f"sync baseline missing for {relative_path}; run --sync to establish it",
+        )
+
+    skill_paths: list[str] = []
+    if check_skills and profile in VALID_PROFILES:
+        supported, unsupported = profile_skill_support(profile)
+        if not supported:
+            append_check(
+                results,
+                "FAIL",
+                f"--skills has no effect for the {profile} profile: no "
+                "shared-skill installation path exists for it yet",
+            )
+        elif unsupported:
+            append_check(
+                results,
+                "WARN",
+                "shared skills are not supported for "
+                f"{', '.join(unsupported)} ({profile} profile)",
+            )
+        # Derived from the same file list shared_skill_file_specs() installs,
+        # so every installed file is checked, not just SKILL.md — a deleted
+        # supporting file (e.g. a script or asset a skill ships alongside
+        # SKILL.md) is caught the same way a deleted SKILL.md already was.
+        for _source, relative_path in shared_skill_file_specs(profile):
+            skill_paths.append(relative_path)
+            path = target_repo / relative_path
+            append_check(
+                results,
+                "OK" if path.exists() else "FAIL",
+                f"{relative_path} exists"
+                if path.exists()
+                else f"{relative_path} is required by --skills but missing",
+            )
+            baseline = target_repo / sync_base_path(relative_path)
+            append_check(
+                results,
+                "OK" if baseline.exists() else "WARN",
+                f"sync baseline exists for {relative_path}"
+                if baseline.exists()
+                else f"sync baseline missing for {relative_path}",
+            )
+
+        codex_root = PROFILE_SKILL_ROOTS["codex"][0]
+        claude_root = PROFILE_SKILL_ROOTS["claude"][0]
+        for skill_name in SHARED_SKILLS:
+            codex_skill = target_repo / codex_root / skill_name / "SKILL.md"
+            claude_skill = target_repo / claude_root / skill_name / "SKILL.md"
+            if codex_skill.exists() and claude_skill.exists():
+                contracts_match = codex_skill.read_bytes() == claude_skill.read_bytes()
+                append_check(
+                    results,
+                    "OK" if contracts_match else "FAIL",
+                    f"Codex and Claude {skill_name} contracts match"
+                    if contracts_match
+                    else f"Codex and Claude {skill_name} contracts differ",
+                )
+            for codex_only_file in CODEX_ONLY_SKILL_FILES.get(skill_name, ()):
+                leaked = target_repo / claude_root / skill_name / codex_only_file
+                if leaked.exists():
+                    append_check(
+                        results,
+                        "WARN",
+                        f"Claude {skill_name} skill contains Codex-only "
+                        f"{codex_only_file} metadata; remove it",
+                    )
+
+        for relative_path in required:
+            if not ENTRYPOINT_SKILL_ROOTS.get(relative_path):
+                continue
+            path = target_repo / relative_path
+            if not path.exists():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            append_check(
+                results,
+                "OK" if "## Shared Skills" in content else "WARN",
+                f"{relative_path} contains a Shared Skills trigger section"
+                if "## Shared Skills" in content
+                else f"{relative_path} lacks a Shared Skills trigger section; run --sync --skills to add it",
+            )
 
     if BOUNDARY_PLACEHOLDER in primary_content:
         append_check(
@@ -1068,6 +1472,13 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
         append_check(results, "WARN", "Validation still contains placeholder text")
 
     plans = [FilePlan(path=name, action="check") for name in required]
+    plans.extend(
+        FilePlan(path=sync_base_path(name), action="check") for name in required
+    )
+    plans.extend(FilePlan(path=name, action="check") for name in skill_paths)
+    plans.extend(
+        FilePlan(path=sync_base_path(name), action="check") for name in skill_paths
+    )
     local_copy_root = target_repo / ".agents" / "agent-rules"
     if local_copy_root.exists():
         plans.append(FilePlan(path=".agents/agent-rules/SOURCE_COMMIT", action="check"))
@@ -1075,8 +1486,19 @@ def check_adoption(target_repo: Path, shared_url: str) -> int:
             append_check(results, "FAIL", ".agents/agent-rules/SOURCE_COMMIT is missing")
     for status in check_generated_files_ignored(target_repo, git_root, plans):
         is_entrypoint = Path(status.path).name in ENTRYPOINT_FILES
-        if is_entrypoint:
-            if status.tracked:
+        is_generated = (
+            is_entrypoint
+            or status.path in skill_paths
+            or status.path.startswith(f"{SYNC_BASE_ROOT}/")
+        )
+        if is_generated:
+            if visibility == "tracked" and status.ignored and not status.tracked:
+                append_check(results, "FAIL", f"{status.path} is ignored but should be tracked")
+            elif visibility == "tracked" and status.tracked:
+                append_check(results, "OK", f"{status.path} is tracked")
+            elif visibility == "tracked":
+                append_check(results, "WARN", f"{status.path} is trackable but untracked")
+            elif status.tracked:
                 append_check(results, "WARN", f"{status.path} is tracked; run: git rm --cached {status.path}")
             elif not status.ignored:
                 append_check(results, "WARN", f"{status.path} is not in .gitignore; run adopt to add it")
@@ -1154,6 +1576,19 @@ def write_plan_file(
             "Use --sync to preserve existing content and add metadata, or --force "
             "to overwrite intentionally."
         )
+    if plan.action == "sync-base-missing":
+        raise SystemExit(
+            f"Refusing to sync a modified generated file without a baseline: {path}\n"
+            "Re-run with --force to establish a new baseline, or restore the generated "
+            "file and run --sync again."
+        )
+    if plan.action == "merge-conflict":
+        preview = f"\n\nConflict preview:\n{plan.content.rstrip()}" if plan.content else ""
+        raise SystemExit(
+            f"Refusing to write unresolved merge conflicts: {path}\n"
+            "Run with --dry-run to inspect the conflict, then reconcile the local "
+            f"changes or use --force intentionally.{preview}"
+        )
     if plan.action == "exists":
         if plan.path.startswith(".agents/agent-rules/"):
             raise SystemExit(
@@ -1198,7 +1633,13 @@ def validate_plan_before_write(plan: AdoptionPlan) -> int:
         return 1
 
     for item in plan.files:
-        if item.action in {"exists", "metadata-missing", "blocked-existing-local-copy"}:
+        if item.action in {
+            "exists",
+            "metadata-missing",
+            "blocked-existing-local-copy",
+            "sync-base-missing",
+            "merge-conflict",
+        }:
             try:
                 write_plan_file(plan.target_repo, item, dry_run=True)
             except SystemExit as exc:
@@ -1213,6 +1654,7 @@ def print_summary(
     skipped: list[str],
     plan: AdoptionPlan,
     gitignore_file: str | None = None,
+    visibility: str = "local",
 ) -> None:
     print("\nCreated:")
     print("\n".join(f"- {item}" for item in created) if created else "- none")
@@ -1238,8 +1680,14 @@ def print_summary(
     print("\nGitignore:")
     if plan.ignore_statuses:
         for status in plan.ignore_statuses:
-            is_entrypoint = Path(status.path).name in ENTRYPOINT_FILES
-            if is_entrypoint:
+            # Skill files and sync baselines get the same local-only
+            # treatment as entrypoints (see generated_local_paths above);
+            # only genuinely different categories (e.g. .agents/ local
+            # copies, which must stay trackable) fall into the else branch.
+            is_locally_ignorable = Path(status.path).name in ENTRYPOINT_FILES or status.path.startswith(
+                (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
+            )
+            if is_locally_ignorable:
                 if gitignore_file:
                     print(f"- OK: {status.path} added to .gitignore (local-only)")
                 elif status.ignored and not status.tracked:
@@ -1271,7 +1719,19 @@ def print_summary(
             print(f"- {command}")
 
     changed = created + updated
-    committable_changed = [p for p in changed if Path(p).name not in ENTRYPOINT_FILES]
+    generated_agent_files = [
+        p
+        for p in changed
+        if Path(p).name in ENTRYPOINT_FILES
+        or p.startswith(
+            (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
+        )
+    ]
+    committable_changed = [
+        p
+        for p in changed
+        if visibility == "tracked" or p not in generated_agent_files
+    ]
 
     print("\nNext commands:")
     if committable_changed:
@@ -1302,6 +1762,15 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     if local_copy_ignored:
         return fail_on_ignored(local_copy_ignored)
 
+    if args.visibility == "tracked":
+        tracked_outputs_ignored = [
+            status
+            for status in plan.ignore_statuses
+            if status.ignored and not status.tracked
+        ]
+        if tracked_outputs_ignored:
+            return fail_on_ignored(tracked_outputs_ignored)
+
     created: list[str] = []
     updated: list[str] = []
     skipped: list[str] = []
@@ -1314,21 +1783,43 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
         else:
             skipped.append(path)
 
-    # Add all three entrypoint names to .gitignore so they remain local-only,
-    # regardless of which profile was applied.
+    # Local visibility ignores only files generated for the selected profile.
     git_root = plan.git_root or plan.target_repo
-    any_entrypoint_written = any(
-        Path(p).name in ENTRYPOINT_FILES for p in (created + updated)
+    generated_local_paths = [
+        item.path
+        for item in plan.files
+        if item.path in ENTRYPOINT_FILES
+        or item.path.startswith(
+            (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
+        )
+    ]
+    any_local_output_written = any(
+        path in generated_local_paths for path in (created + updated)
     )
     gitignore_file: str | None = None
-    if any_entrypoint_written:
+    if any_local_output_written and args.visibility == "local":
         gitignore_file = add_to_gitignore(
             git_root,
-            list(ENTRYPOINT_FILES),
+            generated_local_paths,
             dry_run=args.dry_run,
         )
+        if gitignore_file and not args.dry_run:
+            # .gitignore just changed on disk; the "Gitignore:" summary must
+            # reflect the post-write state, not the ignore_statuses snapshot
+            # taken before this repository had any .gitignore rule for these
+            # paths.
+            plan.ignore_statuses = check_generated_files_ignored(
+                plan.target_repo, plan.git_root, plan.files
+            )
 
-    print_summary(created, updated, skipped, plan, gitignore_file=gitignore_file)
+    print_summary(
+        created,
+        updated,
+        skipped,
+        plan,
+        gitignore_file=gitignore_file,
+        visibility=args.visibility,
+    )
     return 0
 
 
@@ -1396,8 +1887,7 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
             continue
 
         try:
-            profile_str = entry.profile or args.profile
-            profile = parse_profile(profile_str)
+            profile = parse_profile(entry.profile or args.profile)
             if profile is None and (args.check or args.sync):
                 profile = infer_profile_from_existing(target_repo)
         except (SystemExit, Exception) as exc:
@@ -1410,18 +1900,33 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
 
         try:
             if args.check:
-                code = check_adoption(target_repo, args.shared_url)
+                code = check_adoption(
+                    target_repo,
+                    args.shared_url,
+                    check_skills=args.skills,
+                    visibility=args.visibility,
+                    profile_override=profile,
+                )
             else:
                 if not profile:
                     print("FAIL: no profile specified and none inferred from existing files.")
                     results.append((entry.path, 1))
                     continue
-                plan = build_plan(target_repo, args, profile)
-                if args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
+                # Per-entry copy: skills inference for one repository must not
+                # leak into the rest of the batch.
+                entry_args = argparse.Namespace(**vars(args))
+                if (
+                    entry_args.sync
+                    and not entry_args.skills
+                    and skills_installed(target_repo, profile)
+                ):
+                    entry_args.skills = True
+                plan = build_plan(target_repo, entry_args, profile)
+                if entry_args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
                     print(f"FAIL: local source is {plan.source_status.local_status}. Update agent-rules first.")
                     results.append((entry.path, 1))
                     continue
-                code = apply_plan(plan, args)
+                code = apply_plan(plan, entry_args)
         except (SystemExit, Exception) as exc:
             print(f"FAIL: {exc}")
             code = 1
@@ -1470,6 +1975,14 @@ def infer_profile_from_existing(target_repo: Path) -> str | None:
     return None
 
 
+def skills_installed(target_repo: Path, profile: str) -> bool:
+    for root in PROFILE_SKILL_ROOTS.get(profile, ()):
+        for skill_name in SHARED_SKILLS:
+            if (target_repo / root / skill_name / "SKILL.md").exists():
+                return True
+    return False
+
+
 def main() -> int:
     # Some Windows console code pages (e.g. cp949) can't encode every
     # character this script prints (box-drawing separators, em dashes).
@@ -1495,10 +2008,22 @@ def main() -> int:
     if profile is None and (args.check or args.sync):
         profile = infer_profile_from_existing(target_repo)
 
+    # Without this, --sync would render entrypoints skill-free and the 3-way
+    # merge would strip the Shared Skills section from repositories whose
+    # skills were installed by an earlier --skills run.
+    if args.sync and not args.skills and profile and skills_installed(target_repo, profile):
+        args.skills = True
+
     validate_args(args, profile)
 
     if args.check:
-        return check_adoption(target_repo, args.shared_url)
+        return check_adoption(
+            target_repo,
+            args.shared_url,
+            check_skills=args.skills,
+            visibility=args.visibility,
+            profile_override=profile,
+        )
 
     plan = build_plan(target_repo, args, profile)
 

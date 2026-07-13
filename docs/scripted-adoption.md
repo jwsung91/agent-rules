@@ -7,11 +7,12 @@ The script creates root-level agent entrypoints and does not copy root-level `ru
 ## Recommended Workflow
 
 1. Choose an agent profile: `codex`, `claude`, `gemini`, or `all`.
-2. Run with `--dry-run`.
-3. Apply the files.
-4. Edit repository-specific boundaries and validation commands.
-5. Run the suggested validation, starting with `git diff --check`.
-6. Commit only `.gitignore` in the target repository — agent files are local-only.
+2. Choose `--visibility local` (default) or `--visibility tracked`.
+3. Add `--skills` when the repository should receive shared agent skills.
+4. Run with `--dry-run`.
+5. Apply the files.
+6. Edit repository-specific boundaries and validation commands.
+7. Run the suggested validation, starting with `git diff --check`.
 
 ## Profiles
 
@@ -22,7 +23,9 @@ gemini -> GEMINI.md
 all    -> AGENTS.md + CLAUDE.md + GEMINI.md
 ```
 
-Each profile creates only the files its agent needs. Use `--profile all` when the repository is used by multiple agent tools.
+Each profile creates only the files its agent needs. Apply the `codex` and
+`claude` profiles separately when both tools are used without Gemini. Keep
+`--profile all` for repositories that also use Gemini.
 
 ## 1. New Repository: Codex
 
@@ -48,9 +51,42 @@ python scripts/adopt.py /path/to/repo --profile gemini
 ## 4. Multi-Agent Repository
 
 ```bash
-python scripts/adopt.py /path/to/repo --profile all --dry-run
-python scripts/adopt.py /path/to/repo --profile all
+python scripts/adopt.py /path/to/repo --profile codex --dry-run
+python scripts/adopt.py /path/to/repo --profile codex
+python scripts/adopt.py /path/to/repo --profile claude --dry-run
+python scripts/adopt.py /path/to/repo --profile claude
 ```
+
+Install the shared `investigate-bug` skill for Codex and Claude:
+
+```bash
+python scripts/adopt.py /path/to/repo --profile codex --skills --dry-run
+python scripts/adopt.py /path/to/repo --profile codex --skills
+python scripts/adopt.py /path/to/repo --profile claude --skills --dry-run
+python scripts/adopt.py /path/to/repo --profile claude --skills
+```
+
+The same `SKILL.md` behavioral contract is installed under
+`.codex/skills/investigate-bug/` and `.claude/skills/investigate-bug/`.
+Agent-specific metadata may coexist with that shared contract.
+
+`--skills` also injects a `## Shared Skills` section into the generated
+`AGENTS.md` and `CLAUDE.md` (inside the managed block), directing the agent to
+invoke the installed skill even when the triggering message bundles unrelated
+work. Skill descriptions alone proved unreliable for that case; the
+always-loaded entrypoint is the trigger lever that worked (see
+`docs/cross-agent-validation.md`). `GEMINI.md` is not changed because no
+shared skills are installed for Gemini. Existing adoptions gain the section
+via `--sync --skills`; a plain `--sync` also detects already-installed shared
+skills automatically, so the section is not stripped when the flag is
+omitted.
+
+Claude Code watches an already-known `.claude/skills/` directory for file
+changes, so a later `--skills --sync` update is picked up by an already-running
+Claude Code session without restarting it. The **first** `--skills` install in a
+repository creates the `.claude/skills/` directory itself; if a Claude Code
+session was already running in that repository before the install, restart the
+session so it starts watching the new directory.
 
 ## 5. Existing File: Sync
 
@@ -58,7 +94,9 @@ Default apply refuses to overwrite an existing file.
 
 Use `--sync` when the target repository already has an agent file. The helper automatically selects the right strategy:
 
-- **metadata present** → refreshes the metadata block and managed shared-rule block, preserving repository-specific sections. All three entrypoints (AGENTS.md, CLAUDE.md, GEMINI.md) carry `<!-- agent-rules-managed:start/end -->` markers; content outside the markers is never touched by sync.
+- **sync baseline present** → performs a 3-way merge between the previous generated baseline, the locally edited file, and the new shared source. Non-conflicting edits are preserved anywhere in generated entrypoints and installed skills.
+- **merge conflict** → stops before writing any file. Use `--dry-run` to inspect the conflict, reconcile the local edit, or use `--force` intentionally.
+- **metadata present, baseline absent** → uses the legacy managed-block refresh once and records a baseline for future 3-way merges.
 - **metadata present, no managed markers** → the file was generated before markers were added to CLAUDE.md/GEMINI.md templates; it is fully regenerated once (manual edits in that file are replaced — keep local content outside the managed block afterwards).
 - **no metadata** → merges shared sections into the existing file without overwriting it (AGENTS.md only).
 
@@ -68,6 +106,12 @@ python scripts/adopt.py /path/to/repo --sync
 ```
 
 `--profile` is optional with `--sync`; the helper infers it from the existing file's metadata. Pass `--profile` explicitly to change the profile.
+
+Baselines are stored under `.agent-rules/bases/`. Local visibility ignores
+them together with generated files; tracked visibility keeps them trackable so
+other team members can reproduce later merges. A previously installed,
+locally modified skill without a baseline cannot be merged safely: restore it
+or use `--force` once to establish a new baseline.
 
 If `--check` finds a shared source URL but no metadata block, it reports:
 
@@ -212,11 +256,24 @@ Exit code is 1 if any repository failed, 2 if none failed but at least one repor
 
   Or track it if the paths are stable and shared (e.g. CI server paths).
 
-## 9. Local-Only Agent Files
+## 9. Generated File Visibility
 
-Agent entrypoint files (AGENTS.md, CLAUDE.md, GEMINI.md) are **local-only**. The helper automatically adds them to the target repository's `.gitignore` after creating or updating them. They will not be committed to the repository.
+The default, `--visibility local`, adds generated entrypoints and installed
+skill files to the target repository's `.gitignore`.
 
-This is intentional: agent instruction files are personal workflow tools, not project artifacts.
+Use `--visibility tracked` to make the generated files team-visible:
+
+```bash
+python scripts/adopt.py /path/to/repo --profile codex --skills --visibility tracked
+```
+
+Tracked mode refuses to proceed when a generated output is ignored and
+untracked. Remove or narrow the matching ignore rule first.
+
+### Local-only files
+
+Local visibility ignores only the entrypoints and skills selected by the active
+profile. It does not add unused agent entrypoint names.
 
 After adoption, commit only `.gitignore`:
 
@@ -256,6 +313,14 @@ python scripts/adopt.py /path/to/repo --check
 - source URL and commit traceability
 - `.gitignore` visibility
 - version status (local source HEAD vs. remote main HEAD)
+
+Add `--skills` to verify shared Skill installation, sync baselines, and the
+Codex/Claude `SKILL.md` contract. Pass the intended visibility so tracked and
+local files are evaluated correctly:
+
+```bash
+python scripts/adopt.py /path/to/repo --check --skills --visibility tracked
+```
 
 Exit codes distinguish severity: `0` (clean), `1` (at least one `[FAIL]`), `2` (only `[WARN]`, no `[FAIL]`).
 

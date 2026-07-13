@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import argparse
+import io
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -156,9 +160,99 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                 check=False,
                 sync=False,
                 local_copy=False,
+                visibility="local",
+                skills=False,
             )
             plan = adopt.build_plan(repo, args, "claude")
-            self.assertEqual([item.path for item in plan.files], ["CLAUDE.md"])
+            self.assertEqual(
+                [item.path for item in plan.files],
+                ["CLAUDE.md", ".agent-rules/bases/CLAUDE.md"],
+            )
+
+    def test_three_way_merge_preserves_independent_changes(self) -> None:
+        merged, conflicted = adopt.three_way_merge(
+            "one local\ntwo\nthree\nfour\n",
+            "one\ntwo\nthree\nfour\n",
+            "one\ntwo\nthree\nfour upstream\n",
+        )
+        self.assertFalse(conflicted)
+        self.assertIn("one local", merged)
+        self.assertIn("four upstream", merged)
+
+    def test_three_way_merge_reports_conflicting_changes(self) -> None:
+        merged, conflicted = adopt.three_way_merge(
+            "one\nlocal\n",
+            "one\nbase\n",
+            "one\nupstream\n",
+        )
+        self.assertTrue(conflicted)
+        self.assertIn("<<<<<<< local", merged)
+
+    def test_check_skills_generalizes_to_a_second_shared_skill(self) -> None:
+        # Regression guard: the Codex/Claude contract-parity check and the
+        # Codex-only-file leak check used to hardcode "investigate-bug".
+        # Simulate a second shared skill (no real skills/second-skill/ source
+        # directory needed, since check_adoption only reads already-installed
+        # files in the target repo) and confirm both checks cover it.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            run(["git", "init"], repo)
+            second_codex = repo / ".codex" / "skills" / "second-skill"
+            second_claude = repo / ".claude" / "skills" / "second-skill"
+            (second_codex).mkdir(parents=True)
+            (second_claude / "agents").mkdir(parents=True)
+            (second_codex / "SKILL.md").write_text("codex version\n", encoding="utf-8")
+            (second_claude / "SKILL.md").write_text("claude version\n", encoding="utf-8")
+            (second_claude / "agents" / "openai.yaml").write_text(
+                "leaked\n", encoding="utf-8"
+            )
+
+            with (
+                mock.patch.object(
+                    adopt, "SHARED_SKILLS", ("investigate-bug", "second-skill")
+                ),
+                mock.patch.object(
+                    adopt,
+                    "CODEX_ONLY_SKILL_FILES",
+                    {
+                        "investigate-bug": ("agents/openai.yaml",),
+                        "second-skill": ("agents/openai.yaml",),
+                    },
+                ),
+            ):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    adopt.check_adoption(
+                        repo,
+                        str(ROOT),
+                        check_skills=True,
+                        visibility="local",
+                        profile_override="all",
+                    )
+                output = buf.getvalue()
+
+        self.assertIn("Codex and Claude second-skill contracts differ", output)
+        self.assertIn(
+            "Claude second-skill skill contains Codex-only agents/openai.yaml "
+            "metadata; remove it",
+            output,
+        )
+
+    def test_three_way_merge_handles_non_utf8_locale(self) -> None:
+        # Regression: subprocess.run(text=True) without an explicit encoding
+        # decodes git merge-file's UTF-8 stdout using the process's locale
+        # encoding. On a non-UTF-8 locale (e.g. Windows cp949), non-ASCII
+        # merged content raised UnicodeDecodeError before three_way_merge()
+        # started passing encoding="utf-8" explicitly.
+        with mock.patch("locale.getpreferredencoding", return_value="cp949"):
+            merged, conflicted = adopt.three_way_merge(
+                "one local — note\ntwo\nthree\nfour\n",
+                "one\ntwo\nthree\nfour\n",
+                "one\ntwo\nthree\nfour upstream\n",
+            )
+        self.assertFalse(conflicted)
+        self.assertIn("—", merged)
+        self.assertIn("four upstream", merged)
 
 
 class AdoptAgentRulesIntegrationTests(unittest.TestCase):
@@ -216,8 +310,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("Would create: " + str(self.repo / "CLAUDE.md"), dry_run.stdout)
         self.assertNotIn("Would create: " + str(self.repo / "AGENTS.md"), dry_run.stdout)
         self.assertNotIn("Would create: " + str(self.repo / "GEMINI.md"), dry_run.stdout)
-        # .gitignore에는 세 파일 모두 추가됨
-        self.assertIn("AGENTS.md, CLAUDE.md, GEMINI.md", dry_run.stdout)
+        self.assertIn("Would add to .gitignore: CLAUDE.md", dry_run.stdout)
 
         result = self.cli("--profile", "claude")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -225,9 +318,222 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertFalse((self.repo / "GEMINI.md").exists())
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
-        self.assertIn("AGENTS.md", gitignore)
         self.assertIn("CLAUDE.md", gitignore)
-        self.assertIn("GEMINI.md", gitignore)
+        self.assertNotIn("AGENTS.md", gitignore)
+        self.assertNotIn("GEMINI.md", gitignore)
+
+    def test_tracked_visibility_does_not_modify_gitignore(self) -> None:
+        result = self.cli("--profile", "codex", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue((self.repo / "AGENTS.md").exists())
+        self.assertFalse((self.repo / ".gitignore").exists())
+
+    def test_tracked_visibility_refuses_ignored_output(self) -> None:
+        (self.repo / ".gitignore").write_text("AGENTS.md\n", encoding="utf-8")
+        result = self.cli("--profile", "codex", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ignored by target repository ignore rules", result.stdout)
+
+    def test_all_profile_installs_shared_skill_for_codex_and_claude(self) -> None:
+        result = self.cli("--profile", "all", "--skills", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        codex_skill = self.repo / ".codex" / "skills" / "investigate-bug" / "SKILL.md"
+        claude_skill = self.repo / ".claude" / "skills" / "investigate-bug" / "SKILL.md"
+        self.assertTrue(codex_skill.exists())
+        self.assertTrue(claude_skill.exists())
+        self.assertEqual(
+            codex_skill.read_text(encoding="utf-8"),
+            claude_skill.read_text(encoding="utf-8"),
+        )
+        self.assertFalse(
+            (self.repo / ".claude/skills/investigate-bug/agents/openai.yaml").exists()
+        )
+
+    def test_skills_adds_shared_skills_section_to_entrypoints(self) -> None:
+        result = self.cli("--profile", "all", "--skills", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        agents = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        claude = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        gemini = (self.repo / "GEMINI.md").read_text(encoding="utf-8")
+        self.assertIn("## Shared Skills", agents)
+        self.assertIn(".codex/skills", agents)
+        self.assertIn("invoke the `investigate-bug` skill", agents)
+        self.assertIn("## Shared Skills", claude)
+        self.assertIn(".claude/skills", claude)
+        # The section lives inside the managed block so --sync keeps updating it
+        self.assertLess(
+            claude.index(adopt.MANAGED_START), claude.index("## Shared Skills")
+        )
+        self.assertLess(
+            claude.index("## Shared Skills"), claude.index(adopt.MANAGED_END)
+        )
+        self.assertNotIn("## Shared Skills", gemini)
+        for content in (agents, claude, gemini):
+            self.assertNotIn("{{SHARED_SKILLS_SECTION}}", content)
+
+    def test_no_skills_flag_omits_shared_skills_section(self) -> None:
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        content = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertNotIn("## Shared Skills", content)
+        self.assertNotIn("{{SHARED_SKILLS_SECTION}}", content)
+
+    def test_sync_with_skills_adds_section_to_existing_adoption(self) -> None:
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertNotIn(
+            "## Shared Skills", (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        )
+        sync = self.cli("--profile", "claude", "--skills", "--sync")
+        self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+        content = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("## Shared Skills", content)
+        self.assertTrue(
+            (self.repo / ".claude/skills/investigate-bug/SKILL.md").exists()
+        )
+
+    def test_plain_sync_keeps_section_when_skills_are_installed(self) -> None:
+        # Regression guard: --sync without --skills must detect installed
+        # shared skills; otherwise the 3-way merge would render a skill-free
+        # upstream and strip the Shared Skills section it added earlier.
+        result = self.cli("--profile", "claude", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn(
+            "## Shared Skills", (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        )
+        sync = self.cli("--sync")
+        self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+        self.assertIn(
+            "## Shared Skills", (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        )
+
+    def test_check_skills_warns_when_section_is_missing(self) -> None:
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        skill_dir = self.repo / ".claude" / "skills" / "investigate-bug"
+        skill_dir.mkdir(parents=True)
+        shutil.copy2(ROOT / "skills" / "investigate-bug" / "SKILL.md", skill_dir / "SKILL.md")
+        check = self.cli("--check", "--skills")
+        self.assertIn(
+            "CLAUDE.md lacks a Shared Skills trigger section", check.stdout
+        )
+
+    def test_local_skill_install_is_added_to_gitignore(self) -> None:
+        result = self.cli("--profile", "codex", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".codex/skills/investigate-bug/SKILL.md", gitignore)
+        self.assertNotIn("git add .codex/skills/", result.stdout)
+
+    def test_skill_sync_preserves_local_edits_with_baseline(self) -> None:
+        result = self.cli("--profile", "codex", "--skills", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        skill = self.repo / ".codex" / "skills" / "investigate-bug" / "SKILL.md"
+        skill.write_text(
+            skill.read_text(encoding="utf-8") + "\nLocal repository note.\n",
+            encoding="utf-8",
+        )
+
+        sync = self.cli(
+            "--profile",
+            "codex",
+            "--skills",
+            "--visibility",
+            "tracked",
+            "--sync",
+        )
+        self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+        self.assertIn("Local repository note.", skill.read_text(encoding="utf-8"))
+
+    def test_skill_sync_merges_upstream_changes_and_stops_on_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as source_tmp:
+            source = Path(source_tmp).resolve()
+            for directory in ("scripts", "templates", "skills", "rules", "docs"):
+                shutil.copytree(ROOT / directory, source / directory)
+            for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+                shutil.copy2(ROOT / name, source / name)
+            run(["git", "init", "-b", "main"], source)
+            run(["git", "add", "."], source)
+            git_commit(source, "initial source")
+
+            script = source / "scripts" / "adopt.py"
+
+            def source_cli(*args: str) -> subprocess.CompletedProcess[str]:
+                return run(
+                    [
+                        sys.executable,
+                        str(script),
+                        str(self.repo),
+                        "--shared-url",
+                        str(source),
+                        *args,
+                    ],
+                    source,
+                )
+
+            apply = source_cli(
+                "--profile", "all", "--skills", "--visibility", "tracked"
+            )
+            self.assertEqual(apply.returncode, 0, apply.stderr + apply.stdout)
+
+            skill = self.repo / ".codex/skills/investigate-bug/SKILL.md"
+            skill.write_text(
+                skill.read_text(encoding="utf-8").replace(
+                    "# Investigate Bug", "# Investigate Repository Bug"
+                ),
+                encoding="utf-8",
+            )
+            source_skill = source / "skills/investigate-bug/SKILL.md"
+            source_skill.write_text(
+                source_skill.read_text(encoding="utf-8")
+                + "\nUpstream compatibility note.\n",
+                encoding="utf-8",
+            )
+            run(["git", "add", "."], source)
+            git_commit(source, "update skill")
+
+            sync = source_cli(
+                "--profile",
+                "all",
+                "--skills",
+                "--visibility",
+                "tracked",
+                "--sync",
+            )
+            self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+            merged = skill.read_text(encoding="utf-8")
+            self.assertIn("# Investigate Repository Bug", merged)
+            self.assertIn("Upstream compatibility note.", merged)
+
+            local_before = merged.replace(
+                "# Investigate Repository Bug", "# Local Conflicting Title"
+            )
+            skill.write_text(local_before, encoding="utf-8")
+            source_skill.write_text(
+                source_skill.read_text(encoding="utf-8").replace(
+                    "# Investigate Bug", "# Upstream Conflicting Title"
+                ),
+                encoding="utf-8",
+            )
+            run(["git", "add", "."], source)
+            git_commit(source, "conflict skill title")
+            baseline = self.repo / adopt.sync_base_path(
+                ".codex/skills/investigate-bug/SKILL.md"
+            )
+            baseline_before = baseline.read_text(encoding="utf-8")
+
+            conflict = source_cli(
+                "--profile",
+                "all",
+                "--skills",
+                "--visibility",
+                "tracked",
+                "--sync",
+            )
+            self.assertEqual(conflict.returncode, 1, conflict.stderr + conflict.stdout)
+            self.assertIn("Refusing to write unresolved merge conflicts", conflict.stdout)
+            self.assertEqual(skill.read_text(encoding="utf-8"), local_before)
+            self.assertEqual(baseline.read_text(encoding="utf-8"), baseline_before)
 
     def test_codex_profile_creates_only_agents(self) -> None:
         result = self.cli("--profile", "codex")
@@ -243,7 +549,132 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         self.assertTrue((self.repo / "GEMINI.md").exists())
 
-    def test_sync_refreshes_managed_content_in_claude(self) -> None:
+    def test_check_skills_reports_contract_and_baselines(self) -> None:
+        codex = self.cli("--profile", "codex", "--skills", "--visibility", "local")
+        claude = self.cli("--profile", "claude", "--skills", "--visibility", "local")
+        self.assertEqual(codex.returncode, 0, codex.stderr + codex.stdout)
+        self.assertEqual(claude.returncode, 0, claude.stderr + claude.stdout)
+
+        codex_check = self.cli(
+            "--check", "--profile", "codex", "--skills", "--visibility", "local"
+        )
+        claude_check = self.cli(
+            "--check", "--profile", "claude", "--skills", "--visibility", "local"
+        )
+        self.assertNotEqual(codex_check.returncode, 1, codex_check.stderr + codex_check.stdout)
+        self.assertNotEqual(claude_check.returncode, 1, claude_check.stderr + claude_check.stdout)
+        self.assertIn(
+            "Codex and Claude investigate-bug contracts match", claude_check.stdout
+        )
+        self.assertIn("sync baseline exists for AGENTS.md", codex_check.stdout)
+        self.assertIn("sync baseline exists for CLAUDE.md", claude_check.stdout)
+
+    def test_check_skills_fails_when_required_skill_is_missing(self) -> None:
+        result = self.cli("--profile", "all", "--visibility", "local")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        check = self.cli("--check", "--skills", "--visibility", "local")
+        self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
+        self.assertIn("is required by --skills but missing", check.stdout)
+
+    def test_check_skills_detects_missing_non_skill_md_file(self) -> None:
+        # Regression: --check --skills only checked SKILL.md's own
+        # existence, so deleting a different installed file (the Codex-only
+        # agents/openai.yaml) went undetected with exit code 0.
+        result = self.cli("--profile", "codex", "--skills", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        leaked = self.repo / ".codex/skills/investigate-bug/agents/openai.yaml"
+        self.assertTrue(leaked.exists())
+        leaked.unlink()
+
+        check = self.cli("--check", "--skills", "--profile", "codex")
+        self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
+        self.assertIn(
+            ".codex/skills/investigate-bug/agents/openai.yaml is required by "
+            "--skills but missing",
+            check.stdout,
+        )
+
+    def test_check_treats_all_profile_as_superset_for_single_agent_override(
+        self,
+    ) -> None:
+        # Regression: checking an --profile all adoption with an explicit
+        # single-agent --profile used to FAIL on "profile mismatch" even
+        # though that agent's entrypoint was completely healthy.
+        result = self.cli("--profile", "all", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        check = self.cli("--check", "--profile", "codex", "--skills")
+        self.assertNotIn("profile mismatch", check.stdout)
+        self.assertIn("[OK] profile: codex", check.stdout)
+
+        # A real mismatch (adopted with codex only, checked as if it were
+        # "all") must still be reported.
+        with tempfile.TemporaryDirectory() as tmp:
+            other_repo = Path(tmp).resolve()
+            run(["git", "init"], other_repo)
+            codex_only = run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    str(other_repo),
+                    "--shared-url",
+                    str(ROOT),
+                    "--profile",
+                    "codex",
+                ],
+                ROOT,
+            )
+            self.assertEqual(codex_only.returncode, 0)
+            mismatch_check = run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    str(other_repo),
+                    "--shared-url",
+                    str(ROOT),
+                    "--check",
+                    "--profile",
+                    "all",
+                ],
+                ROOT,
+            )
+            self.assertIn(
+                "profile mismatch: expected all, found codex",
+                mismatch_check.stdout,
+            )
+
+    def test_skills_refused_for_gemini_only_profile(self) -> None:
+        result = self.cli("--profile", "gemini", "--skills")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "--skills has no effect for --profile gemini",
+            result.stderr + result.stdout,
+        )
+        self.assertFalse((self.repo / "GEMINI.md").exists())
+        self.assertFalse((self.repo / ".gemini").exists())
+
+    def test_check_skills_fails_for_gemini_only_profile(self) -> None:
+        self.assertEqual(self.cli("--profile", "gemini").returncode, 0)
+        check = self.cli("--check", "--skills", "--profile", "gemini")
+        self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
+        self.assertIn("--skills has no effect for the gemini profile", check.stdout)
+
+    def test_skills_warns_but_proceeds_for_all_profile(self) -> None:
+        result = self.cli("--profile", "all", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn(
+            "shared skills are not supported for GEMINI.md", result.stdout
+        )
+        self.assertTrue((self.repo / "GEMINI.md").exists())
+        self.assertTrue(
+            (self.repo / ".codex/skills/investigate-bug/SKILL.md").exists()
+        )
+
+        check = self.cli("--check", "--skills", "--profile", "all")
+        self.assertIn(
+            "shared skills are not supported for GEMINI.md", check.stdout
+        )
+
+    def test_sync_preserves_managed_content_edits_in_claude(self) -> None:
         self.assertEqual(self.cli("--profile", "claude").returncode, 0)
         path = self.repo / "CLAUDE.md"
         content = path.read_text(encoding="utf-8")
@@ -259,13 +690,10 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "claude", "--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         updated = path.read_text(encoding="utf-8")
-        self.assertNotIn("Outdated managed rule.", updated)
-        self.assertIn(
-            "Investigate existing code, documentation, and behavior before editing.", updated
-        )
+        self.assertIn("Outdated managed rule.", updated)
         self.assertIn("Keep this local section.", updated)
 
-    def test_sync_regenerates_legacy_claude_without_markers(self) -> None:
+    def test_sync_preserves_removed_markers_when_baseline_exists(self) -> None:
         self.assertEqual(self.cli("--profile", "claude").returncode, 0)
         path = self.repo / "CLAUDE.md"
         # Simulate a file generated before managed markers existed: metadata
@@ -282,9 +710,9 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "claude", "--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         updated = path.read_text(encoding="utf-8")
-        self.assertNotIn("Stale legacy rule.", updated)
-        self.assertIn(adopt.MANAGED_START, updated)
-        self.assertIn(adopt.MANAGED_END, updated)
+        self.assertIn("Stale legacy rule.", updated)
+        self.assertNotIn(adopt.MANAGED_START, updated)
+        self.assertNotIn(adopt.MANAGED_END, updated)
 
     def test_sync_all_preserves_local_edits_in_tool_entrypoints(self) -> None:
         self.assertEqual(self.cli("--profile", "all").returncode, 0)
@@ -300,7 +728,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "all", "--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         updated = claude_path.read_text(encoding="utf-8")
-        self.assertNotIn("Outdated managed rule.", updated)
+        self.assertIn("Outdated managed rule.", updated)
         self.assertIn("Keep this local section.", updated)
 
     def test_sync_all_profile_refuses_claude_without_metadata(self) -> None:
@@ -336,6 +764,30 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         update = self.cli("--profile", "codex", "--sync", "--dry-run")
         self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
 
+    def test_legacy_merge_with_skills_adds_shared_skills_section(self) -> None:
+        # Regression: a legacy AGENTS.md that already has Agent Usage Model
+        # and Core Rules (so the whole managed block is not re-added) used to
+        # silently skip the Shared Skills section entirely on `--sync
+        # --skills`, even though the skill files themselves were installed.
+        (self.repo / "AGENTS.md").write_text(
+            "# AGENTS.md\n\n"
+            "This repository follows the shared agent rules from:\n\n"
+            f"- {ROOT}\n\n"
+            "## Agent Usage Model\n\n"
+            "Use agent roles as execution modes, not fixed tool identities.\n\n"
+            "## Core Rules\n\n"
+            "- Investigate existing code, documentation, and behavior before editing.\n",
+            encoding="utf-8",
+        )
+        result = self.cli("--profile", "codex", "--skills", "--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        content = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("## Shared Skills", content)
+        self.assertIn("investigate-bug", content)
+        self.assertTrue(
+            (self.repo / ".codex/skills/investigate-bug/SKILL.md").exists()
+        )
+
     def test_force_overwrites_existing(self) -> None:
         (self.repo / "AGENTS.md").write_text("# old\n", encoding="utf-8")
         result = self.cli("--profile", "codex", "--force")
@@ -350,6 +802,39 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("CLAUDE.md", gitignore)
         self.assertIn(".gitignore updated", result.stdout)
 
+    def test_gitignore_summary_reflects_post_write_state_for_skills(self) -> None:
+        # Regression: the printed "Gitignore:" summary was computed before
+        # .gitignore was written, so newly-ignored skill/baseline files were
+        # reported as "is not ignored" right under a ".gitignore updated"
+        # line, even though they were, in fact, just correctly ignored.
+        result = self.cli("--profile", "codex", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn(
+            "OK: .codex/skills/investigate-bug/SKILL.md added to .gitignore "
+            "(local-only)",
+            result.stdout,
+        )
+        self.assertNotIn(
+            "OK: .codex/skills/investigate-bug/SKILL.md is not ignored",
+            result.stdout,
+        )
+
+    def test_gitignore_entries_are_root_anchored(self) -> None:
+        # Regression: bare entrypoint names (e.g. "AGENTS.md") written to
+        # .gitignore without a leading "/" match at any depth, so they
+        # silently swept up .agents/agent-rules/AGENTS.md from --local-copy
+        # even though local-copy files must stay trackable.
+        result = self.cli("--profile", "codex", "--local-copy")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("/AGENTS.md", gitignore)
+        local_copy_entrypoint = self.repo / ".agents/agent-rules/AGENTS.md"
+        self.assertTrue(local_copy_entrypoint.exists())
+        add = run(["git", "add", "-A"], self.repo)
+        self.assertEqual(add.returncode, 0, add.stderr + add.stdout)
+        staged = run(["git", "status", "--short"], self.repo)
+        self.assertIn(".agents/agent-rules/AGENTS.md", staged.stdout)
+
     def test_existing_gitignore_entry_not_duplicated(self) -> None:
         (self.repo / ".gitignore").write_text("CLAUDE.md\n", encoding="utf-8")
         result = self.cli("--profile", "claude")
@@ -357,7 +842,10 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
         self.assertNotIn("!CLAUDE.md", gitignore)
-        self.assertEqual(gitignore.count("CLAUDE.md"), 1)
+        self.assertEqual(
+            sum(line.strip().lstrip("/") == "CLAUDE.md" for line in gitignore.splitlines()),
+            1,
+        )
 
     def test_gitignore_entry_with_leading_slash_not_duplicated(self) -> None:
         (self.repo / ".gitignore").write_text("/CLAUDE.md\n", encoding="utf-8")
@@ -365,7 +853,10 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertTrue((self.repo / "CLAUDE.md").exists())
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
-        self.assertEqual(gitignore.count("CLAUDE.md"), 1)
+        self.assertEqual(
+            sum(line.strip().lstrip("/") == "CLAUDE.md" for line in gitignore.splitlines()),
+            1,
+        )
 
     def test_next_commands_omit_commit_for_local_only_entrypoints(self) -> None:
         result = self.cli("--profile", "claude")
@@ -421,12 +912,11 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
         self.assertIn("Would update", update.stdout)
 
-    def test_update_refreshes_metadata_and_managed_block(self) -> None:
+    def test_update_preserves_managed_block_edits(self) -> None:
         self.assertEqual(self.cli("--profile", "codex").returncode, 0)
         path = self.repo / "AGENTS.md"
         content = path.read_text(encoding="utf-8")
-        old_content = content.replace("source_commit=", "source_commit=old")
-        old_content = old_content.replace(
+        old_content = content.replace(
             "Use agent roles as execution modes, not fixed tool identities.",
             "Old managed text.",
         )
@@ -436,8 +926,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "codex", "--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         updated = path.read_text(encoding="utf-8")
-        self.assertNotIn("Old managed text.", updated)
-        self.assertIn("Use agent roles as execution modes, not fixed tool identities.", updated)
+        self.assertIn("Old managed text.", updated)
         self.assertIn("Keep this text.", updated)
 
     def test_legacy_adoption_warns_without_strict(self) -> None:
