@@ -572,7 +572,15 @@ def add_to_gitignore(git_root: Path, filenames: list[str], *, dry_run: bool) -> 
         return ".gitignore"
     if content and not content.endswith("\n"):
         content += "\n"
-    content += f"\n{GITIGNORE_AGENT_COMMENT}\n" + "\n".join(to_add) + "\n"
+    # A bare pattern with no slash (e.g. "AGENTS.md") matches at any depth in
+    # gitignore semantics, not just the repo root — without the leading "/"
+    # it would also match .agents/agent-rules/AGENTS.md from --local-copy,
+    # silently excluding a file that's meant to be tracked.
+    content += (
+        f"\n{GITIGNORE_AGENT_COMMENT}\n"
+        + "\n".join(f"/{f}" for f in to_add)
+        + "\n"
+    )
     gitignore_path.write_text(content, encoding="utf-8")
     return ".gitignore"
 
@@ -1329,9 +1337,13 @@ def check_adoption(
 
     metadata_profile = metadata.get("profile")
     profile = profile_override or metadata_profile
-    profile_matches = (
-        profile in VALID_PROFILES
-        and (profile_override is None or metadata_profile == profile_override)
+    profile_matches = profile in VALID_PROFILES and (
+        profile_override is None
+        or metadata_profile == profile_override
+        # "all" is a superset: a repo adopted with --profile all legitimately
+        # has every agent's entrypoint, so checking one agent's slice of it
+        # with an explicit --profile isn't a mismatch.
+        or metadata_profile == "all"
     )
     append_check(
         results,
@@ -1385,26 +1397,28 @@ def check_adoption(
                 "shared skills are not supported for "
                 f"{', '.join(unsupported)} ({profile} profile)",
             )
-        for root in PROFILE_SKILL_ROOTS[profile]:
-            for skill_name in SHARED_SKILLS:
-                relative_path = f"{root}/{skill_name}/SKILL.md"
-                skill_paths.append(relative_path)
-                path = target_repo / relative_path
-                append_check(
-                    results,
-                    "OK" if path.exists() else "FAIL",
-                    f"{relative_path} exists"
-                    if path.exists()
-                    else f"{relative_path} is required by --skills but missing",
-                )
-                baseline = target_repo / sync_base_path(relative_path)
-                append_check(
-                    results,
-                    "OK" if baseline.exists() else "WARN",
-                    f"sync baseline exists for {relative_path}"
-                    if baseline.exists()
-                    else f"sync baseline missing for {relative_path}",
-                )
+        # Derived from the same file list shared_skill_file_specs() installs,
+        # so every installed file is checked, not just SKILL.md — a deleted
+        # supporting file (e.g. a script or asset a skill ships alongside
+        # SKILL.md) is caught the same way a deleted SKILL.md already was.
+        for _source, relative_path in shared_skill_file_specs(profile):
+            skill_paths.append(relative_path)
+            path = target_repo / relative_path
+            append_check(
+                results,
+                "OK" if path.exists() else "FAIL",
+                f"{relative_path} exists"
+                if path.exists()
+                else f"{relative_path} is required by --skills but missing",
+            )
+            baseline = target_repo / sync_base_path(relative_path)
+            append_check(
+                results,
+                "OK" if baseline.exists() else "WARN",
+                f"sync baseline exists for {relative_path}"
+                if baseline.exists()
+                else f"sync baseline missing for {relative_path}",
+            )
 
         codex_root = PROFILE_SKILL_ROOTS["codex"][0]
         claude_root = PROFILE_SKILL_ROOTS["claude"][0]
@@ -1666,8 +1680,14 @@ def print_summary(
     print("\nGitignore:")
     if plan.ignore_statuses:
         for status in plan.ignore_statuses:
-            is_entrypoint = Path(status.path).name in ENTRYPOINT_FILES
-            if is_entrypoint:
+            # Skill files and sync baselines get the same local-only
+            # treatment as entrypoints (see generated_local_paths above);
+            # only genuinely different categories (e.g. .agents/ local
+            # copies, which must stay trackable) fall into the else branch.
+            is_locally_ignorable = Path(status.path).name in ENTRYPOINT_FILES or status.path.startswith(
+                (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
+            )
+            if is_locally_ignorable:
                 if gitignore_file:
                     print(f"- OK: {status.path} added to .gitignore (local-only)")
                 elif status.ignored and not status.tracked:
@@ -1783,6 +1803,14 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
             generated_local_paths,
             dry_run=args.dry_run,
         )
+        if gitignore_file and not args.dry_run:
+            # .gitignore just changed on disk; the "Gitignore:" summary must
+            # reflect the post-write state, not the ignore_statuses snapshot
+            # taken before this repository had any .gitignore rule for these
+            # paths.
+            plan.ignore_statuses = check_generated_files_ignored(
+                plan.target_repo, plan.git_root, plan.files
+            )
 
     print_summary(
         created,

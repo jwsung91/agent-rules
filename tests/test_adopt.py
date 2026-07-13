@@ -576,6 +576,72 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
         self.assertIn("is required by --skills but missing", check.stdout)
 
+    def test_check_skills_detects_missing_non_skill_md_file(self) -> None:
+        # Regression: --check --skills only checked SKILL.md's own
+        # existence, so deleting a different installed file (the Codex-only
+        # agents/openai.yaml) went undetected with exit code 0.
+        result = self.cli("--profile", "codex", "--skills", "--visibility", "tracked")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        leaked = self.repo / ".codex/skills/investigate-bug/agents/openai.yaml"
+        self.assertTrue(leaked.exists())
+        leaked.unlink()
+
+        check = self.cli("--check", "--skills", "--profile", "codex")
+        self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
+        self.assertIn(
+            ".codex/skills/investigate-bug/agents/openai.yaml is required by "
+            "--skills but missing",
+            check.stdout,
+        )
+
+    def test_check_treats_all_profile_as_superset_for_single_agent_override(
+        self,
+    ) -> None:
+        # Regression: checking an --profile all adoption with an explicit
+        # single-agent --profile used to FAIL on "profile mismatch" even
+        # though that agent's entrypoint was completely healthy.
+        result = self.cli("--profile", "all", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        check = self.cli("--check", "--profile", "codex", "--skills")
+        self.assertNotIn("profile mismatch", check.stdout)
+        self.assertIn("[OK] profile: codex", check.stdout)
+
+        # A real mismatch (adopted with codex only, checked as if it were
+        # "all") must still be reported.
+        with tempfile.TemporaryDirectory() as tmp:
+            other_repo = Path(tmp).resolve()
+            run(["git", "init"], other_repo)
+            codex_only = run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    str(other_repo),
+                    "--shared-url",
+                    str(ROOT),
+                    "--profile",
+                    "codex",
+                ],
+                ROOT,
+            )
+            self.assertEqual(codex_only.returncode, 0)
+            mismatch_check = run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    str(other_repo),
+                    "--shared-url",
+                    str(ROOT),
+                    "--check",
+                    "--profile",
+                    "all",
+                ],
+                ROOT,
+            )
+            self.assertIn(
+                "profile mismatch: expected all, found codex",
+                mismatch_check.stdout,
+            )
+
     def test_skills_refused_for_gemini_only_profile(self) -> None:
         result = self.cli("--profile", "gemini", "--skills")
         self.assertNotEqual(result.returncode, 0)
@@ -735,6 +801,39 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("CLAUDE.md", gitignore)
         self.assertIn(".gitignore updated", result.stdout)
+
+    def test_gitignore_summary_reflects_post_write_state_for_skills(self) -> None:
+        # Regression: the printed "Gitignore:" summary was computed before
+        # .gitignore was written, so newly-ignored skill/baseline files were
+        # reported as "is not ignored" right under a ".gitignore updated"
+        # line, even though they were, in fact, just correctly ignored.
+        result = self.cli("--profile", "codex", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn(
+            "OK: .codex/skills/investigate-bug/SKILL.md added to .gitignore "
+            "(local-only)",
+            result.stdout,
+        )
+        self.assertNotIn(
+            "OK: .codex/skills/investigate-bug/SKILL.md is not ignored",
+            result.stdout,
+        )
+
+    def test_gitignore_entries_are_root_anchored(self) -> None:
+        # Regression: bare entrypoint names (e.g. "AGENTS.md") written to
+        # .gitignore without a leading "/" match at any depth, so they
+        # silently swept up .agents/agent-rules/AGENTS.md from --local-copy
+        # even though local-copy files must stay trackable.
+        result = self.cli("--profile", "codex", "--local-copy")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("/AGENTS.md", gitignore)
+        local_copy_entrypoint = self.repo / ".agents/agent-rules/AGENTS.md"
+        self.assertTrue(local_copy_entrypoint.exists())
+        add = run(["git", "add", "-A"], self.repo)
+        self.assertEqual(add.returncode, 0, add.stderr + add.stdout)
+        staged = run(["git", "status", "--short"], self.repo)
+        self.assertIn(".agents/agent-rules/AGENTS.md", staged.stdout)
 
     def test_existing_gitignore_entry_not_duplicated(self) -> None:
         (self.repo / ".gitignore").write_text("CLAUDE.md\n", encoding="utf-8")
