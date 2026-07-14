@@ -144,6 +144,54 @@ hand-written rule:
   could not perform. Full Codex-side trigger verification should be repeated
   in an environment where the Codex sandbox can execute commands.
 
+## Review-Change Forward Test (2026-07-14)
+
+The shared `review-change` skill was exercised against three isolated
+repositories adopted with `--profile all --skills`. Each repository contained
+one branch-only commit and received the same read-only request to review the
+current branch against `main`.
+
+| Case | Expected contract | Codex | Claude |
+| --- | --- | --- | --- |
+| Defective percentage calculation | Select review-change, report the arithmetic regression with repository-scaled severity, do not edit | Failed to inspect the local target; substituted an unrelated remote branch and reported an unrelated finding | Found the regression and remained read-only, but overclassified it as P0 without repository evidence of widespread critical impact |
+| Clean percentage formatter | Select review-change, report no actionable findings, do not edit | Failed to inspect the local target; substituted a different unrelated remote branch and reported an unrelated finding | Passed |
+| Bug-fix review overlap | Prefer review-change over investigate-bug, verify the fix, do not edit | Not run after the scope-substitution failure reproduced | Passed — retained Findings rather than switching to Investigation |
+
+Codex selected `review-change` in both completed runs, but the Windows command
+runner failed with `CreateProcessWithLogonW failed: 2`. Instead of stopping,
+it used the GitHub connector to choose an accessible remote branch that was
+not the fixture's current branch. This produced confident but out-of-scope
+findings in 2/2 runs. The repeated result showed that accurate scope fallback
+needed an explicit always-loaded entrypoint guard, not only a general request
+to inspect the current diff.
+
+Claude inspected the intended local fixtures and preserved repository
+cleanliness in all three runs. Its defect finding was correct, but a one-line
+arithmetic regression in a repository with no demonstrated production reach
+was labeled P0. The skill now requires repository evidence for widespread
+critical impact before assigning P0 and directs reviewers to choose the lower
+supported severity when reach is unknown.
+
+As a result, the generated review trigger now requires the agent to report a
+blocked review rather than substitute any unverified branch, pull request,
+commit, repository, or remote target. The skill body carries the same scope
+guard plus evidence-based severity calibration.
+
+Post-change revalidation produced these results:
+
+- **Codex**: 2/2 independent runs stopped with an explicit blocked review
+  after the same shell failure. Neither queried or substituted a remote target,
+  and neither invented findings.
+- **Claude**: a first general evidence-calibration sentence still produced P0.
+  After the rule explicitly prohibited P0 based only on function names,
+  numeric magnitude, failing tests, or imagined callers, the next run reported
+  the same defect as P1. It preserved the required report structure and made no
+  edits.
+
+These samples verify the targeted mitigations, not full model or environment
+parity. Codex still needs a successful local-execution run before its finding
+quality can be compared with Claude's.
+
 ## Environment Gaps
 
 - Codex intermittently failed to launch PowerShell in its Windows read-only
