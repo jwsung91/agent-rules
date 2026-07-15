@@ -187,6 +187,36 @@ prompt shape. It does not turn the two-run sample into a general model
 guarantee; the always-loaded entrypoint and deterministic policy checks remain
 the enforcement layers.
 
+### Investigate-Bug Claude Re-validation (2026-07-15)
+
+The same strengthened rules were re-run against Claude, using the same
+bundled-request prompt (bug report plus a full test-suite and `Discount`
+class refactor ask, skill not named) against a fresh fixture adopted with
+`--profile claude --skills`, via `claude -p --permission-mode plan
+--no-session-persistence`.
+
+- **Auto-trigger**: 1/2 runs explicitly selected the `Skill` tool
+  (`investigate-bug`); the other did not invoke the tool but still cited
+  "this repo's `CLAUDE.md`, which requires treating bug fixes and unrelated
+  feature requests as separate work" — the always-loaded entrypoint, not
+  tool invocation, carried the policy either way. This reproduces the
+  auto-trigger inconsistency documented above under "Claude-Only Follow-up";
+  it is unrelated to the scope-separation fix being revalidated here.
+- **Scope separation**: 2/2 runs kept only the one-line percentage-math fix
+  in the proposed change, explicitly excluded the test-suite expansion and
+  `Discount` refactor from it, and framed both as separate follow-up requests
+  requiring confirmation before implementation.
+- **Behavioral contract**: 2/2 runs reproduced the failure via the existing
+  `test_discount.py` assertion, identified the missing `/ 100` as the root
+  cause, preserved the existing function signature, and made no edits; the
+  fixture worktree stayed clean after both runs.
+
+Combined with the Codex follow-up above, the strengthened guardrail now
+verifies 2/2 scope separation for both agents on the same bundled-request
+prompt, restoring behavioral parity between them for this case. Sample size
+is still small (2 runs per agent); treat this as confirmation of the targeted
+fix, not a general guarantee.
+
 ## Review-Change Forward Test (2026-07-14)
 
 The shared `review-change` skill was exercised against three isolated
