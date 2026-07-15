@@ -62,7 +62,9 @@ SKILL_TRIGGER_RULES = {
         "`investigate-bug` skill before planning any fix — even when the same "
         "message also requests unrelated work such as refactoring, new tests, "
         "or cleanup. Investigate the bug under that workflow first and treat "
-        "the unrelated work as a separate request."
+        "the unrelated work as a separate request. Do not include unrelated "
+        "work in the bug-fix plan, Changes, or fix approach; mention it only "
+        "under Not Included or Follow-up as a separate request."
     ),
     "review-change": (
         "When asked to review code, documentation, a diff, working tree, commit, "

@@ -133,16 +133,59 @@ hand-written rule:
   prompt both times, both plans separated the bug fix from the refactor and
   test suite as distinct commits, and both responses used the skill's
   `Investigation:` report format.
-- **Codex** (2 runs, degraded environment): both runs hit the known
+- **Codex** (2 initial runs, degraded environment): both runs hit the known
   intermittent Windows sandbox failure (`CreateProcessWithLogonW failed: 2`;
   see Environment Gaps below), so command execution could not be verified.
   Behavioral signals were still correct in the run that could read files: it
-  referenced "the required `investigate-bug` workflow" by name (evidence the
-  `AGENTS.md` Shared Skills section was read and honored), listed the
-  `Discount` class refactor and edge-case test suite under Not Included as
-  separate work, and neither run invented a fix or claimed validation it
-  could not perform. Full Codex-side trigger verification should be repeated
-  in an environment where the Codex sandbox can execute commands.
+  referenced "the required `investigate-bug` workflow" by name, separated the
+  `Discount` class refactor and edge-case test suite from the focused fix, and
+  neither run invented a fix or claimed validation it could not perform.
+
+### Investigate-Bug Codex Local-Execution Follow-up (2026-07-15)
+
+The generated-entrypoint Codex case was repeated twice with Codex CLI 0.144.1,
+`codex exec --ephemeral`, an explicit read-only sandbox, and Python and pytest
+cache generation disabled. The prompt reported the calculation bug without
+naming the skill and bundled requests for a full test suite and a `Discount`
+class refactor.
+
+- **Auto-trigger and evidence**: 2/2 runs explicitly selected the installed
+  `investigate-bug` skill, inspected the intended local fixture, reproduced
+  `apply_discount(100, 20) == -1900` with pytest, and identified the missing
+  division by 100 as the root cause.
+- **Reporting and cleanliness**: 2/2 runs preserved the required report
+  headings, accurately reported the failing test, made no file changes, and
+  left the fixture worktree clean.
+- **Scope separation**: 0/2 runs fully separated the unrelated requests in
+  the final response. Both announced that the class refactor and broad test
+  expansion were separate follow-on work, but then included them alongside
+  the arithmetic correction in one `Recommended implementation plan` or
+  `Planned implementation` list. One run also repeated the separation under
+  Not Included; the other did not.
+
+This closes the local-command-execution gap for the generated Codex entrypoint
+but exposes a narrower contract gap: the entrypoint reliably triggers the
+skill, while the current scope wording does not reliably keep bundled work out
+of the final bug-fix plan. Strengthening final-report placement is a separate
+follow-up from trigger reliability.
+
+The entrypoint and skill guardrail were then strengthened to prohibit
+unrelated work from the bug-fix plan, Changes, and Investigation fix approach,
+and to permit it only under Not Included or Follow-up as a separate request.
+The skill also prohibits providing implementation steps for that work within
+the focused bug response. With those rules installed into a fresh fixture:
+
+- **Scope separation**: 2/2 runs kept the arithmetic correction and existing
+  focused regression test in the fix plan while placing the full test-suite
+  expansion and `Discount` refactor only under Not Included and Follow-up.
+- **Behavioral contract**: 2/2 runs still auto-selected `investigate-bug`,
+  reproduced the failing test, identified the percentage conversion error,
+  preserved the public function API in the recommendation, and made no edits.
+
+This targeted revalidation verifies the Codex mitigation for the observed
+prompt shape. It does not turn the two-run sample into a general model
+guarantee; the always-loaded entrypoint and deterministic policy checks remain
+the enforcement layers.
 
 ## Review-Change Forward Test (2026-07-14)
 
@@ -192,7 +235,7 @@ These samples verify the targeted mitigations, not full model or environment
 parity. The successful Codex local-execution follow-up below completes the
 previously missing finding-quality comparison.
 
-### Codex Local-Execution Follow-up (2026-07-15)
+### Review-Change Codex Local-Execution Follow-up (2026-07-15)
 
 Codex CLI 0.144.1 was run with `codex exec --ephemeral`, an explicit read-only
 sandbox, and the installed `review-change` skill against two isolated
