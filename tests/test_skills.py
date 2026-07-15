@@ -97,6 +97,9 @@ NEXT_HEADING_RE = re.compile(r"^##\s+\S", re.MULTILINE)
 # MANAGED_START/MANAGED_END markers in scripts/adopt.py — so the check is a
 # plain substring match with no natural-language ambiguity to get wrong.
 REPORT_POLICY_MARKER = "<!-- skill-report-policy: honor-repository-format -->"
+INVESTIGATE_SCOPE_POLICY_MARKER = (
+    "<!-- investigate-scope-policy: exclude-unrelated-work-from-fix-plan -->"
+)
 REVIEW_SCOPE_POLICY_MARKER = (
     "<!-- review-scope-policy: do-not-substitute-unverified-target -->"
 )
@@ -163,3 +166,12 @@ def test_review_change_guards_scope_and_severity() -> None:
     assert severity_section is not None
     assert REVIEW_SCOPE_POLICY_MARKER in guardrails_section
     assert REVIEW_SEVERITY_POLICY_MARKER in severity_section
+
+
+def test_investigate_bug_excludes_unrelated_work_from_fix_plan() -> None:
+    content = (SKILLS_ROOT / "investigate-bug" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    guardrails_section = extract_section(content, "Guardrails")
+    assert guardrails_section is not None
+    assert INVESTIGATE_SCOPE_POLICY_MARKER in guardrails_section

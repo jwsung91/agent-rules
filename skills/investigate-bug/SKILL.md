@@ -22,8 +22,10 @@ Follow an evidence-first workflow. Do not modify code until the expected behavio
 
 ## Guardrails
 
+<!-- investigate-scope-policy: exclude-unrelated-work-from-fix-plan -->
+
 - Keep investigation and changes within the requested scope.
-- When a request bundles a bug report with unrelated work (a refactor, a new feature, cleanup) in the same message, apply this workflow to the bug only and call out the rest as a separate request instead of folding it into the same change.
+- When a request bundles a bug report with unrelated work (a refactor, a new feature, cleanup) in the same message, apply this workflow to the bug only. Do not include the unrelated work in the bug-fix plan, Changes, or Investigation fix approach. Mention it only under Not Included or Follow-up as a separate request; do not provide implementation steps for it as part of the focused bug response.
 - Preserve public APIs and user-visible behavior unless the requested fix requires a change.
 - Do not hide failures by weakening tests, suppressing errors, or adding unexplained retries.
 - Do not claim reproduction, validation, or root-cause certainty without evidence.
