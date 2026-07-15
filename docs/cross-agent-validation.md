@@ -359,5 +359,26 @@ For each supported agent:
    "did not hold scope" result as a stable pattern rather than sampling
    variance.
 
+`scripts/forward_test.py` automates steps 1, 2, and 4 for the bundled-request
+case documented above (fixture creation, adoption, a real `claude -p` or
+`codex exec` invocation, and a before/after `git status` diff to catch any
+file changes):
+
+```bash
+python scripts/forward_test.py --agent claude --out-dir /path/to/results --runs 2
+python scripts/forward_test.py --agent codex --out-dir /path/to/results --runs 2
+```
+
+It only records mechanical facts per run (exit code, clean-worktree diff,
+raw transcript, and — for Claude — which `Skill` tool calls were made) into
+`summary.json`, `transcript.jsonl`, and `final_report.txt` under
+`<out-dir>/<case>_<agent>_<timestamp>/run-N/`. Steps 3, 5, 6, and 7 — judging
+whether a response is behaviorally correct — stay manual: read
+`final_report.txt` yourself and write the finding up here by hand. This
+repository already hit a real false-positive once from trying to automate
+that judgment with regex-based prose matching (see `docs/skill-authoring.md`
+on `REPORT_POLICY_MARKER`); the same risk applies to grading forward-test
+responses automatically.
+
 Keep live model invocations outside the deterministic unit-test suite. They
 require authentication, may incur cost, and can vary by execution environment.
