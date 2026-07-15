@@ -9,7 +9,7 @@ Review the requested change as an evidence-backed reviewer. Focus on problems in
 
 ## Workflow
 
-1. Read the repository instructions and determine the requested review scope, comparison base, and changed files. If the base is ambiguous and cannot be inferred safely, ask before drawing conclusions.
+1. Read the repository instructions and determine the requested review scope, comparison base, and changed files. If the base is ambiguous and cannot be inferred safely, ask before drawing conclusions. If the requested target cannot be inspected, report the review as blocked; never substitute another accessible branch, pull request, commit, repository, or remote target. Accessing the same requested target through another reference is allowed only after verifying that the reference identifies that exact target and does not change the review scope.
 2. Inspect the complete diff and enough surrounding code, tests, configuration, and documentation to understand the intended behavior and existing invariants.
 3. Trace affected callers, data flows, failure paths, and compatibility boundaries when the change can influence behavior outside the edited lines.
 4. Look for correctness defects, regressions, security or privacy risks, unsafe error handling, concurrency or state problems, compatibility breaks, and missing validation that could allow those problems through.
@@ -26,6 +26,10 @@ Review the requested change as an evidence-backed reviewer. Focus on problems in
 
 Do not assign a severity to suggestions that are optional improvements rather than defects.
 
+<!-- review-severity-policy: require-repository-evidence -->
+
+Calibrate severity to evidence in the reviewed repository, not to a hypothetical deployment. Never assign P0 based only on a function name, the magnitude of an incorrect value, a failing unit test, or imagined callers. P0 requires direct repository evidence that the changed path reaches production or release-critical behavior and that its impact is widespread. Without that evidence, choose P1 or lower based on the behavior demonstrated in the reviewed scope and state material uncertainty about reach.
+
 ## Finding Quality
 
 For each finding:
@@ -39,7 +43,10 @@ For each finding:
 
 ## Guardrails
 
+<!-- review-scope-policy: do-not-substitute-unverified-target -->
+
 - Stay in Review Mode. Do not turn a review request into an implementation task.
+- If the requested diff or target is unavailable, stop with a validation gap. Do not review a different remote branch or pull request merely because it is accessible.
 - Treat user-provided claims, commit messages, and PR descriptions as hypotheses to verify, not proof.
 - Do not report a finding solely because validation was not run; describe that as a validation gap unless a concrete defect follows from the omission.
 - Do not hide uncertainty. Label assumptions and unresolved questions that materially affect the review.

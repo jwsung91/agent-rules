@@ -87,7 +87,6 @@ def test_codex_skill_interface_metadata() -> None:
         assert f"${skill_dir.name}" in values["default_prompt"]
 
 
-REPORT_HEADING_RE = re.compile(r"^##\s+Report\s*$", re.MULTILINE)
 NEXT_HEADING_RE = re.compile(r"^##\s+\S", re.MULTILINE)
 # Natural-language regex matching for this ("does the prose mean the skill
 # honors the repository's format?") does not work: it's easy to construct a
@@ -98,15 +97,26 @@ NEXT_HEADING_RE = re.compile(r"^##\s+\S", re.MULTILINE)
 # MANAGED_START/MANAGED_END markers in scripts/adopt.py — so the check is a
 # plain substring match with no natural-language ambiguity to get wrong.
 REPORT_POLICY_MARKER = "<!-- skill-report-policy: honor-repository-format -->"
+REVIEW_SCOPE_POLICY_MARKER = (
+    "<!-- review-scope-policy: do-not-substitute-unverified-target -->"
+)
+REVIEW_SEVERITY_POLICY_MARKER = (
+    "<!-- review-severity-policy: require-repository-evidence -->"
+)
 
 
-def extract_report_section(content: str) -> str | None:
-    match = REPORT_HEADING_RE.search(content)
+def extract_section(content: str, heading: str) -> str | None:
+    heading_re = re.compile(rf"^##\s+{re.escape(heading)}\s*$", re.MULTILINE)
+    match = heading_re.search(content)
     if not match:
         return None
     next_heading = NEXT_HEADING_RE.search(content, match.end())
     end = next_heading.start() if next_heading else len(content)
     return content[match.start() : end]
+
+
+def extract_report_section(content: str) -> str | None:
+    return extract_section(content, "Report")
 
 
 def test_extract_report_section_stops_at_next_heading() -> None:
@@ -143,3 +153,13 @@ def test_skills_with_report_sections_honor_repository_format() -> None:
             "states a host repository's required report format takes "
             "precedence (see docs/skill-authoring.md)"
         )
+
+
+def test_review_change_guards_scope_and_severity() -> None:
+    content = (SKILLS_ROOT / "review-change" / "SKILL.md").read_text(encoding="utf-8")
+    guardrails_section = extract_section(content, "Guardrails")
+    severity_section = extract_section(content, "Severity")
+    assert guardrails_section is not None
+    assert severity_section is not None
+    assert REVIEW_SCOPE_POLICY_MARKER in guardrails_section
+    assert REVIEW_SEVERITY_POLICY_MARKER in severity_section

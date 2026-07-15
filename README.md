@@ -236,7 +236,8 @@ Later `--sync` runs use them for 3-way merges, preserving non-conflicting edits
 to generated entrypoints and skills and stopping before unresolved conflicts
 are written.
 
-See `docs/cross-agent-validation.md` for the `investigate-bug` behavioral
-evaluation and its remaining environment-specific validation gaps.
-`review-change` has deterministic structure and deployment coverage; live
-cross-agent behavioral evaluation remains a separate follow-up.
+See `docs/cross-agent-validation.md` for the cross-agent behavioral evaluations
+of `investigate-bug` and `review-change` and their remaining
+environment-specific validation gaps. The targeted `review-change` mitigations
+were revalidated with both agents; a successful Codex local-execution run is
+still needed for a direct finding-quality comparison with Claude.

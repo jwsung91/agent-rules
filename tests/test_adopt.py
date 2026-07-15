@@ -72,6 +72,11 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                 adopt.shared_skills_section("CLAUDE.md"),
             )
 
+    def test_review_trigger_blocks_unverified_target_substitution(self) -> None:
+        rule = adopt.SKILL_TRIGGER_RULES["review-change"]
+        self.assertIn("cannot be inspected", rule)
+        self.assertIn("never substitute", rule)
+
     def test_parse_profile(self) -> None:
         self.assertEqual(adopt.parse_profile("codex"), "codex")
         self.assertEqual(adopt.parse_profile("CLAUDE"), "claude")

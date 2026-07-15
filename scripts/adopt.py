@@ -68,7 +68,10 @@ SKILL_TRIGGER_RULES = {
         "When asked to review code, documentation, a diff, working tree, commit, "
         "branch, patch, pull request, or completed implementation, invoke the "
         "`review-change` skill before reporting findings. Stay in Review Mode "
-        "and do not modify files unless the user separately authorizes changes."
+        "and do not modify files unless the user separately authorizes changes. "
+        "If the requested review target cannot be inspected, report the review "
+        "as blocked; never substitute a different accessible branch, pull request, "
+        "commit, repository, or remote target."
     ),
 }
 # investigate-bug's and review-change's trigger rules above can both match

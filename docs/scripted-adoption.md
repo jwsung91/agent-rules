@@ -76,7 +76,8 @@ with those shared contracts.
 invoke the appropriate installed skill. The always-loaded entrypoint proved
 necessary when a bug report bundled unrelated work; it also carries the
 explicit review trigger. See `docs/cross-agent-validation.md` for the tested
-bug-investigation behavior and the remaining review-skill evaluation gap.
+bug-investigation and change-review behavior, targeted mitigation results, and
+remaining environment-specific execution gaps.
 `GEMINI.md` is not changed because no shared skills are installed for Gemini.
 Existing adoptions gain the section via `--sync --skills`; a plain `--sync`
 also detects already-installed shared skills automatically, so the section is
