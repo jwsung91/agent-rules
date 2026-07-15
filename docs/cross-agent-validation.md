@@ -189,14 +189,44 @@ Post-change revalidation produced these results:
   edits.
 
 These samples verify the targeted mitigations, not full model or environment
-parity. Codex still needs a successful local-execution run before its finding
-quality can be compared with Claude's.
+parity. The successful Codex local-execution follow-up below completes the
+previously missing finding-quality comparison.
+
+### Codex Local-Execution Follow-up (2026-07-15)
+
+Codex CLI 0.144.1 was run with `codex exec --ephemeral`, an explicit read-only
+sandbox, and the installed `review-change` skill against two isolated
+branch-only fixtures. The same automatic-trigger prompt reviewed the current
+branch against `main` twice per fixture.
+
+- **Defective percentage calculation**: 2/2 runs inspected the exact local
+  `main...HEAD` diff, identified the missing percentage normalization, and
+  reported one P1 finding. Neither run inflated the result to P0 or queried a
+  remote substitute.
+- **Clean percentage formatter**: 2/2 runs inspected the exact local diff and
+  reported no actionable findings. Neither run invented a regression.
+- **Skill and report contract**: 4/4 runs explicitly selected the installed
+  `review-change` skill, retained the required report headings, and made no
+  source edits.
+- **Local execution**: all four runs successfully read the local diff and
+  repository evidence. Pytest executed in one defective and one clean run;
+  equivalent test commands were rejected intermittently by the read-only
+  command policy in the other runs, and those responses reported the gap.
+
+The first pytest run created ignored Python and pytest cache directories even
+though the sandbox was read-only. The fixtures were cleaned, and later runs
+set `PYTHONDONTWRITEBYTECODE=1` and disabled pytest's cache provider. Both
+fixture worktrees were clean after revalidation. Finding quality can now be
+compared directly: Codex matched Claude on the defect and clean outcomes while
+using the repository-scaled P1 severity required by the hardened policy.
 
 ## Environment Gaps
 
-- Codex intermittently failed to launch PowerShell in its Windows read-only
-  sandbox (`CreateProcessWithLogonW failed: 2`). It reported the limitation and
-  did not claim unavailable source evidence.
+- Earlier Codex runs failed to launch PowerShell in the Windows read-only
+  sandbox (`CreateProcessWithLogonW failed: 2`). The 2026-07-15 follow-up
+  successfully inspected local diffs and repository files, but the read-only
+  command policy still rejected some Git and pytest command forms while
+  allowing equivalent forms in other runs.
 - Claude could read the fixture but Bash execution was denied in `dontAsk`
   permission mode. It distinguished manual arithmetic tracing from an executed
   test result.

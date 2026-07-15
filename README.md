@@ -239,5 +239,5 @@ are written.
 See `docs/cross-agent-validation.md` for the cross-agent behavioral evaluations
 of `investigate-bug` and `review-change` and their remaining
 environment-specific validation gaps. The targeted `review-change` mitigations
-were revalidated with both agents; a successful Codex local-execution run is
-still needed for a direct finding-quality comparison with Claude.
+were revalidated with both agents, including a successful Codex local-execution
+comparison of defective and clean branch reviews.
