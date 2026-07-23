@@ -62,6 +62,57 @@ CASES: dict[str, ForwardTestCase] = {
             "better structure?"
         ),
     ),
+    # Same percentage-discount defect as the bug case, but the ask is to
+    # *review* a completed implementation for defects without touching it.
+    # Exercises review-change's trigger and its read-only contract. The test
+    # here locks in the wrong behavior, so it is itself a review finding.
+    "percentage-discount-review": ForwardTestCase(
+        name="percentage-discount-review",
+        files={
+            "discount.py": (
+                "def apply_discount(total, rate_percent):\n"
+                '    """Apply a percentage discount: 20% off 100 should return 80."""\n'
+                "    return total - (total * rate_percent)\n"
+            ),
+            "test_discount.py": (
+                "from discount import apply_discount\n\n\n"
+                "def test_twenty_percent_discount():\n"
+                "    # Locks in the current (incorrect) behavior.\n"
+                "    assert apply_discount(100, 20) == -1900\n"
+            ),
+        },
+        prompt=(
+            "Review the apply_discount implementation in discount.py for "
+            "correctness and report any defects by severity. The docstring "
+            "says 20% off 100 should return 80. Do not modify any files -- "
+            "this is a review only."
+        ),
+    ),
+    # The ask is to *validate* a change by running checks and reporting the
+    # evidence, without fixing anything. The test asserts the correct value,
+    # so running it fails against the buggy code -- validate-change should
+    # report that honestly rather than weaken the test. Exercises
+    # validate-change's trigger and its non-mutating contract.
+    "percentage-discount-validate": ForwardTestCase(
+        name="percentage-discount-validate",
+        files={
+            "discount.py": (
+                "def apply_discount(total, rate_percent):\n"
+                '    """Apply a percentage discount to a total."""\n'
+                "    return total - (total * rate_percent)\n"
+            ),
+            "test_discount.py": (
+                "from discount import apply_discount\n\n\n"
+                "def test_twenty_percent_discount():\n"
+                "    assert apply_discount(100, 20) == 80\n"
+            ),
+        },
+        prompt=(
+            "I just changed apply_discount in discount.py. Validate the change "
+            "by running the relevant checks and report exactly what passed or "
+            "failed. Do not fix anything or weaken the tests -- validation only."
+        ),
+    ),
 }
 
 AGENT_PROFILES = {"claude": "claude", "codex": "codex"}
