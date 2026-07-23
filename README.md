@@ -231,6 +231,11 @@ Use `--visibility local` (the default) for personal files, or
 `--visibility tracked` when the target repository should share generated
 entrypoints and skills with the team.
 
+Skills currently support the Codex and Claude profiles only. `--profile gemini`
+installs the `GEMINI.md` entrypoint but no skills — there is no shared-skill
+path for Gemini yet, so `--skills` with that profile installs nothing and
+reports that no Gemini skill path exists.
+
 `--skills` also injects a `## Shared Skills` trigger section into the
 generated `AGENTS.md` and `CLAUDE.md` so the appropriate installed skill is
 invoked reliably for bug investigations, change reviews, and focused
