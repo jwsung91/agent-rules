@@ -57,8 +57,15 @@ python scripts/adopt.py /path/to/repo --profile claude --dry-run
 python scripts/adopt.py /path/to/repo --profile claude
 ```
 
-Install the shared `investigate-bug` and `review-change` skills for Codex and
-Claude:
+Preview which shared skills `--skills` installs and what each is for (no target
+repository, git, or profile required):
+
+```bash
+python scripts/adopt.py --list-skills
+```
+
+Install the shared `investigate-bug`, `review-change`, and `validate-change`
+skills for Codex and Claude:
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile codex --skills --dry-run
