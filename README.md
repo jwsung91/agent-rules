@@ -212,13 +212,19 @@ be a comprehensive agent-skill catalog or runtime automation framework.
 
 ## Shared Skills
 
-The repository includes shared `investigate-bug` and `review-change` skills
-whose behavioral contracts are usable by Codex and Claude. Install them
-together with an entrypoint:
+The repository includes shared `investigate-bug`, `review-change`, and
+`validate-change` skills whose behavioral contracts are usable by Codex and
+Claude. Install them together with an entrypoint:
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile codex --skills --visibility tracked
 python scripts/adopt.py /path/to/repo --profile claude --skills --visibility tracked
+```
+
+List the shared skills and what each is for without touching a repository:
+
+```bash
+python scripts/adopt.py --list-skills
 ```
 
 Use `--visibility local` (the default) for personal files, or
@@ -227,7 +233,8 @@ entrypoints and skills with the team.
 
 `--skills` also injects a `## Shared Skills` trigger section into the
 generated `AGENTS.md` and `CLAUDE.md` so the appropriate installed skill is
-invoked reliably for bug investigations and change reviews. See
+invoked reliably for bug investigations, change reviews, and focused
+validation. See
 `docs/cross-agent-validation.md` for why the entrypoint is the trigger lever
 that works when requests compete for attention.
 
@@ -241,3 +248,14 @@ of `investigate-bug` and `review-change` and their remaining
 environment-specific validation gaps. The targeted `review-change` mitigations
 were revalidated with both agents, including a successful Codex local-execution
 comparison of defective and clean branch reviews.
+
+### Validate Change
+
+`validate-change` focuses on selecting and running the narrowest relevant checks
+for the current change, reporting commands that ran or were skipped, and
+confirming whether validation left unexpected worktree changes. It complements
+`review-change`, whose primary purpose is finding defects and validation gaps.
+
+The skill's structural and adoption tests run in this repository. Its automatic
+trigger and behavioral contract still require forward-testing in both Codex and
+Claude before claiming cross-agent behavioral validation.

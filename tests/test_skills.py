@@ -106,6 +106,9 @@ REVIEW_SCOPE_POLICY_MARKER = (
 REVIEW_SEVERITY_POLICY_MARKER = (
     "<!-- review-severity-policy: require-repository-evidence -->"
 )
+VALIDATE_SCOPE_POLICY_MARKER = (
+    "<!-- validate-scope-policy: execute-checks-without-review-substitution -->"
+)
 
 
 def extract_section(content: str, heading: str) -> str | None:
@@ -175,3 +178,17 @@ def test_investigate_bug_excludes_unrelated_work_from_fix_plan() -> None:
     guardrails_section = extract_section(content, "Guardrails")
     assert guardrails_section is not None
     assert INVESTIGATE_SCOPE_POLICY_MARKER in guardrails_section
+
+
+def test_validate_change_preserves_scope_and_validation_integrity() -> None:
+    content = (SKILLS_ROOT / "validate-change" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    guardrails_section = extract_section(content, "Guardrails")
+    workflow_section = extract_section(content, "Workflow")
+    assert guardrails_section is not None
+    assert workflow_section is not None
+    assert VALIDATE_SCOPE_POLICY_MARKER in guardrails_section
+    assert "initial worktree state" in workflow_section
+    assert "revert unexpected artifacts without authorization" in workflow_section
+    assert "Do not weaken, skip, or rewrite failing tests" in guardrails_section

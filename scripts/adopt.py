@@ -36,7 +36,7 @@ PROFILE_FILES = {
 }
 ENTRYPOINT_FILES = PROFILE_FILES["all"]
 VALID_VISIBILITIES = {"local", "tracked"}
-SHARED_SKILLS = ("investigate-bug", "review-change")
+SHARED_SKILLS = ("investigate-bug", "review-change", "validate-change")
 PROFILE_SKILL_ROOTS = {
     "codex": (".codex/skills",),
     "claude": (".claude/skills",),
@@ -75,21 +75,30 @@ SKILL_TRIGGER_RULES = {
         "as blocked; never substitute a different accessible branch, pull request, "
         "commit, repository, or remote target."
     ),
+    "validate-change": (
+        "When asked to validate, test, verify, check, or perform pre-commit "
+        "verification of an existing change, invoke the `validate-change` skill "
+        "before running checks. Keep validation focused and non-mutating, record "
+        "the initial worktree state, report exact commands and outcomes, and "
+        "identify any validation-created changes without deleting or reverting "
+        "them unless separately authorized."
+    ),
 }
-# investigate-bug's and review-change's trigger rules above can both match
-# the same request (e.g. "review this PR that fixes a bug"); without an
-# explicit priority, an agent could run only investigate-bug's workflow or
-# mix both report structures. Specific to this pair of skills, not a general
-# N-skill priority mechanism — there is nothing to generalize with only two
-# skills, and the tiebreak content is inherently skill-specific judgment.
+# Shared skill trigger rules can overlap (e.g. "review and test this bug fix");
+# without explicit priority an agent could substitute validation for review or
+# diagnosis, or mix report structures. The tiebreak remains skill-specific
+# judgment rather than a generic priority mechanism.
 SKILL_TRIGGER_PRIORITY_NOTE = (
     "When a request could match more than one shared skill's trigger (for "
     "example, reviewing a pull request that fixes a bug), prioritize "
     "`review-change` if the primary ask is judging the quality of an "
     "existing change, diff, or pull request; use `investigate-bug` if the "
     "primary ask is reproducing or root-causing a defect that has no fix "
-    "yet. Report defects found while reviewing within `review-change`'s "
-    "structure unless the user separately asks for a fix."
+    "yet; use `validate-change` if the primary ask is executing checks and "
+    "reporting validation evidence for an existing change. Report defects "
+    "found while reviewing within `review-change`'s structure unless the user "
+    "separately asks for a fix. Validation may support either workflow without "
+    "replacing its primary purpose."
 )
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
 METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)
@@ -222,6 +231,11 @@ def parse_args() -> argparse.Namespace:
         "--skills",
         action="store_true",
         help="Install shared skills for the selected agent profile.",
+    )
+    parser.add_argument(
+        "--list-skills",
+        action="store_true",
+        help="List the shared skills that --skills installs, then exit.",
     )
     parser.add_argument(
         "--batch",
@@ -702,7 +716,7 @@ def shared_skills_section(relative_path: str) -> str:
         rule = SKILL_TRIGGER_RULES.get(name)
         if rule:
             lines.append(f"- {rule}")
-    if {"investigate-bug", "review-change"} <= set(SHARED_SKILLS):
+    if len(set(SHARED_SKILLS)) > 1:
         lines.append(f"- {SKILL_TRIGGER_PRIORITY_NOTE}")
     return "\n".join(lines)
 
@@ -2028,6 +2042,43 @@ def infer_profile_from_existing(target_repo: Path) -> str | None:
     return None
 
 
+def shared_skill_summary(skill_name: str) -> str:
+    """First sentence of a shared skill's SKILL.md description.
+
+    The frontmatter description is the canonical, agent-neutral summary and is
+    guaranteed present by the skill-authoring convention (enforced in
+    tests/test_skills.py), so it is a safer source than the Codex-only
+    agents/openai.yaml short_description.
+    """
+    skill_md = source_repo_root() / "skills" / skill_name / "SKILL.md"
+    if not skill_md.exists():
+        return ""
+    match = re.search(
+        r"^description:\s*(.+)$",
+        skill_md.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if not match:
+        return ""
+    description = match.group(1).strip()
+    sentence, _, _ = description.partition(". ")
+    return sentence.rstrip(".") + "." if sentence else ""
+
+
+def list_shared_skills() -> int:
+    print("Shared skills installed by --skills:\n")
+    for skill_name in SHARED_SKILLS:
+        summary = shared_skill_summary(skill_name)
+        print(f"  {skill_name}")
+        if summary:
+            print(f"      {summary}")
+    print(
+        "\nInstall with, for example:\n"
+        "  python scripts/adopt.py /path/to/repo --profile claude --skills"
+    )
+    return 0
+
+
 def skills_installed(target_repo: Path, profile: str) -> bool:
     for root in PROFILE_SKILL_ROOTS.get(profile, ()):
         for skill_name in SHARED_SKILLS:
@@ -2045,6 +2096,9 @@ def main() -> int:
             stream.reconfigure(errors="replace")
 
     args = parse_args()
+
+    if args.list_skills:
+        return list_shared_skills()
 
     if args.batch:
         batch_file = Path(args.batch).expanduser().resolve()
