@@ -36,7 +36,12 @@ PROFILE_FILES = {
 }
 ENTRYPOINT_FILES = PROFILE_FILES["all"]
 VALID_VISIBILITIES = {"local", "tracked"}
-SHARED_SKILLS = ("investigate-bug", "review-change", "validate-change")
+SHARED_SKILLS = (
+    "investigate-bug",
+    "review-change",
+    "validate-change",
+    "prepare-commit",
+)
 PROFILE_SKILL_ROOTS = {
     "codex": (".codex/skills",),
     "claude": (".claude/skills",),
@@ -83,6 +88,15 @@ SKILL_TRIGGER_RULES = {
         "identify any validation-created changes without deleting or reverting "
         "them unless separately authorized."
     ),
+    "prepare-commit": (
+        "When asked to commit, prepare or stage a commit, or write a commit "
+        "message for the current changes, invoke the `prepare-commit` skill "
+        "before committing. Review the diff, commit only the requested logical "
+        "change, run lightweight pre-commit checks including `git diff --check`, "
+        "and write a Conventional Commits message. Do not amend or rewrite "
+        "history, reformat code, or include unrelated changes unless separately "
+        "authorized."
+    ),
 }
 # Shared skill trigger rules can overlap (e.g. "review and test this bug fix");
 # without explicit priority an agent could substitute validation for review or
@@ -95,10 +109,13 @@ SKILL_TRIGGER_PRIORITY_NOTE = (
     "existing change, diff, or pull request; use `investigate-bug` if the "
     "primary ask is reproducing or root-causing a defect that has no fix "
     "yet; use `validate-change` if the primary ask is executing checks and "
-    "reporting validation evidence for an existing change. Report defects "
-    "found while reviewing within `review-change`'s structure unless the user "
-    "separately asks for a fix. Validation may support either workflow without "
-    "replacing its primary purpose."
+    "reporting validation evidence for an existing change; use "
+    "`prepare-commit` if the primary ask is composing a commit for the "
+    "current changes. Report defects found while reviewing within "
+    "`review-change`'s structure unless the user separately asks for a fix. "
+    "Validation may support either workflow without replacing its primary "
+    "purpose, and prepare-commit's lightweight pre-commit checks do not "
+    "replace a full `validate-change` or `review-change` pass."
 )
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
 METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)

@@ -64,8 +64,8 @@ repository, git, or profile required):
 python scripts/adopt.py --list-skills
 ```
 
-Install the shared `investigate-bug`, `review-change`, and `validate-change`
-skills for Codex and Claude:
+Install the shared `investigate-bug`, `review-change`, `validate-change`, and
+`prepare-commit` skills for Codex and Claude:
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile codex --skills --dry-run

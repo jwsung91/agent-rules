@@ -88,6 +88,13 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         self.assertIn("report exact commands and outcomes", rule)
         self.assertIn("without deleting or reverting", rule)
 
+    def test_prepare_commit_trigger_scopes_change_and_conventional_message(self) -> None:
+        rule = adopt.SKILL_TRIGGER_RULES["prepare-commit"]
+        self.assertIn("commit only the requested logical change", rule)
+        self.assertIn("git diff --check", rule)
+        self.assertIn("Conventional Commits message", rule)
+        self.assertIn("Do not amend or rewrite", rule)
+
     def test_shared_skill_summary_returns_first_description_sentence(self) -> None:
         for skill_name in adopt.SHARED_SKILLS:
             summary = adopt.shared_skill_summary(skill_name)
@@ -455,10 +462,12 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("invoke the `investigate-bug` skill", agents)
         self.assertIn("invoke the `review-change` skill", agents)
         self.assertIn("invoke the `validate-change` skill", agents)
+        self.assertIn("invoke the `prepare-commit` skill", agents)
         self.assertIn("## Shared Skills", claude)
         self.assertIn(".claude/skills", claude)
         self.assertIn("invoke the `review-change` skill", claude)
         self.assertIn("invoke the `validate-change` skill", claude)
+        self.assertIn("invoke the `prepare-commit` skill", claude)
         # Shared trigger rules can match the same request (e.g. reviewing and
         # testing a bug fix); the priority note keeps the primary workflow
         # explicit instead of allowing arbitrary substitution.
