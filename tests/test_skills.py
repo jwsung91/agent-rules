@@ -109,6 +109,9 @@ REVIEW_SEVERITY_POLICY_MARKER = (
 VALIDATE_SCOPE_POLICY_MARKER = (
     "<!-- validate-scope-policy: execute-checks-without-review-substitution -->"
 )
+PREPARE_COMMIT_SCOPE_POLICY_MARKER = (
+    "<!-- prepare-commit-scope-policy: single-logical-change-conventional-message -->"
+)
 
 
 def extract_section(content: str, heading: str) -> str | None:
@@ -192,3 +195,17 @@ def test_validate_change_preserves_scope_and_validation_integrity() -> None:
     assert "initial worktree state" in workflow_section
     assert "revert unexpected artifacts without authorization" in workflow_section
     assert "Do not weaken, skip, or rewrite failing tests" in guardrails_section
+
+
+def test_prepare_commit_scopes_change_and_uses_conventional_message() -> None:
+    content = (SKILLS_ROOT / "prepare-commit" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    guardrails_section = extract_section(content, "Guardrails")
+    workflow_section = extract_section(content, "Workflow")
+    assert guardrails_section is not None
+    assert workflow_section is not None
+    assert PREPARE_COMMIT_SCOPE_POLICY_MARKER in guardrails_section
+    assert "git diff --check" in workflow_section
+    assert "Conventional Commits" in workflow_section
+    assert "Do not amend, rebase, force-push, or rewrite" in guardrails_section

@@ -212,9 +212,9 @@ be a comprehensive agent-skill catalog or runtime automation framework.
 
 ## Shared Skills
 
-The repository includes shared `investigate-bug`, `review-change`, and
-`validate-change` skills whose behavioral contracts are usable by Codex and
-Claude. Install them together with an entrypoint:
+The repository includes shared `investigate-bug`, `review-change`,
+`validate-change`, and `prepare-commit` skills whose behavioral contracts are
+usable by Codex and Claude. Install them together with an entrypoint:
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile codex --skills --visibility tracked
@@ -238,8 +238,8 @@ reports that no Gemini skill path exists.
 
 `--skills` also injects a `## Shared Skills` trigger section into the
 generated `AGENTS.md` and `CLAUDE.md` so the appropriate installed skill is
-invoked reliably for bug investigations, change reviews, and focused
-validation. See
+invoked reliably for bug investigations, change reviews, focused
+validation, and commit preparation. See
 `docs/cross-agent-validation.md` for why the entrypoint is the trigger lever
 that works when requests compete for attention.
 
@@ -260,6 +260,19 @@ comparison of defective and clean branch reviews.
 for the current change, reporting commands that ran or were skipped, and
 confirming whether validation left unexpected worktree changes. It complements
 `review-change`, whose primary purpose is finding defects and validation gaps.
+
+The skill's structural and adoption tests run in this repository. Its automatic
+trigger and behavioral contract still require forward-testing in both Codex and
+Claude before claiming cross-agent behavioral validation.
+
+### Prepare Commit
+
+`prepare-commit` turns the current changes into one well-scoped, Conventional
+Commits-formatted commit: it reviews the diff, keeps unrelated work out, runs
+lightweight pre-commit checks such as `git diff --check`, and writes the message
+without rewriting history or reformatting code. It applies the same commit
+discipline as `rules/commit-guidelines.md`, invoked automatically when a commit
+is requested.
 
 The skill's structural and adoption tests run in this repository. Its automatic
 trigger and behavioral contract still require forward-testing in both Codex and
