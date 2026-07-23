@@ -69,6 +69,35 @@ class ForwardTestUnitTests(unittest.TestCase):
             status = run(["git", "status", "--short"], fixture)
             self.assertEqual(status.stdout.strip(), "")
 
+    def test_cases_cover_all_three_shared_skills(self) -> None:
+        self.assertIn("percentage-discount-bug", forward_test.CASES)
+        self.assertIn("percentage-discount-review", forward_test.CASES)
+        self.assertIn("percentage-discount-validate", forward_test.CASES)
+
+    def test_review_case_triggers_review_change_and_is_read_only(self) -> None:
+        case = forward_test.CASES["percentage-discount-review"]
+        self.assertIn("discount.py", case.files)
+        self.assertIn("Review the apply_discount", case.prompt)
+        self.assertIn("do not modify", case.prompt.lower())
+
+    def test_validate_case_triggers_validate_change_without_fixing(self) -> None:
+        case = forward_test.CASES["percentage-discount-validate"]
+        self.assertIn("Validate the change", case.prompt)
+        self.assertIn("running the relevant checks", case.prompt.lower())
+        self.assertIn("do not fix", case.prompt.lower())
+
+    def test_every_case_builds_a_clean_committed_fixture(self) -> None:
+        for name, case in forward_test.CASES.items():
+            with tempfile.TemporaryDirectory() as tmp:
+                fixture = Path(tmp) / "fixture"
+                forward_test.build_fixture(case, fixture)
+                log = run(["git", "log", "--oneline"], fixture)
+                self.assertEqual(
+                    len(log.stdout.strip().splitlines()), 1, f"{name} not committed"
+                )
+                status = run(["git", "status", "--short"], fixture)
+                self.assertEqual(status.stdout.strip(), "", f"{name} left worktree dirty")
+
     def test_git_status_lines_reflects_new_untracked_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = Path(tmp) / "fixture"

@@ -369,6 +369,15 @@ python scripts/forward_test.py --agent claude --out-dir /path/to/results --runs 
 python scripts/forward_test.py --agent codex --out-dir /path/to/results --runs 2
 ```
 
+`--case` selects the fixture and prompt. Besides the default bundled-request
+bug case (`percentage-discount-bug`), there are read-only review and
+non-mutating validation cases so all three shared skills can be forward-tested:
+
+```bash
+python scripts/forward_test.py --agent claude --case percentage-discount-review --out-dir /path/to/results
+python scripts/forward_test.py --agent claude --case percentage-discount-validate --out-dir /path/to/results
+```
+
 It only records mechanical facts per run (exit code, clean-worktree diff,
 raw transcript, and — for Claude — which `Skill` tool calls were made) into
 `summary.json`, `transcript.jsonl`, and `final_report.txt` under
