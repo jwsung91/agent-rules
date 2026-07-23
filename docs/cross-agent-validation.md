@@ -370,13 +370,22 @@ python scripts/forward_test.py --agent codex --out-dir /path/to/results --runs 2
 ```
 
 `--case` selects the fixture and prompt. Besides the default bundled-request
-bug case (`percentage-discount-bug`), there are read-only review and
-non-mutating validation cases so all three shared skills can be forward-tested:
+bug case (`percentage-discount-bug`), there are read-only review,
+non-mutating validation, and commit-preparation cases so all four shared
+skills can be forward-tested:
 
 ```bash
 python scripts/forward_test.py --agent claude --case percentage-discount-review --out-dir /path/to/results
 python scripts/forward_test.py --agent claude --case percentage-discount-validate --out-dir /path/to/results
+python scripts/forward_test.py --agent claude --case percentage-discount-commit --out-dir /path/to/results
 ```
+
+The `percentage-discount-commit` case starts with an uncommitted working change
+(via the case's `pending_changes`) and asks the agent to commit it. Because runs
+stay read-only (Claude `--permission-mode plan` / Codex read-only sandbox), the
+agent cannot actually run `git commit`; this records whether `prepare-commit`
+was selected and what message it drafted, not a committed SHA. Verifying a real
+commit needs a relaxed sandbox and stays a manual step.
 
 It only records mechanical facts per run (exit code, clean-worktree diff,
 raw transcript, and — for Claude — which `Skill` tool calls were made) into
