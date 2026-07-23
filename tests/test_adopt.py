@@ -82,6 +82,39 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         self.assertIn("Do not include unrelated work in the bug-fix plan", rule)
         self.assertIn("only under Not Included or Follow-up", rule)
 
+    def test_validate_trigger_preserves_worktree_and_reports_evidence(self) -> None:
+        rule = adopt.SKILL_TRIGGER_RULES["validate-change"]
+        self.assertIn("record the initial worktree state", rule)
+        self.assertIn("report exact commands and outcomes", rule)
+        self.assertIn("without deleting or reverting", rule)
+
+    def test_shared_skill_summary_returns_first_description_sentence(self) -> None:
+        for skill_name in adopt.SHARED_SKILLS:
+            summary = adopt.shared_skill_summary(skill_name)
+            self.assertTrue(summary, f"empty summary for {skill_name}")
+            self.assertTrue(summary.endswith("."))
+            # First sentence only: no embedded ". " sentence boundary remains.
+            self.assertNotIn(". ", summary)
+
+    def test_list_shared_skills_lists_every_shared_skill(self) -> None:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            exit_code = adopt.list_shared_skills()
+        output = buffer.getvalue()
+        self.assertEqual(exit_code, 0)
+        for skill_name in adopt.SHARED_SKILLS:
+            self.assertIn(skill_name, output)
+        self.assertIn("--skills", output)
+
+    def test_list_skills_cli_needs_no_target_or_profile(self) -> None:
+        # Run from a non-repo temp dir to prove --list-skills is informational
+        # and does not require a target repository, git, or a profile.
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run([sys.executable, str(SCRIPT), "--list-skills"], cwd=Path(tmp))
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        for skill_name in adopt.SHARED_SKILLS:
+            self.assertIn(skill_name, result.stdout)
+
     def test_parse_profile(self) -> None:
         self.assertEqual(adopt.parse_profile("codex"), "codex")
         self.assertEqual(adopt.parse_profile("CLAUDE"), "claude")
@@ -421,13 +454,14 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn(".codex/skills", agents)
         self.assertIn("invoke the `investigate-bug` skill", agents)
         self.assertIn("invoke the `review-change` skill", agents)
+        self.assertIn("invoke the `validate-change` skill", agents)
         self.assertIn("## Shared Skills", claude)
         self.assertIn(".claude/skills", claude)
         self.assertIn("invoke the `review-change` skill", claude)
-        # Both trigger rules can match the same request (e.g. reviewing a PR
-        # that fixes a bug); the priority note must be present whenever both
-        # skills are installed together, so an agent doesn't pick one
-        # arbitrarily or mix both report structures.
+        self.assertIn("invoke the `validate-change` skill", claude)
+        # Shared trigger rules can match the same request (e.g. reviewing and
+        # testing a bug fix); the priority note keeps the primary workflow
+        # explicit instead of allowing arbitrary substitution.
         self.assertIn(adopt.SKILL_TRIGGER_PRIORITY_NOTE, agents)
         self.assertIn(adopt.SKILL_TRIGGER_PRIORITY_NOTE, claude)
         # The section lives inside the managed block so --sync keeps updating it
