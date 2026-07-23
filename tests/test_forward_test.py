@@ -69,10 +69,11 @@ class ForwardTestUnitTests(unittest.TestCase):
             status = run(["git", "status", "--short"], fixture)
             self.assertEqual(status.stdout.strip(), "")
 
-    def test_cases_cover_all_three_shared_skills(self) -> None:
+    def test_cases_cover_shared_skill_triggers(self) -> None:
         self.assertIn("percentage-discount-bug", forward_test.CASES)
         self.assertIn("percentage-discount-review", forward_test.CASES)
         self.assertIn("percentage-discount-validate", forward_test.CASES)
+        self.assertIn("percentage-discount-commit", forward_test.CASES)
 
     def test_review_case_triggers_review_change_and_is_read_only(self) -> None:
         case = forward_test.CASES["percentage-discount-review"]
@@ -86,7 +87,7 @@ class ForwardTestUnitTests(unittest.TestCase):
         self.assertIn("running the relevant checks", case.prompt.lower())
         self.assertIn("do not fix", case.prompt.lower())
 
-    def test_every_case_builds_a_clean_committed_fixture(self) -> None:
+    def test_every_case_builds_one_commit_with_expected_worktree_state(self) -> None:
         for name, case in forward_test.CASES.items():
             with tempfile.TemporaryDirectory() as tmp:
                 fixture = Path(tmp) / "fixture"
@@ -95,8 +96,26 @@ class ForwardTestUnitTests(unittest.TestCase):
                 self.assertEqual(
                     len(log.stdout.strip().splitlines()), 1, f"{name} not committed"
                 )
-                status = run(["git", "status", "--short"], fixture)
-                self.assertEqual(status.stdout.strip(), "", f"{name} left worktree dirty")
+                status = run(["git", "status", "--short"], fixture).stdout.strip()
+                if case.pending_changes:
+                    # A pending-change case must start with an uncommitted change.
+                    self.assertNotEqual(status, "", f"{name} has no pending change")
+                else:
+                    self.assertEqual(status, "", f"{name} left worktree dirty")
+
+    def test_commit_case_leaves_uncommitted_change_and_triggers_prepare_commit(
+        self,
+    ) -> None:
+        case = forward_test.CASES["percentage-discount-commit"]
+        self.assertTrue(case.pending_changes)
+        self.assertIn("commit", case.prompt.lower())
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixture"
+            forward_test.build_fixture(case, fixture)
+            # The pending change is present but not committed.
+            self.assertIn("apply_bulk_discount", (fixture / "discount.py").read_text())
+            lines = forward_test.git_status_lines(fixture)
+            self.assertTrue(any("discount.py" in line for line in lines))
 
     def test_git_status_lines_reflects_new_untracked_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -154,6 +173,26 @@ class ForwardTestCliTests(unittest.TestCase):
         self.assertIn("Fixed the one-line bug", final_report)
         self.assertTrue((run_dir / "transcript.jsonl").exists())
         self.assertTrue((run_dir / "fixture" / "discount.py").exists())
+
+    def test_commit_case_runs_with_dirty_baseline_and_stays_clean(self) -> None:
+        # The prepare-commit case starts with an uncommitted change (dirty
+        # baseline). A read-only agent that adds nothing must still be reported
+        # as clean, because cleanliness is measured relative to that baseline.
+        result = self.cli(
+            "--agent", "claude",
+            "--case", "percentage-discount-commit",
+            "--claude-bin", f"{sys.executable} {self.fake_claude}",
+            "--out-dir", str(self.out_dir),
+            "--shared-url", str(ROOT),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        summary = self.latest_run_summary()
+        self.assertTrue(summary["clean_worktree"])
+        self.assertEqual(summary["new_paths_since_adoption"], [])
+        # The pending change is present and left uncommitted in the fixture.
+        batch_dirs = sorted(self.out_dir.iterdir())
+        fixture = batch_dirs[0] / "run-1" / "fixture"
+        self.assertIn("apply_bulk_discount", (fixture / "discount.py").read_text())
 
     def test_dirty_worktree_is_detected_and_reported(self) -> None:
         import os

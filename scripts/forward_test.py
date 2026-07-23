@@ -25,7 +25,7 @@ import json
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,6 +37,10 @@ class ForwardTestCase:
     name: str
     files: dict[str, str]
     prompt: str
+    # Files written *after* the initial commit, left uncommitted so the run
+    # starts with a working change. Used by the prepare-commit case, whose
+    # trigger is "commit the current change" and needs something to commit.
+    pending_changes: dict[str, str] = field(default_factory=dict)
 
 
 CASES: dict[str, ForwardTestCase] = {
@@ -112,6 +116,34 @@ CASES: dict[str, ForwardTestCase] = {
             "by running the relevant checks and report exactly what passed or "
             "failed. Do not fix anything or weaken the tests -- validation only."
         ),
+    ),
+    # The ask is to *commit* an existing working change. `pending_changes`
+    # leaves an uncommitted addition after the initial commit so there is
+    # something to commit. Exercises prepare-commit's trigger and its
+    # message/scope discipline. Note: runs stay read-only (Claude plan / Codex
+    # read-only), so the agent cannot actually run `git commit`; this records
+    # skill selection and the drafted message, not a committed SHA. Verifying a
+    # real commit needs a relaxed sandbox and stays manual.
+    "percentage-discount-commit": ForwardTestCase(
+        name="percentage-discount-commit",
+        files={
+            "discount.py": (
+                "def apply_discount(total, rate_percent):\n"
+                '    """Apply a percentage discount to a total."""\n'
+                "    return total - (total * rate_percent / 100)\n"
+            ),
+        },
+        prompt="Commit the current changes.",
+        pending_changes={
+            "discount.py": (
+                "def apply_discount(total, rate_percent):\n"
+                '    """Apply a percentage discount to a total."""\n'
+                "    return total - (total * rate_percent / 100)\n\n\n"
+                "def apply_bulk_discount(total, rate_percent, quantity):\n"
+                '    """Apply a percentage discount to a bulk order total."""\n'
+                "    return apply_discount(total * quantity, rate_percent)\n"
+            ),
+        },
     ),
 }
 
@@ -207,6 +239,12 @@ def build_fixture(case: ForwardTestCase, fixture_dir: Path) -> None:
         fixture_dir,
         timeout=30,
     )
+    # Apply working changes left uncommitted on top of the initial commit, so a
+    # case like prepare-commit starts with something to commit.
+    for relative_path, content in case.pending_changes.items():
+        target = fixture_dir / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
 
 
 def adopt_skills(fixture_dir: Path, profile: str, shared_url: str) -> None:
