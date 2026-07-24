@@ -261,9 +261,12 @@ for the current change, reporting commands that ran or were skipped, and
 confirming whether validation left unexpected worktree changes. It complements
 `review-change`, whose primary purpose is finding defects and validation gaps.
 
-The skill's structural and adoption tests run in this repository. Its automatic
-trigger and behavioral contract still require forward-testing in both Codex and
-Claude before claiming cross-agent behavioral validation.
+The skill's structural and adoption tests run in this repository. Live
+forward-testing in both Codex and Claude confirmed the automatic trigger and
+behavioral contract, including Codex actually running the failing check and
+declining to delete the artifacts it created without authorization. See
+`docs/cross-agent-validation.md`'s Shared-Skill Forward Test for details and
+known harness gaps.
 
 ### Prepare Commit
 
@@ -274,6 +277,9 @@ without rewriting history or reformatting code. It applies the same commit
 discipline as `rules/commit-guidelines.md`, invoked automatically when a commit
 is requested.
 
-The skill's structural and adoption tests run in this repository. Its automatic
-trigger and behavioral contract still require forward-testing in both Codex and
-Claude before claiming cross-agent behavioral validation.
+The skill's structural and adoption tests run in this repository. Live
+forward-testing confirmed the automatic trigger in both Codex and Claude;
+Codex's read-only sandbox did not block it from actually committing (correctly
+scoped and worded), while Claude's plan mode stopped before executing but
+still named the correct skill and scope in its draft plan. See
+`docs/cross-agent-validation.md`'s Shared-Skill Forward Test for details.
