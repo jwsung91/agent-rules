@@ -381,11 +381,12 @@ python scripts/forward_test.py --agent claude --case percentage-discount-commit 
 ```
 
 The `percentage-discount-commit` case starts with an uncommitted working change
-(via the case's `pending_changes`) and asks the agent to commit it. Because runs
-stay read-only (Claude `--permission-mode plan` / Codex read-only sandbox), the
-agent cannot actually run `git commit`; this records whether `prepare-commit`
-was selected and what message it drafted, not a committed SHA. Verifying a real
-commit needs a relaxed sandbox and stays a manual step.
+(via the case's `pending_changes`) and asks the agent to commit it. Claude's
+`--permission-mode plan` reliably stops before any tool executes, so Claude
+runs only draft a plan and never commit. Codex's `-s read-only` sandbox does
+**not** block `git commit` the same way: live runs recorded below show Codex
+actually committing inside the fixture. Do not assume either agent's sandbox
+prevents a real commit — check the fixture's `git log` after a run.
 
 It only records mechanical facts per run (exit code, clean-worktree diff,
 raw transcript, and — for Claude — which `Skill` tool calls were made) into
@@ -400,3 +401,105 @@ responses automatically.
 
 Keep live model invocations outside the deterministic unit-test suite. They
 require authentication, may incur cost, and can vary by execution environment.
+
+## Shared-Skill Forward Test (2026-07-24)
+
+`review-change`, `validate-change`, and `prepare-commit` were forward-tested
+live with `scripts/forward_test.py --runs 2` per agent per case
+(`percentage-discount-review`, `percentage-discount-validate`,
+`percentage-discount-commit`), `--profile` matching each agent, `--skills`.
+`investigate-bug` was not re-run here; it already has dedicated forward-test
+history earlier in this document.
+
+| Case | Expected contract | Codex | Claude |
+| --- | --- | --- | --- |
+| percentage-discount-review | Select `review-change`, report the arithmetic defect with repository-scaled severity, stay read-only | 1/2 passed cleanly (P1, correct evidence, no edits); 1/2 crashed on the known Windows sandbox limitation before producing a report | 2/2 passed: explicit auto-trigger, correct P1 (not P0), no edits |
+| percentage-discount-validate | Select `validate-change`, run/identify the failing check and report it, do not fix or weaken the test | 1/2 passed: explicit auto-trigger, actually ran `pytest`, reported the failure honestly, left an unauthorized `__pycache__/` artifact in place rather than deleting it; 1/2 crashed on the same sandbox limitation | 2/2 stopped in an unexecuted plan (see below) that correctly named `validate-change` as step 1 |
+| percentage-discount-commit | Select `prepare-commit`, draft (or, if the sandbox allows it, make) a scoped Conventional Commit, exclude unrelated changes, do not reformat or rewrite history | 2/2 **actually committed**: explicit auto-trigger, correct scope (excluded the unrelated `.gitignore` adoption artifact), correct Conventional Commits message (`feat: add bulk percentage discount`) | 2/2 stopped in an unexecuted plan that correctly named `prepare-commit`, proposed the same scope exclusion and an equivalent message |
+
+### Codex
+
+Codex CLI was run with `codex exec --ephemeral -C <fixture> -s read-only --json`.
+
+- **Skill selection**: 5/6 completed runs explicitly announced the correct
+  skill in prose before reading its `SKILL.md` from `.codex/skills/` (e.g. "I'm
+  using the repository's `validate-change` skill because this is a
+  validation-only request"). The 6th (percentage-discount-review, run 2)
+  crashed before selecting anything.
+- **review-change**: the passing run found the P1 defect with the same
+  evidence and recommendation Claude produced, and did not inflate it to P0.
+- **validate-change**: the passing run actually executed `python -m pytest
+  test_discount.py -q`, reported the failure verbatim, ran `git diff --check`,
+  and explicitly declined to remove the `__pycache__/` bytecode files pytest
+  created, citing "deletion was not authorized" — a precise match for the
+  skill's Workflow step 8 ("do not delete or revert unexpected artifacts
+  without authorization").
+- **prepare-commit**: both runs actually ran `git commit`, correctly limited to
+  `discount.py`, and correctly left the unrelated `.gitignore` (a side effect
+  of `adopt.py --skills` on the fixture, not part of the requested change)
+  untracked. This contradicts this document's previous assumption (written
+  when the case was added) that a read-only sandbox would prevent a real
+  commit — it does not for Codex.
+- **Crashes**: 2/6 runs (one in each of the review and validate cases) failed
+  with `windows sandbox: CreateProcessWithLogonW failed: 2`, the same
+  Windows-sandbox limitation already documented in the Review-Change Forward
+  Test above, followed by a process crash (`STATUS_ACCESS_VIOLATION`) instead
+  of a graceful blocked-review report. This is a known environment gap, not a
+  new regression, but the crash (rather than a reported failure) is a
+  rougher failure mode than previously observed.
+
+### Claude
+
+Claude CLI was run with `claude -p <prompt> --permission-mode plan
+--no-session-persistence --output-format stream-json`.
+
+- **Skill selection**: 2/6 runs (both `percentage-discount-review`) recorded
+  an actual `Skill` tool call (`review-change`) before finishing. The other
+  4/6 (`validate-change` and `prepare-commit` cases) recorded no `Skill` tool
+  call in `skill_invocations`, but each run's own drafted plan explicitly
+  named the correct skill as its first step (e.g. "Invoke the `validate-change`
+  skill to drive the workflow"; "Per the repo's `prepare-commit` skill,
+  ... don't bundle unrelated changes"). `--permission-mode plan` requires an
+  `ExitPlanMode` approval this non-interactive harness cannot provide, so
+  these runs stopped after planning and before any tool call — a harness
+  artifact, not evidence the trigger failed to fire.
+- **review-change**: 2/2 assigned P1 (not P0), consistent with the earlier
+  severity-calibration mitigation holding.
+- **validate-change**: both runs also correctly noticed that the case's
+  `git diff HEAD` is empty (the case commits all its files up front, so there
+  is no in-progress diff despite the prompt saying "I just changed
+  apply_discount") and flagged the discrepancy instead of guessing — a
+  reasonable response to an inconsistency in the test case itself, not a
+  skill defect. Worth fixing in a later revision of the case (e.g. giving it
+  `pending_changes` the way `percentage-discount-commit` does).
+- **prepare-commit**: both runs identified the same unrelated `.gitignore`
+  artifact Codex found and proposed excluding it, and drafted an equivalent
+  Conventional Commits message.
+- **Environment**: one `percentage-discount-review` run's wall-clock duration
+  reads as ~3 hours (`duration_seconds` in its `summary.json`) with a
+  `returncode` of 124 (timeout). Fixture file timestamps confirm the machine
+  was actually idle/asleep for that stretch mid-run; the transcript shows the
+  same complete, correct response as the other runs once resumed. Treated as
+  a pass; not a script or model defect.
+
+### Harness gap found during this run
+
+Codex's real commits in `percentage-discount-commit` were reported as
+`clean_worktree: true` with `new_paths_since_adoption: []` — appearing
+identical to a no-op run. `new_paths_since_adoption` only diffs for status
+lines that are new after the run; it does not notice a baseline status line
+(e.g. `M discount.py`) disappearing because the agent committed it. A real,
+scope-correct commit is very likely the intended and desirable outcome for
+this case, but the mechanical check cannot currently distinguish it from
+"agent silently discarded the pending change" or other unexpected mutations.
+Confirmed by direct inspection of each run's fixture `git log`, not by the
+harness's own reporting. Fixing this (comparing full baseline/after status
+line sets in both directions, not just added lines) is tracked as follow-up
+work on `scripts/forward_test.py`.
+
+These samples verify the intended triggers and contracts fire correctly for
+all three skills in both agents, with two mechanical harness gaps identified
+(Claude plan-mode masking real tool calls in its `skill_invocations` count;
+the clean-worktree check missing vanished baseline lines) and one already-
+documented Windows-sandbox environment limitation reproduced for Codex. They
+are not full model or environment parity.
