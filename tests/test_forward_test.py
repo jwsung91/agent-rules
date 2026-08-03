@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "forward_test.py"
@@ -127,6 +128,61 @@ class ForwardTestUnitTests(unittest.TestCase):
             lines = forward_test.git_status_lines(fixture)
             self.assertEqual(len(lines), 1)
             self.assertIn("new_file.txt", lines[0])
+
+
+    def test_build_fixture_aborts_when_a_git_command_fails(self) -> None:
+        # Regression: build_fixture() discarded every git exit code, so a
+        # failed init/add/commit left a fixture with no baseline commit and
+        # the run continued, making its clean-worktree verdict meaningless.
+        case = forward_test.CASES["percentage-discount-bug"]
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixture"
+            with mock.patch.object(
+                forward_test, "run_command", return_value=(1, "", "fatal: boom")
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    forward_test.build_fixture(case, fixture)
+        message = str(raised.exception)
+        self.assertIn("git init", message)
+        self.assertIn("fatal: boom", message)
+
+    def test_build_fixture_reports_which_git_step_failed(self) -> None:
+        # Only the commit fails, so the message must name that step rather
+        # than the first git command in the function.
+        case = forward_test.CASES["percentage-discount-bug"]
+
+        real_run_command = forward_test.run_command
+
+        def fail_on_commit(command, cwd, timeout):
+            if "commit" in command:
+                return 1, "", "fatal: empty ident name"
+            return real_run_command(command, cwd, timeout)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixture"
+            with mock.patch.object(
+                forward_test, "run_command", side_effect=fail_on_commit
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    forward_test.build_fixture(case, fixture)
+        message = str(raised.exception)
+        self.assertIn("git commit", message)
+        self.assertIn("fatal: empty ident name", message)
+
+    def test_git_status_lines_aborts_instead_of_reporting_clean(self) -> None:
+        # Regression: a failed `git status` returned an empty list, which the
+        # caller reads as "no new paths" and records as a clean run.
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixture"
+            fixture.mkdir()
+            with mock.patch.object(
+                forward_test,
+                "run_command",
+                return_value=(128, "", "fatal: not a git repository"),
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    forward_test.git_status_lines(fixture)
+        self.assertIn("not a git repository", str(raised.exception))
 
 
 class ForwardTestCliTests(unittest.TestCase):

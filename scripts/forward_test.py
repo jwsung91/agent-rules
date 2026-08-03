@@ -210,19 +210,37 @@ def run_command(command: list[str], cwd: Path | None, timeout: int) -> tuple[int
     return result.returncode, result.stdout, result.stderr
 
 
+def run_checked(command: list[str], cwd: Path, timeout: int, *, action: str) -> str:
+    """Run a command that must succeed, or abort with its output.
+
+    Every recorded result is relative to the fixture repository: if one of the
+    setup git commands quietly fails, the run continues against a repository
+    that has no baseline commit and its clean-worktree verdict means nothing.
+    Fail loudly instead, the way adopt_skills() already does for the adoption
+    step.
+    """
+    code, stdout, stderr = run_command(command, cwd, timeout)
+    if code != 0:
+        raise SystemExit(
+            f"{action} failed (exit {code}): {shlex.join(command)}\n{stdout}\n{stderr}"
+        )
+    return stdout
+
+
 def build_fixture(case: ForwardTestCase, fixture_dir: Path) -> None:
     fixture_dir.mkdir(parents=True, exist_ok=True)
     for relative_path, content in case.files.items():
         target = fixture_dir / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-    run_command(["git", "init", "-q"], fixture_dir, timeout=30)
-    run_command(
+    run_checked(["git", "init", "-q"], fixture_dir, 30, action="git init")
+    run_checked(
         ["git", "-c", "user.email=forward-test@example.invalid", "-c", "user.name=Forward Test", "add", "-A"],
         fixture_dir,
-        timeout=30,
+        30,
+        action="git add",
     )
-    run_command(
+    run_checked(
         [
             "git",
             "-c",
@@ -237,7 +255,8 @@ def build_fixture(case: ForwardTestCase, fixture_dir: Path) -> None:
             "initial fixture",
         ],
         fixture_dir,
-        timeout=30,
+        30,
+        action="git commit",
     )
     # Apply working changes left uncommitted on top of the initial commit, so a
     # case like prepare-commit starts with something to commit.
@@ -267,7 +286,12 @@ def adopt_skills(fixture_dir: Path, profile: str, shared_url: str) -> None:
 
 
 def git_status_lines(fixture_dir: Path) -> list[str]:
-    _, stdout, _ = run_command(["git", "status", "--short"], fixture_dir, timeout=30)
+    # Checked, not best-effort: a failed `git status` used to yield an empty
+    # list, which reads as "no new paths" and reports the run as clean --
+    # exactly the false negative this script exists to rule out.
+    stdout = run_checked(
+        ["git", "status", "--short"], fixture_dir, 30, action="git status"
+    )
     return [line for line in stdout.splitlines() if line.strip()]
 
 
