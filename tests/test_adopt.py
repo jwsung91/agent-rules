@@ -535,8 +535,110 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "codex", "--skills")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
-        self.assertIn(".codex/skills/investigate-bug/SKILL.md", gitignore)
+        # One directory pattern per installed skill, not one line per file.
+        self.assertIn("/.codex/skills/investigate-bug/\n", gitignore)
+        self.assertNotIn(".codex/skills/investigate-bug/SKILL.md", gitignore)
+        # What actually matters is that the installed files are ignored.
+        for relative_path in (
+            ".codex/skills/investigate-bug/SKILL.md",
+            ".codex/skills/investigate-bug/agents/openai.yaml",
+            ".agent-rules/bases/.codex/skills/investigate-bug/SKILL.md",
+        ):
+            with self.subTest(path=relative_path):
+                self.assertTrue(
+                    adopt.check_ignore_status(self.repo, relative_path).ignored,
+                    f"{relative_path} is not ignored",
+                )
         self.assertNotIn("git add .codex/skills/", result.stdout)
+
+    def test_gitignore_stays_small_and_stable_across_skills(self) -> None:
+        result = self.cli("--profile", "all", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        entries = [
+            line.strip()
+            for line in (self.repo / ".gitignore").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        # 3 entrypoints + one baseline root + one directory per installed
+        # skill per agent root -- independent of how many files each skill
+        # ships, which is what used to make this list grow.
+        expected = (
+            len(adopt.ENTRYPOINT_FILES)
+            + 1
+            + len(adopt.SHARED_SKILLS) * len(adopt.PROFILE_SKILL_ROOTS["all"])
+        )
+        self.assertEqual(len(entries), expected, entries)
+        # Every generated file the old scheme listed individually.
+        skill_files = [path for _source, path in adopt.shared_skill_file_specs("all")]
+        generated = (
+            list(adopt.ENTRYPOINT_FILES)
+            + [adopt.sync_base_path(name) for name in adopt.ENTRYPOINT_FILES]
+            + skill_files
+            + [adopt.sync_base_path(path) for path in skill_files]
+        )
+        self.assertLess(len(entries), len(generated))
+        for relative_path in generated:
+            with self.subTest(path=relative_path):
+                self.assertTrue(
+                    adopt.check_ignore_status(self.repo, relative_path).ignored
+                )
+
+    def test_gitignore_migrates_legacy_per_file_entries(self) -> None:
+        result = self.cli("--profile", "codex", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        gitignore = self.repo / ".gitignore"
+        # Rewrite the file the way an older version of the helper wrote it,
+        # keeping an unrelated user entry above it and one of the helper's
+        # own entrypoint lines inside the block.
+        legacy_entries = ["/AGENTS.md"] + [
+            f"/{path}" for _source, path in adopt.shared_skill_file_specs("codex")
+        ]
+        gitignore.write_text(
+            "build/\n\n"
+            + f"{adopt.GITIGNORE_AGENT_COMMENT}\n"
+            + "\n".join(legacy_entries)
+            + "\n",
+            encoding="utf-8",
+        )
+
+        sync = self.cli("--sync")
+        self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
+        content = gitignore.read_text(encoding="utf-8")
+        self.assertIn("build/", content, "unrelated user entry was dropped")
+        self.assertIn("/.codex/skills/investigate-bug/\n", content)
+        self.assertNotIn("SKILL.md", content)
+        self.assertNotIn("openai.yaml", content)
+        # Exactly one agent-rules block survives the migration.
+        self.assertEqual(content.count(adopt.GITIGNORE_AGENT_COMMENT), 1)
+        for _source, relative_path in adopt.shared_skill_file_specs("codex"):
+            with self.subTest(path=relative_path):
+                self.assertTrue(
+                    adopt.check_ignore_status(self.repo, relative_path).ignored
+                )
+
+    def test_gitignore_migration_is_idempotent(self) -> None:
+        self.assertEqual(self.cli("--profile", "codex", "--skills").returncode, 0)
+        gitignore = self.repo / ".gitignore"
+        before = gitignore.read_text(encoding="utf-8")
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assertEqual(gitignore.read_text(encoding="utf-8"), before)
+
+    def test_gitignore_migration_leaves_foreign_skill_entries_alone(self) -> None:
+        # A skill this helper does not install is the repository's own
+        # business, even under the same .codex/skills/ root.
+        self.assertEqual(self.cli("--profile", "codex", "--skills").returncode, 0)
+        gitignore = self.repo / ".gitignore"
+        gitignore.write_text(
+            gitignore.read_text(encoding="utf-8")
+            + "\n/.codex/skills/team-only-skill/SKILL.md\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assertIn(
+            "/.codex/skills/team-only-skill/SKILL.md",
+            gitignore.read_text(encoding="utf-8"),
+        )
 
     def test_skill_sync_preserves_local_edits_with_baseline(self) -> None:
         result = self.cli("--profile", "codex", "--skills", "--visibility", "tracked")

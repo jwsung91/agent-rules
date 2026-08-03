@@ -291,6 +291,30 @@ untracked. Remove or narrow the matching ignore rule first.
 Local visibility ignores only the entrypoints and skills selected by the active
 profile. It does not add unused agent entrypoint names.
 
+Entries are written as one line per entrypoint plus one directory pattern per
+installed skill, with a single pattern covering the sync baselines:
+
+```gitignore
+# agent-rules (local only)
+/AGENTS.md
+/CLAUDE.md
+/.agent-rules/bases/
+/.codex/skills/investigate-bug/
+/.claude/skills/investigate-bug/
+```
+
+Directory patterns keep the list proportional to the number of skills rather
+than the number of files inside them, so adding a file to a skill upstream
+does not grow every adopted repository's `.gitignore`. Each skill is named
+individually instead of ignoring `.codex/skills/` or `.claude/skills/`
+wholesale, so skills the repository wrote itself are untouched.
+
+A `.gitignore` written by an earlier version listed every generated file
+separately (30 entries for `--profile all --skills`). The next `--sync`
+replaces those entries with the equivalent directory patterns, in place and
+without disturbing unrelated rules, and reports how many it replaced. Nothing
+changes about which files end up ignored.
+
 After adoption, commit only `.gitignore`:
 
 ```bash
