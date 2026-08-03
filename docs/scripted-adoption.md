@@ -116,6 +116,13 @@ python scripts/adopt.py /path/to/repo --sync
 
 `--profile` is optional with `--sync`; the helper infers it from the existing file's metadata. Pass `--profile` explicitly to change the profile.
 
+`--sync` is idempotent: when the shared source has not moved, it reports every
+file under `Skipped:` and leaves them byte-identical. The `generated_at`
+timestamp in the metadata block is only refreshed when something else in the
+file actually changes, so repeated syncs do not produce empty diffs (or, under
+`--visibility tracked`, no-content commits). Missing `.gitignore` entries are
+still repaired on a sync that writes nothing.
+
 Baselines are stored under `.agent-rules/bases/`. Local visibility ignores
 them together with generated files; tracked visibility keeps them trackable so
 other team members can reproduce later merges. A previously installed,
