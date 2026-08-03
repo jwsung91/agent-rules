@@ -1,0 +1,31 @@
+# Ruff configuration for this repository's helper scripts and tests.
+#
+# A dedicated ruff.toml rather than pyproject.toml: this repository ships
+# scripts, rules, and templates -- it is not a Python package, and a
+# pyproject.toml would imply otherwise to both people and tooling.
+#
+# CI runs `ruff check scripts/ tests/`. Without this file that ran on ruff's
+# built-in defaults, which change between releases: ruff 0.16.0 widened the
+# default selection and reports 10 findings on a tree that 0.15.22 passed
+# cleanly. Pinning the selection keeps a dependency bump from silently
+# redefining what CI enforces.
+
+# The test matrix covers 3.10 and 3.12; target the lower bound so rules that
+# suggest newer syntax do not fire on code that must still run on 3.10.
+target-version = "py310"
+
+[lint]
+# E4/E7/E9 and F are ruff's default selection as of 0.15.x, stated explicitly
+# so it survives future default changes. UP, B, and C4 are additions the tree
+# already satisfies, so they guard new code without requiring any cleanup.
+#
+# Deliberately not selected:
+# - E501 (line-too-long): 34 existing lines exceed 100 characters and 5 exceed
+#   120. Reflowing them is unrelated churn, and no line limit has been part of
+#   this repository's conventions.
+# - I (import sorting): would reformat an otherwise untouched test module.
+#   Worth enabling on its own, not as a side effect of adding this file.
+# - BLE001 (blind-except): scripts/adopt.py catches broadly on purpose in the
+#   batch loop, so one repository cannot abort the rest of the run. That is
+#   documented at the call site.
+select = ["E4", "E7", "E9", "F", "UP", "B", "C4"]

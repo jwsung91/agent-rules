@@ -27,6 +27,7 @@ Supported agents:
 - `rules/`: Shared rules that apply across agents.
 - `templates/`: Reusable task, review, and target-repository adoption templates.
 - `.github/workflows/tests.yml`: CI workflow that runs the test suite under `tests/` on push and pull request.
+- `ruff.toml`: Lint configuration for `scripts/` and `tests/`, pinning the rule selection CI enforces so a ruff upgrade cannot change it silently.
 
 ## Agent Usage Model
 
