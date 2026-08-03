@@ -330,9 +330,12 @@ python scripts/adopt.py /path/to/repo --check
 - `.gitignore` visibility
 - version status (local source HEAD vs. remote main HEAD)
 
-Add `--skills` to verify shared Skill installation, sync baselines, and the
-Codex/Claude `SKILL.md` contract. Pass the intended visibility so tracked and
-local files are evaluated correctly:
+Shared Skill installation, sync baselines, and the Codex/Claude `SKILL.md`
+contract are verified automatically when the repository already has skills
+installed — the same inference `--sync` uses, so a deleted skill file is
+reported as `[FAIL]` by a plain `--check`. Pass `--skills` explicitly to
+require them in a repository that has none yet, and pass the intended
+visibility so tracked and local files are evaluated correctly:
 
 ```bash
 python scripts/adopt.py /path/to/repo --check --skills --visibility tracked

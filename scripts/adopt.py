@@ -1490,7 +1490,10 @@ def check_adoption(
                 "OK" if path.exists() else "FAIL",
                 f"{relative_path} exists"
                 if path.exists()
-                else f"{relative_path} is required by --skills but missing",
+                # "the installed shared skills", not "--skills": skill checks
+                # also run when --check infers them from an existing
+                # installation, so the flag may never have been typed.
+                else f"{relative_path} is required by the installed shared skills but missing",
             )
             baseline = target_repo / sync_base_path(relative_path)
             append_check(
@@ -2010,12 +2013,23 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
             continue
 
         try:
-            if args.check:
+            # Per-entry copy: skills inference for one repository must not
+            # leak into the rest of the batch.
+            entry_args = argparse.Namespace(**vars(args))
+            if (
+                (entry_args.sync or entry_args.check)
+                and not entry_args.skills
+                and profile
+                and skills_installed(target_repo, profile)
+            ):
+                entry_args.skills = True
+
+            if entry_args.check:
                 code = check_adoption(
                     target_repo,
-                    args.shared_url,
-                    check_skills=args.skills,
-                    visibility=args.visibility,
+                    entry_args.shared_url,
+                    check_skills=entry_args.skills,
+                    visibility=entry_args.visibility,
                     profile_override=profile,
                 )
             else:
@@ -2023,15 +2037,6 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
                     print("FAIL: no profile specified and none inferred from existing files.")
                     results.append((entry.path, 1))
                     continue
-                # Per-entry copy: skills inference for one repository must not
-                # leak into the rest of the batch.
-                entry_args = argparse.Namespace(**vars(args))
-                if (
-                    entry_args.sync
-                    and not entry_args.skills
-                    and skills_installed(target_repo, profile)
-                ):
-                    entry_args.skills = True
                 plan = build_plan(target_repo, entry_args, profile)
                 if entry_args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
                     print(f"FAIL: local source is {plan.source_status.local_status}. Update agent-rules first.")
@@ -2161,8 +2166,15 @@ def main() -> int:
 
     # Without this, --sync would render entrypoints skill-free and the 3-way
     # merge would strip the Shared Skills section from repositories whose
-    # skills were installed by an earlier --skills run.
-    if args.sync and not args.skills and profile and skills_installed(target_repo, profile):
+    # skills were installed by an earlier --skills run. --check needs the same
+    # inference for a different reason: without it a health check silently
+    # skips every skill assertion, so a deleted skill file reports clean.
+    if (
+        (args.sync or args.check)
+        and not args.skills
+        and profile
+        and skills_installed(target_repo, profile)
+    ):
         args.skills = True
 
     validate_args(args, profile)

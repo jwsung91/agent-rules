@@ -756,7 +756,9 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         check = self.cli("--check", "--skills", "--visibility", "local")
         self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
-        self.assertIn("is required by --skills but missing", check.stdout)
+        self.assertIn(
+            "is required by the installed shared skills but missing", check.stdout
+        )
 
     def test_check_skills_detects_missing_non_skill_md_file(self) -> None:
         # Regression: --check --skills only checked SKILL.md's own
@@ -772,7 +774,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
         self.assertIn(
             ".codex/skills/investigate-bug/agents/openai.yaml is required by "
-            "--skills but missing",
+            "the installed shared skills but missing",
             check.stdout,
         )
 
@@ -916,6 +918,32 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--sync")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("CLAUDE.md", gitignore.read_text(encoding="utf-8"))
+
+    def test_check_infers_installed_skills_without_the_flag(self) -> None:
+        # Regression: --sync inferred an existing skill installation via
+        # skills_installed() but --check did not, so a health check silently
+        # skipped every skill assertion and reported a deleted skill file as
+        # clean (exit 2, WARN-only).
+        self.assertEqual(
+            self.cli("--profile", "claude", "--skills").returncode, 0
+        )
+        (self.repo / ".claude/skills/review-change/SKILL.md").unlink()
+
+        check = self.cli("--check")
+        self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
+        self.assertIn(
+            ".claude/skills/review-change/SKILL.md is required by the "
+            "installed shared skills but missing",
+            check.stdout,
+        )
+
+    def test_check_without_installed_skills_stays_skill_free(self) -> None:
+        # The inference must not turn a skill-less adoption into a wall of
+        # FAILs for skills the repository never installed.
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        check = self.cli("--check")
+        self.assertNotIn("[FAIL]", check.stdout)
+        self.assertNotIn("required by the installed shared skills", check.stdout)
 
     def test_sync_preserves_managed_content_edits_in_claude(self) -> None:
         self.assertEqual(self.cli("--profile", "claude").returncode, 0)
