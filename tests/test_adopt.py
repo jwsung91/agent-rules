@@ -778,6 +778,32 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             check.stdout,
         )
 
+    def test_check_does_not_call_a_missing_skill_file_current(self) -> None:
+        # Regression: the baseline-vs-source staleness check ran whenever the
+        # baseline existed, so a deleted skill file drew a contradictory pair
+        # of lines -- "[FAIL] ... but missing" immediately followed by
+        # "[OK] ... is current with the local shared source".
+        result = self.cli("--profile", "claude", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        missing = ".claude/skills/review-change/SKILL.md"
+        (self.repo / missing).unlink()
+
+        check = self.cli("--check", "--skills")
+        self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
+        self.assertIn(
+            f"{missing} is required by the installed shared skills but missing",
+            check.stdout,
+        )
+        self.assertNotIn(
+            f"{missing} is current with the local shared source", check.stdout
+        )
+        # Skills that are still installed keep reporting their currency.
+        self.assertIn(
+            ".claude/skills/investigate-bug/SKILL.md is current with the "
+            "local shared source",
+            check.stdout,
+        )
+
     def test_check_treats_all_profile_as_superset_for_single_agent_override(
         self,
     ) -> None:

@@ -350,6 +350,11 @@ consistent with every other read the helper does from that checkout. `[WARN]
 repository's installed skill predates that local change and needs `--sync`,
 even if both its Codex and Claude copies still match each other.
 
+The currency comparison is reported only for files that are actually
+installed. A file missing from the target repository is reported as `[FAIL]`
+once and draws no staleness verdict, since reinstalling it replaces the
+content the verdict would describe.
+
 Exit codes distinguish severity: `0` (clean), `1` (at least one `[FAIL]`), `2` (only `[WARN]`, no `[FAIL]`).
 
 ## Subdirectory Targets

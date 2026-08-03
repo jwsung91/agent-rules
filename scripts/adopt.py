@@ -1503,7 +1503,13 @@ def check_adoption(
                 if baseline.exists()
                 else f"sync baseline missing for {relative_path}",
             )
-            if baseline.exists():
+            # Requires the installed file, not just the baseline: a staleness
+            # verdict about a file that is not installed contradicts the FAIL
+            # emitted above ("... but missing" followed by "... is current
+            # with the local shared source"). The FAIL already says what to
+            # do, so stay silent here rather than describe a file that a
+            # reinstall is about to replace anyway.
+            if baseline.exists() and path.exists():
                 # Compares the recorded baseline (upstream content as of the
                 # last --sync) against the *current local shared source* —
                 # i.e. the literal file on disk under source_repo_root(),
