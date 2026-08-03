@@ -119,6 +119,7 @@ SKILL_TRIGGER_PRIORITY_NOTE = (
 )
 TOOL_ENTRYPOINTS = {"CLAUDE.md", "GEMINI.md"}
 METADATA_RE = re.compile(r"<!--\s*agent-rules:\s*(.*?)-->", re.DOTALL)
+GENERATED_AT_RE = re.compile(r"^generated_at=.*$", re.MULTILINE)
 MANAGED_START = "<!-- agent-rules-managed:start -->"
 MANAGED_END = "<!-- agent-rules-managed:end -->"
 BOUNDARY_PLACEHOLDER = "Add project-specific rules here."
@@ -410,6 +411,31 @@ def parse_metadata(content: str) -> dict[str, str]:
         key, value = line.split("=", 1)
         metadata[key.strip()] = value.strip()
     return metadata
+
+
+def mask_generated_at(content: str) -> str:
+    """Return `content` with the metadata block's generated_at value blanked.
+
+    Every render stamps a fresh `generated_at`, so a byte comparison reports a
+    change even when nothing else moved — which made repeated `--sync` runs
+    rewrite every entrypoint and produce an empty diff each time. Comparing
+    with the timestamp masked keeps `--sync` idempotent while still detecting
+    real content changes, including a new `source_commit`.
+
+    Only the value inside the `<!-- agent-rules: ... -->` block is masked, so a
+    line that happens to start with `generated_at=` elsewhere in the file is
+    still compared literally.
+    """
+    match = METADATA_RE.search(content)
+    if not match:
+        return content
+    masked = GENERATED_AT_RE.sub("generated_at=", match.group(0))
+    return content[: match.start()] + masked + content[match.end() :]
+
+
+def same_content(left: str, right: str) -> bool:
+    """Compare rendered content while ignoring the generated_at timestamp."""
+    return mask_generated_at(left) == mask_generated_at(right)
 
 
 def render_template(content: str, context: RenderContext) -> str:
@@ -799,7 +825,7 @@ def baseline_plan(
     target = target_repo / path
     if not target.exists():
         action = "create"
-    elif target.read_text(encoding="utf-8", errors="replace") == upstream:
+    elif same_content(target.read_text(encoding="utf-8", errors="replace"), upstream):
         action = "no-op"
     else:
         action = "update"
@@ -826,7 +852,7 @@ def plan_three_way_update(
     )
     if conflicted:
         return merged, "merge-conflict"
-    return merged, "no-op" if merged == existing else "merge"
+    return merged, "no-op" if same_content(merged, existing) else "merge"
 
 
 def extract_managed_block(content: str) -> str | None:
@@ -952,7 +978,7 @@ def plan_generated_update(
         content = update_agents_content(existing, rendered, metadata)
     else:
         content = rendered
-    return content, ("no-op" if content == existing else "update")
+    return content, ("no-op" if same_content(content, existing) else "update")
 
 
 def file_action(target_repo: Path, relative_path: str, *, update: bool, force: bool) -> str:
@@ -1032,7 +1058,7 @@ def build_entrypoint_plans(
                         else ""
                     ),
                 )
-                action = "no-op" if content == existing else "merge"
+                action = "no-op" if same_content(content, existing) else "merge"
             elif force:
                 content = rendered
             else:
@@ -1464,7 +1490,10 @@ def check_adoption(
                 "OK" if path.exists() else "FAIL",
                 f"{relative_path} exists"
                 if path.exists()
-                else f"{relative_path} is required by --skills but missing",
+                # "the installed shared skills", not "--skills": skill checks
+                # also run when --check infers them from an existing
+                # installation, so the flag may never have been typed.
+                else f"{relative_path} is required by the installed shared skills but missing",
             )
             baseline = target_repo / sync_base_path(relative_path)
             append_check(
@@ -1877,11 +1906,12 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
             (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
         )
     ]
-    any_local_output_written = any(
-        path in generated_local_paths for path in (created + updated)
-    )
+    # Keyed on the planned files, not on what this run happened to write: an
+    # idempotent --sync writes nothing, and a missing .gitignore entry still
+    # needs repairing. add_to_gitignore() returns None when every entry is
+    # already present, so this stays a no-op in the common case.
     gitignore_file: str | None = None
-    if any_local_output_written and args.visibility == "local":
+    if generated_local_paths and args.visibility == "local":
         gitignore_file = add_to_gitignore(
             git_root,
             generated_local_paths,
@@ -1983,12 +2013,23 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
             continue
 
         try:
-            if args.check:
+            # Per-entry copy: skills inference for one repository must not
+            # leak into the rest of the batch.
+            entry_args = argparse.Namespace(**vars(args))
+            if (
+                (entry_args.sync or entry_args.check)
+                and not entry_args.skills
+                and profile
+                and skills_installed(target_repo, profile)
+            ):
+                entry_args.skills = True
+
+            if entry_args.check:
                 code = check_adoption(
                     target_repo,
-                    args.shared_url,
-                    check_skills=args.skills,
-                    visibility=args.visibility,
+                    entry_args.shared_url,
+                    check_skills=entry_args.skills,
+                    visibility=entry_args.visibility,
                     profile_override=profile,
                 )
             else:
@@ -1996,15 +2037,6 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
                     print("FAIL: no profile specified and none inferred from existing files.")
                     results.append((entry.path, 1))
                     continue
-                # Per-entry copy: skills inference for one repository must not
-                # leak into the rest of the batch.
-                entry_args = argparse.Namespace(**vars(args))
-                if (
-                    entry_args.sync
-                    and not entry_args.skills
-                    and skills_installed(target_repo, profile)
-                ):
-                    entry_args.skills = True
                 plan = build_plan(target_repo, entry_args, profile)
                 if entry_args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
                     print(f"FAIL: local source is {plan.source_status.local_status}. Update agent-rules first.")
@@ -2134,8 +2166,15 @@ def main() -> int:
 
     # Without this, --sync would render entrypoints skill-free and the 3-way
     # merge would strip the Shared Skills section from repositories whose
-    # skills were installed by an earlier --skills run.
-    if args.sync and not args.skills and profile and skills_installed(target_repo, profile):
+    # skills were installed by an earlier --skills run. --check needs the same
+    # inference for a different reason: without it a health check silently
+    # skips every skill assertion, so a deleted skill file reports clean.
+    if (
+        (args.sync or args.check)
+        and not args.skills
+        and profile
+        and skills_installed(target_repo, profile)
+    ):
         args.skills = True
 
     validate_args(args, profile)

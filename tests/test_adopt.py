@@ -756,7 +756,9 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         check = self.cli("--check", "--skills", "--visibility", "local")
         self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
-        self.assertIn("is required by --skills but missing", check.stdout)
+        self.assertIn(
+            "is required by the installed shared skills but missing", check.stdout
+        )
 
     def test_check_skills_detects_missing_non_skill_md_file(self) -> None:
         # Regression: --check --skills only checked SKILL.md's own
@@ -772,7 +774,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
         self.assertIn(
             ".codex/skills/investigate-bug/agents/openai.yaml is required by "
-            "--skills but missing",
+            "the installed shared skills but missing",
             check.stdout,
         )
 
@@ -855,6 +857,93 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn(
             "shared skills are not supported for GEMINI.md", check.stdout
         )
+
+    def test_repeated_sync_is_idempotent(self) -> None:
+        # Regression: render_metadata() stamps a fresh generated_at on every
+        # run, so --sync used to rewrite every entrypoint and baseline even
+        # when the shared source had not moved -- producing an empty diff (and
+        # under --visibility tracked, a no-content commit) on each sync.
+        self.assertEqual(self.cli("--profile", "all", "--skills").returncode, 0)
+        tracked = [
+            self.repo / name
+            for name in adopt.ENTRYPOINT_FILES
+            + tuple(adopt.sync_base_path(n) for n in adopt.ENTRYPOINT_FILES)
+        ]
+        before = {path: path.read_bytes() for path in tracked}
+
+        result = self.cli("--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        for path, original in before.items():
+            with self.subTest(path=path.name):
+                self.assertEqual(path.read_bytes(), original)
+        # "Updated:" must be empty; the entrypoints belong under "Skipped:".
+        updated_section = result.stdout.split("Updated:", 1)[1].split("Skipped:", 1)[0]
+        self.assertIn("none", updated_section)
+
+    def test_sync_still_rewrites_when_shared_content_changes(self) -> None:
+        # Guards the other side of test_repeated_sync_is_idempotent: masking
+        # generated_at must not mask a real content change. Staleness is put in
+        # both the file and its baseline, which is what "upstream moved and the
+        # local file has no edit of its own" looks like to the 3-way merge --
+        # editing only the file would instead exercise local-edit preservation
+        # (test_sync_preserves_managed_content_edits_in_claude).
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        rule = "Prefer simple, explicit, maintainable changes."
+        paths = [
+            self.repo / "CLAUDE.md",
+            self.repo / adopt.sync_base_path("CLAUDE.md"),
+        ]
+        for path in paths:
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(rule, "Stale rule."),
+                encoding="utf-8",
+            )
+
+        result = self.cli("--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        for path in paths:
+            with self.subTest(path=path.name):
+                content = path.read_text(encoding="utf-8")
+                self.assertIn(rule, content)
+                self.assertNotIn("Stale rule.", content)
+
+    def test_sync_repairs_missing_gitignore_entry_without_content_change(self) -> None:
+        # A fully idempotent sync writes no files; .gitignore repair must not
+        # be keyed on whether anything was written.
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        gitignore = self.repo / ".gitignore"
+        self.assertIn("CLAUDE.md", gitignore.read_text(encoding="utf-8"))
+        gitignore.write_text("", encoding="utf-8")
+
+        result = self.cli("--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("CLAUDE.md", gitignore.read_text(encoding="utf-8"))
+
+    def test_check_infers_installed_skills_without_the_flag(self) -> None:
+        # Regression: --sync inferred an existing skill installation via
+        # skills_installed() but --check did not, so a health check silently
+        # skipped every skill assertion and reported a deleted skill file as
+        # clean (exit 2, WARN-only).
+        self.assertEqual(
+            self.cli("--profile", "claude", "--skills").returncode, 0
+        )
+        (self.repo / ".claude/skills/review-change/SKILL.md").unlink()
+
+        check = self.cli("--check")
+        self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
+        self.assertIn(
+            ".claude/skills/review-change/SKILL.md is required by the "
+            "installed shared skills but missing",
+            check.stdout,
+        )
+
+    def test_check_without_installed_skills_stays_skill_free(self) -> None:
+        # The inference must not turn a skill-less adoption into a wall of
+        # FAILs for skills the repository never installed.
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        check = self.cli("--check")
+        self.assertNotIn("[FAIL]", check.stdout)
+        self.assertNotIn("required by the installed shared skills", check.stdout)
 
     def test_sync_preserves_managed_content_edits_in_claude(self) -> None:
         self.assertEqual(self.cli("--profile", "claude").returncode, 0)
