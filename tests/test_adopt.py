@@ -23,6 +23,17 @@ assert spec.loader is not None
 sys.modules["adopt_agent_rules"] = adopt
 spec.loader.exec_module(adopt)
 
+# `adopt` re-exports the whole public API, which is what most assertions read.
+# Overriding a name at runtime is different: `from .constants import NAME`
+# binds it in the importing module's namespace, so a patch has to target the
+# module that *uses* the name -- patching the re-export would change nothing
+# the code under test can see. These handles exist for exactly that.
+sys.path.insert(0, str(ROOT / "scripts"))
+from agent_rules import batch as batch_mod  # noqa: E402
+from agent_rules import checking as checking_mod  # noqa: E402
+from agent_rules import planning as planning_mod  # noqa: E402
+from agent_rules import render as render_mod  # noqa: E402
+
 
 def run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
@@ -59,13 +70,13 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         self.assertEqual(set(adopt.SKILL_TRIGGER_RULES), skill_names)
 
     def test_skill_trigger_priority_note_only_appears_with_both_skills(self) -> None:
-        with mock.patch.object(adopt, "SHARED_SKILLS", ("investigate-bug",)):
+        with mock.patch.object(render_mod, "SHARED_SKILLS", ("investigate-bug",)):
             self.assertNotIn(
                 adopt.SKILL_TRIGGER_PRIORITY_NOTE,
                 adopt.shared_skills_section("CLAUDE.md"),
             )
         with mock.patch.object(
-            adopt, "SHARED_SKILLS", ("investigate-bug", "review-change")
+            render_mod, "SHARED_SKILLS", ("investigate-bug", "review-change")
         ):
             self.assertIn(
                 adopt.SKILL_TRIGGER_PRIORITY_NOTE,
@@ -279,8 +290,10 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                 "leaked\n", encoding="utf-8"
             )
 
-            with mock.patch.object(
-                adopt, "SHARED_SKILLS", ("investigate-bug", "second-skill")
+            skills = ("investigate-bug", "second-skill")
+            with (
+                mock.patch.object(checking_mod, "SHARED_SKILLS", skills),
+                mock.patch.object(planning_mod, "SHARED_SKILLS", skills),
             ):
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
@@ -313,8 +326,10 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
             )
 
             with (
-                mock.patch.object(adopt, "SHARED_SKILLS", ("second-skill",)),
-                mock.patch.object(adopt, "source_repo_root", return_value=source_root),
+                mock.patch.object(planning_mod, "SHARED_SKILLS", ("second-skill",)),
+                mock.patch.object(
+                    planning_mod, "source_repo_root", return_value=source_root
+                ),
             ):
                 destinations = {
                     destination
@@ -1485,14 +1500,14 @@ class AdoptAgentRulesBatchTests(unittest.TestCase):
         # which interpreter runs the test suite.
         toml_file = self.base / "repos.toml"
         toml_file.write_text('[[repos]]\npath = "/tmp/x"\n', encoding="utf-8")
-        original = adopt.tomllib
-        adopt.tomllib = None
+        original = batch_mod.tomllib
+        batch_mod.tomllib = None
         try:
             with self.assertRaises(SystemExit) as ctx:
                 adopt.parse_batch_file(toml_file)
             self.assertIn("Python 3.11+", str(ctx.exception))
         finally:
-            adopt.tomllib = original
+            batch_mod.tomllib = original
 
 
 def extract_section(content: str, heading: str) -> str:
