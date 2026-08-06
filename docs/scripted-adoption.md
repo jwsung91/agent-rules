@@ -9,7 +9,7 @@ The script creates root-level agent entrypoints and does not copy root-level `ru
 1. Choose an agent profile: `codex`, `claude`, `gemini`, or `all`.
 2. Choose `--visibility local` (default) or `--visibility tracked`.
 3. Add `--skills` when the repository should receive shared agent skills.
-4. Run with `--dry-run`.
+4. Run with `--dry-run` (add `--verbose` to see the file contents, not just the actions).
 5. Apply the files.
 6. Edit repository-specific boundaries and validation commands.
 7. Run the suggested validation, starting with `git diff --check`.
@@ -115,6 +115,11 @@ python scripts/adopt.py /path/to/repo --sync
 ```
 
 `--profile` is optional with `--sync`; the helper infers it from the existing file's metadata. Pass `--profile` explicitly to change the profile.
+
+Re-running the original adoption command on a repository this helper already
+adopted switches to `--sync` and says so, rather than refusing to overwrite.
+Use `--force` to regenerate from the templates instead. A file without an
+agent-rules metadata block is still refused: it was written by someone else.
 
 `--sync` is idempotent: when the shared source has not moved, it reports every
 file under `Skipped:` and leaves them byte-identical. The `generated_at`
@@ -379,7 +384,25 @@ installed. A file missing from the target repository is reported as `[FAIL]`
 once and draws no staleness verdict, since reinstalling it replaces the
 content the verdict would describe.
 
+Every run leads with a tally:
+
+```text
+Summary: 0 FAIL · 3 WARN · 1 NOTE · 53 OK
+```
+
+Add `--problems-only` to drop the passing lines and print just what needs
+attention. The summary still counts what was suppressed, and a clean run says
+`No problems found.`
+
+```bash
+python scripts/adopt.py /path/to/repo --check --problems-only
+```
+
 Exit codes distinguish severity: `0` (clean), `1` (at least one `[FAIL]`), `2` (only `[WARN]`, no `[FAIL]`).
+
+`[NOTE]` is informational and does not affect the exit code. It covers states
+with nothing to fix -- for example `--profile all --skills`, where `GEMINI.md`
+has no shared-skill path because Gemini has no shared-skill convention yet.
 
 ## Subdirectory Targets
 

@@ -54,6 +54,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dry-run", action="store_true", help="Print planned changes without writing.")
     parser.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="With --dry-run, also print the full content of each planned file.",
+    )
     parser.add_argument("--check", action="store_true", help="Check adoption health.")
     parser.add_argument(
         "--sync",

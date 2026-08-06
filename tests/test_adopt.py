@@ -386,6 +386,27 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             self.assertIn("Would create", result.stdout)
 
+    def test_dry_run_reports_actions_not_file_contents(self) -> None:
+        # --profile all --skills used to print every planned file in full:
+        # ~1,900 lines, which is not a preview anyone reads.
+        terse = self.cli("--profile", "all", "--skills", "--dry-run")
+        self.assertEqual(terse.returncode, 0, terse.stderr + terse.stdout)
+        self.assertIn("Would create", terse.stdout)
+        # Content of a generated entrypoint must not be there.
+        self.assertNotIn("## Agent Usage Model", terse.stdout)
+        self.assertIn("--verbose", terse.stdout)
+
+        verbose = self.cli("--profile", "all", "--skills", "--dry-run", "--verbose")
+        self.assertEqual(verbose.returncode, 0, verbose.stderr + verbose.stdout)
+        self.assertIn("## Agent Usage Model", verbose.stdout)
+        self.assertGreater(
+            len(verbose.stdout.splitlines()), len(terse.stdout.splitlines()) * 5
+        )
+        # Neither form writes anything.
+        for name in adopt.ENTRYPOINT_FILES:
+            with self.subTest(name=name):
+                self.assertFalse((self.repo / name).exists())
+
     def test_profile_required_for_apply(self) -> None:
         result = self.cli()
         self.assertEqual(result.returncode, 2)
@@ -1267,7 +1288,9 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
     def test_merge_and_update_dry_run(self) -> None:
         (self.repo / "AGENTS.md").write_text("# AGENTS.md\n\nCustom notes.\n", encoding="utf-8")
         # --sync on file without metadata should merge
-        sync_merge = self.cli("--profile", "codex", "--sync", "--dry-run")
+        # --verbose: the merged text is what this assertion is about, and
+        # a plain --dry-run now reports actions rather than file contents.
+        sync_merge = self.cli("--profile", "codex", "--sync", "--dry-run", "--verbose")
         self.assertEqual(sync_merge.returncode, 0, sync_merge.stderr + sync_merge.stdout)
         self.assertIn("Custom notes.", sync_merge.stdout)
         self.assertEqual(self.cli("--profile", "codex", "--sync").returncode, 0)

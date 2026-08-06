@@ -17,6 +17,7 @@ def write_plan_file(
     plan: FilePlan,
     *,
     dry_run: bool,
+    verbose: bool = False,
 ) -> tuple[str, str]:
     path = target_repo / plan.path
     if plan.action == "no-op":
@@ -61,7 +62,11 @@ def write_plan_file(
     existed = path.exists()
     if dry_run:
         print(f"Would {plan.action}: {path}")
-        if plan.content is not None:
+        # The full text of every planned file runs to ~1,900 lines for
+        # --profile all --skills, which is not a preview anyone can read.
+        # Say what would happen by default; --verbose still shows the
+        # content, which is how you confirm a merge kept a local edit.
+        if verbose and plan.content is not None:
             print("-" * 72)
             print(plan.content.rstrip())
             print("-" * 72)
@@ -232,7 +237,9 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     updated: list[str] = []
     skipped: list[str] = []
     for item in plan.files:
-        bucket, path = write_plan_file(plan.target_repo, item, dry_run=args.dry_run)
+        bucket, path = write_plan_file(
+            plan.target_repo, item, dry_run=args.dry_run, verbose=args.verbose
+        )
         if bucket == "Created":
             created.append(path)
         elif bucket == "Updated":
@@ -250,6 +257,13 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
             (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
         )
     ]
+    if (
+        args.dry_run
+        and not args.verbose
+        and any(item.content is not None for item in plan.files)
+    ):
+        print("\nRe-run with --verbose to print the content of each planned file.")
+
     # Keyed on the planned files, not on what this run happened to write: an
     # idempotent --sync writes nothing, and a missing .gitignore entry still
     # needs repairing. add_to_gitignore() returns None when every entry is
