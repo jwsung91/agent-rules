@@ -8,6 +8,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "generate_batch_list.py"
+
+# The script imports `adopt` from its own directory, so that has to be on the
+# path before loading it here.
+sys.path.insert(0, str(ROOT / "scripts"))
+import generate_batch_list  # noqa: E402
 ADOPT_SCRIPT = ROOT / "scripts" / "adopt.py"
 
 
@@ -142,3 +147,53 @@ class GenerateBatchListTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdoptedOnlyScanTests(unittest.TestCase):
+    """--adopted-only has to see repositories nested inside another repo."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def make_repo(self, relative: str, adopted: bool) -> Path:
+        repo = self.root / relative
+        (repo / ".git").mkdir(parents=True)
+        if adopted:
+            (repo / "AGENTS.md").write_text(
+                "# AGENTS.md\n\n<!-- agent-rules:\nprofile=codex\n-->\n",
+                encoding="utf-8",
+            )
+        return repo
+
+    def test_finds_adopted_repos_nested_inside_another_repo(self) -> None:
+        # A workspace repository holding per-component repositories: stopping
+        # at the outer one hides every adopted repository under it.
+        self.make_repo("workspace", adopted=False)
+        inner = self.make_repo("workspace/component", adopted=True)
+        self.make_repo("workspace/vendored", adopted=False)
+
+        found = generate_batch_list.find_git_repos(
+            self.root, descend_past_repos=True, max_depth=3
+        )
+        self.assertIn(inner, found)
+        # Default behaviour is unchanged: the outer repo ends the search.
+        self.assertNotIn(inner, generate_batch_list.find_git_repos(self.root))
+
+    def test_max_depth_bounds_the_search(self) -> None:
+        deep = self.make_repo("a/b/c/d", adopted=True)
+        self.assertNotIn(
+            deep,
+            generate_batch_list.find_git_repos(
+                self.root, descend_past_repos=True, max_depth=2
+            ),
+        )
+        self.assertIn(
+            deep,
+            generate_batch_list.find_git_repos(
+                self.root, descend_past_repos=True, max_depth=6
+            ),
+        )

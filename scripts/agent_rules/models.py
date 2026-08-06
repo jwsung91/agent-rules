@@ -66,6 +66,10 @@ class AdoptionPlan:
     ignore_statuses: list[IgnoreStatus]
     detected: DetectionResult
     warnings: list[str] = field(default_factory=list)
+    # Filled in by apply_plan: paths this run actually wrote. Lets a batch
+    # report which repositories changed, which an idempotent --sync makes
+    # worth distinguishing from the ones it merely visited.
+    written: list[str] = field(default_factory=list)
 
     @property
     def is_subdir_target(self) -> bool:

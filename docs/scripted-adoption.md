@@ -261,6 +261,19 @@ python scripts/generate_batch_list.py /path/to/workspace --output repos.toml
 It walks the root recursively looking for a `.git` entry; once a directory is
 identified as a repo, it does not search inside it further, so a submodule or
 vendored repo nested inside a found repo isn't picked up as a separate entry.
+
+Add `--adopted-only` to list just the repositories that already carry an
+agent-rules metadata block — the answer to "which repositories have adopted
+this?", which otherwise takes a hand-rolled `find | grep`:
+
+```bash
+python scripts/generate_batch_list.py /path/to/workspace --adopted-only --output repos.toml
+```
+
+That search does continue past a repository, because an adopted repository can
+sit inside another one — a workspace repo holding per-component repos, say —
+and stopping at the outer one would hide every repository under it. Walking
+everything is expensive, so it is bounded by `--max-depth` (default 3).
 For every repo found, it checks for existing agent-rules metadata (via the same
 lookup `--sync`/`--check` use) and fills in `profile` when found; otherwise the
 entry is left without a `profile` (same fallback behavior as a hand-written
@@ -296,6 +309,18 @@ The helper continues on failure and prints a per-repo summary at the end:
 Failed:
   - /path/to/broken-repo
 ```
+
+A batch `--sync` also reports how many repositories it actually changed:
+
+```text
+9 succeeded, 0 warned, 0 failed
+2 changed, 7 already current
+  - /path/to/api (4 files)
+  - /path/to/worker (1 file)
+```
+
+`--sync` is idempotent, so "succeeded" alone cannot tell a fleet that was
+already current from one this run rewrote.
 
 Exit code is 1 if any repository failed, 2 if none failed but at least one reported only warnings (from `--check`), and 0 otherwise.
 

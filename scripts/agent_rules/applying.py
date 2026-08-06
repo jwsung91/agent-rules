@@ -327,6 +327,10 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
                 plan.target_repo, plan.git_root, plan.files
             )
 
+    # .gitignore counts: a run that only migrated ignore entries still
+    # changed the repository, and reporting it as "already current" would be
+    # wrong.
+    plan.written = created + updated + ([gitignore_file] if gitignore_file else [])
     print_summary(
         created,
         updated,

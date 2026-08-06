@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .constants import (
     BACKUP_ROOT,
+    ENTRYPOINT_FILES,
     GITIGNORE_AGENT_COMMENT,
     SHARED_SKILLS,
     SKILL_ROOTS,
@@ -59,6 +60,18 @@ def gitignore_patterns(paths: list[str]) -> list[str]:
     return dedupe(patterns)
 
 
+def is_unrooted_entrypoint_entry(line: str) -> bool:
+    """True for an entrypoint listed without the leading slash.
+
+    Earlier versions wrote a bare `AGENTS.md`, which gitignore matches at any
+    depth -- including `.agents/agent-rules/AGENTS.md`, the local copy that is
+    meant to be committed. Rewriting these to `/AGENTS.md` scopes them to the
+    repository root, which is all they were ever meant to cover.
+    """
+    entry = line.strip()
+    return entry in ENTRYPOINT_FILES
+
+
 def is_legacy_gitignore_entry(line: str) -> bool:
     """True for a per-file entry written by an earlier version of this helper.
 
@@ -70,6 +83,9 @@ def is_legacy_gitignore_entry(line: str) -> bool:
     entry = line.strip().lstrip("/")
     if not entry or entry.startswith("#"):
         return False
+    if is_unrooted_entrypoint_entry(line):
+        # Rewritten in place rather than dropped; see add_to_gitignore.
+        return False
     owned_roots = [f"{SYNC_BASE_ROOT}/", f"{BACKUP_ROOT}/"]
     owned_roots += [
         f"{root}/{skill_name}/" for root in SKILL_ROOTS for skill_name in SHARED_SKILLS
@@ -80,7 +96,7 @@ def is_legacy_gitignore_entry(line: str) -> bool:
 
 
 def strip_legacy_gitignore_entries(lines: list[str]) -> tuple[list[str], int, int | None]:
-    """Drop per-file entries, and any agent-rules block they emptied.
+    """Drop per-file entries and reroot bare entrypoint names.
 
     Returns the surviving lines, how many entries were removed, and the index
     in those lines where new patterns belong — the end of the first surviving
@@ -91,6 +107,7 @@ def strip_legacy_gitignore_entries(lines: list[str]) -> tuple[list[str], int, in
     """
     kept: list[str] = []
     removed = 0
+    rerooted = 0
     insert_at: int | None = None
     index = 0
     while index < len(lines):
@@ -98,6 +115,9 @@ def strip_legacy_gitignore_entries(lines: list[str]) -> tuple[list[str], int, in
         if line.strip() != GITIGNORE_AGENT_COMMENT:
             if is_legacy_gitignore_entry(line):
                 removed += 1
+            elif is_unrooted_entrypoint_entry(line):
+                kept.append(f"/{line.strip()}")
+                rerooted += 1
             else:
                 kept.append(line)
             index += 1
@@ -113,6 +133,11 @@ def strip_legacy_gitignore_entries(lines: list[str]) -> tuple[list[str], int, in
         block = lines[index + 1 : block_end]
         block_kept = [item for item in block if not is_legacy_gitignore_entry(item)]
         removed += len(block) - len(block_kept)
+        rerooted += sum(1 for item in block_kept if is_unrooted_entrypoint_entry(item))
+        block_kept = [
+            f"/{item.strip()}" if is_unrooted_entrypoint_entry(item) else item
+            for item in block_kept
+        ]
         if block_kept:
             kept.append(line)
             kept.extend(block_kept)
@@ -123,7 +148,7 @@ def strip_legacy_gitignore_entries(lines: list[str]) -> tuple[list[str], int, in
             index = block_end
             if index < len(lines) and not lines[index].strip():
                 index += 1
-    return kept, removed, insert_at
+    return kept, removed + rerooted, insert_at
 
 
 def add_to_gitignore(git_root: Path, paths: list[str], *, dry_run: bool) -> str | None:
