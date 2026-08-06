@@ -985,6 +985,27 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
         self.assertIn("--skills has no effect for the gemini profile", check.stdout)
 
+    def test_fully_configured_all_profile_adoption_checks_clean(self) -> None:
+        # Regression: the "no shared-skill path for GEMINI.md" report was a
+        # WARN, so --profile all --skills sat at exit 2 no matter how the
+        # repository was configured. Nothing the user can do resolves it, so
+        # the exit code carried no signal for the profile the README suggests.
+        result = self.cli(
+            "--profile", "all", "--skills",
+            "--boundary", "public API compatibility",
+            "--validation", "pytest -q",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+        check = self.cli("--check")
+        self.assertEqual(check.returncode, 0, check.stderr + check.stdout)
+        # Still reported, just not as a problem.
+        self.assertIn(
+            "[NOTE] shared skills are not supported for GEMINI.md", check.stdout
+        )
+        self.assertNotIn("[WARN]", check.stdout)
+        self.assertNotIn("[FAIL]", check.stdout)
+
     def test_skills_warns_but_proceeds_for_all_profile(self) -> None:
         result = self.cli("--profile", "all", "--skills")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)

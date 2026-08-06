@@ -188,11 +188,16 @@ def check_adoption(
                 "shared-skill installation path exists for it yet",
             )
         elif unsupported:
+            # NOTE, not WARN: this branch is only reachable for --profile all,
+            # where an entrypoint without a shared-skill path (GEMINI.md) is
+            # the expected outcome, not a defect. Reporting it as a warning
+            # pinned --profile all --skills at exit 2 no matter how the
+            # repository was configured, which cost the exit code its meaning.
             append_check(
                 results,
-                "WARN",
+                "NOTE",
                 "shared skills are not supported for "
-                f"{', '.join(unsupported)} ({profile} profile)",
+                f"{', '.join(unsupported)} ({profile} profile); nothing to fix",
             )
         # Derived from the same file list shared_skill_file_specs() installs,
         # so every installed file is checked, not just SKILL.md — a deleted
