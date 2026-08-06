@@ -386,6 +386,27 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             self.assertIn("Would create", result.stdout)
 
+    def test_dry_run_reports_actions_not_file_contents(self) -> None:
+        # --profile all --skills used to print every planned file in full:
+        # ~1,900 lines, which is not a preview anyone reads.
+        terse = self.cli("--profile", "all", "--skills", "--dry-run")
+        self.assertEqual(terse.returncode, 0, terse.stderr + terse.stdout)
+        self.assertIn("Would create", terse.stdout)
+        # Content of a generated entrypoint must not be there.
+        self.assertNotIn("## Agent Usage Model", terse.stdout)
+        self.assertIn("--verbose", terse.stdout)
+
+        verbose = self.cli("--profile", "all", "--skills", "--dry-run", "--verbose")
+        self.assertEqual(verbose.returncode, 0, verbose.stderr + verbose.stdout)
+        self.assertIn("## Agent Usage Model", verbose.stdout)
+        self.assertGreater(
+            len(verbose.stdout.splitlines()), len(terse.stdout.splitlines()) * 5
+        )
+        # Neither form writes anything.
+        for name in adopt.ENTRYPOINT_FILES:
+            with self.subTest(name=name):
+                self.assertFalse((self.repo / name).exists())
+
     def test_profile_required_for_apply(self) -> None:
         result = self.cli()
         self.assertEqual(result.returncode, 2)
@@ -979,11 +1000,68 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertFalse((self.repo / "GEMINI.md").exists())
         self.assertFalse((self.repo / ".gemini").exists())
 
+    def test_check_leads_with_a_status_summary(self) -> None:
+        self.assertEqual(self.cli("--profile", "all", "--skills").returncode, 0)
+        check = self.cli("--check")
+        first = check.stdout.splitlines()[0]
+        self.assertRegex(first, r"^Summary: \d+ FAIL · \d+ WARN · \d+ NOTE · \d+ OK$")
+        # The tally has to agree with the lines actually printed.
+        for status in ("FAIL", "WARN", "NOTE", "OK"):
+            printed = check.stdout.count(f"[{status}] ")
+            reported = int(re.search(rf"(\d+) {status}", first).group(1))
+            with self.subTest(status=status):
+                self.assertEqual(reported, printed)
+
+    def test_check_problems_only_drops_passing_lines(self) -> None:
+        self.assertEqual(self.cli("--profile", "all", "--skills").returncode, 0)
+        full = self.cli("--check")
+        terse = self.cli("--check", "--problems-only")
+        self.assertEqual(terse.returncode, full.returncode)
+        self.assertNotIn("[OK]", terse.stdout)
+        self.assertIn("[WARN]", terse.stdout)
+        self.assertLess(
+            len(terse.stdout.splitlines()), len(full.stdout.splitlines())
+        )
+        # The summary still reports the passing checks that were not printed.
+        self.assertIn("OK", terse.stdout.splitlines()[0])
+
+    def test_check_problems_only_says_so_when_clean(self) -> None:
+        result = self.cli(
+            "--profile", "claude",
+            "--boundary", "public API compatibility",
+            "--validation", "pytest -q",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        terse = self.cli("--check", "--problems-only")
+        self.assertEqual(terse.returncode, 0, terse.stderr + terse.stdout)
+        self.assertIn("No problems found.", terse.stdout)
+
     def test_check_skills_fails_for_gemini_only_profile(self) -> None:
         self.assertEqual(self.cli("--profile", "gemini").returncode, 0)
         check = self.cli("--check", "--skills", "--profile", "gemini")
         self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
         self.assertIn("--skills has no effect for the gemini profile", check.stdout)
+
+    def test_fully_configured_all_profile_adoption_checks_clean(self) -> None:
+        # Regression: the "no shared-skill path for GEMINI.md" report was a
+        # WARN, so --profile all --skills sat at exit 2 no matter how the
+        # repository was configured. Nothing the user can do resolves it, so
+        # the exit code carried no signal for the profile the README suggests.
+        result = self.cli(
+            "--profile", "all", "--skills",
+            "--boundary", "public API compatibility",
+            "--validation", "pytest -q",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+        check = self.cli("--check")
+        self.assertEqual(check.returncode, 0, check.stderr + check.stdout)
+        # Still reported, just not as a problem.
+        self.assertIn(
+            "[NOTE] shared skills are not supported for GEMINI.md", check.stdout
+        )
+        self.assertNotIn("[WARN]", check.stdout)
+        self.assertNotIn("[FAIL]", check.stdout)
 
     def test_skills_warns_but_proceeds_for_all_profile(self) -> None:
         result = self.cli("--profile", "all", "--skills")
@@ -1000,6 +1078,114 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn(
             "shared skills are not supported for GEMINI.md", check.stdout
         )
+
+    def test_rerunning_the_adoption_command_syncs_instead_of_failing(self) -> None:
+        # The most natural second command -- the same one again -- used to
+        # stop at the first existing file with "Refusing to overwrite" and
+        # exit 1, telling the user to add --sync. On an already-adopted
+        # repository that request means "bring this up to date".
+        self.assertEqual(self.cli("--profile", "all", "--skills").returncode, 0)
+        before = {
+            name: (self.repo / name).read_bytes() for name in adopt.ENTRYPOINT_FILES
+        }
+
+        again = self.cli("--profile", "all", "--skills")
+        self.assertEqual(again.returncode, 0, again.stderr + again.stdout)
+        self.assertIn("Already adopted; syncing", again.stdout)
+        for name, original in before.items():
+            with self.subTest(name=name):
+                self.assertEqual((self.repo / name).read_bytes(), original)
+
+    def test_rerun_still_refuses_a_file_it_did_not_write(self) -> None:
+        # A file without the metadata block belongs to someone else; --sync
+        # treats those differently, so the explicit refusal stays.
+        (self.repo / "CLAUDE.md").write_text("# hand-written\n", encoding="utf-8")
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Refusing to overwrite existing file", result.stdout)
+        self.assertEqual(
+            (self.repo / "CLAUDE.md").read_text(encoding="utf-8"), "# hand-written\n"
+        )
+
+    def test_rerun_with_force_still_regenerates(self) -> None:
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        path = self.repo / "CLAUDE.md"
+        path.write_text(
+            path.read_text(encoding="utf-8") + "\n## Local Notes\n\nkeep me\n",
+            encoding="utf-8",
+        )
+        result = self.cli("--profile", "claude", "--force")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertNotIn("Already adopted; syncing", result.stdout)
+        self.assertNotIn("keep me", path.read_text(encoding="utf-8"))
+
+    def test_sync_preserves_repository_boundaries_and_validation(self) -> None:
+        # Regression: --sync re-rendered the whole file from the current
+        # arguments, so with no --boundary/--validation on the sync run the
+        # 3-way merge took the freshly rendered placeholder over what the
+        # repository had configured -- silently replacing real boundaries and
+        # validation commands with "Add project-specific rules here."
+        self.assertEqual(
+            self.cli(
+                "--profile", "all", "--skills",
+                "--boundary", "public API compatibility",
+                "--validation", "pytest -q",
+            ).returncode,
+            0,
+        )
+        self.assertEqual(self.cli("--check").returncode, 0)
+
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        # Only AGENTS.md carries a boundaries section; all three carry validation.
+        agents = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("public API compatibility", agents)
+        self.assertNotIn(adopt.BOUNDARY_PLACEHOLDER, agents)
+        for name in adopt.ENTRYPOINT_FILES:
+            content = (self.repo / name).read_text(encoding="utf-8")
+            with self.subTest(name=name):
+                self.assertIn("pytest -q", content)
+                self.assertNotIn(adopt.VALIDATION_PLACEHOLDER, content)
+        self.assertEqual(self.cli("--check").returncode, 0)
+
+    def test_sync_accepts_replacement_boundaries(self) -> None:
+        # Preserving the existing values must not make them unchangeable.
+        # AGENTS.md is the entrypoint that has a boundaries section.
+        self.assertEqual(
+            self.cli("--profile", "codex", "--boundary", "first rule").returncode, 0
+        )
+        self.assertEqual(
+            self.cli("--sync", "--boundary", "second rule").returncode, 0
+        )
+        content = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("second rule", content)
+        self.assertNotIn("first rule", content)
+
+    def test_force_regenerates_boundaries_from_the_template(self) -> None:
+        # --force means "overwrite from the templates", which is a different
+        # request from --sync and must not preserve local sections.
+        self.assertEqual(
+            self.cli("--profile", "codex", "--boundary", "keep me?").returncode, 0
+        )
+        self.assertEqual(self.cli("--profile", "codex", "--force").returncode, 0)
+        content = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertNotIn("keep me?", content)
+        self.assertIn(adopt.BOUNDARY_PLACEHOLDER, content)
+
+    def test_recover_placeholder_declines_when_anchors_are_gone(self) -> None:
+        # If the surrounding template text was edited away, recovery returns
+        # None so the caller keeps the freshly rendered value instead of
+        # slicing out something arbitrary.
+        template = "before text here that is long enough\n{{X}}\nafter text here too"
+        self.assertEqual(
+            adopt.recover_placeholder(
+                template.replace("{{X}}", "configured value"), template, "{{X}}"
+            ),
+            "configured value",
+        )
+        self.assertIsNone(
+            adopt.recover_placeholder("nothing familiar", template, "{{X}}")
+        )
+        self.assertIsNone(adopt.recover_placeholder("anything", template, "{{ABSENT}}"))
 
     def test_repeated_sync_is_idempotent(self) -> None:
         # Regression: render_metadata() stamps a fresh generated_at on every
@@ -1170,7 +1356,9 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
     def test_merge_and_update_dry_run(self) -> None:
         (self.repo / "AGENTS.md").write_text("# AGENTS.md\n\nCustom notes.\n", encoding="utf-8")
         # --sync on file without metadata should merge
-        sync_merge = self.cli("--profile", "codex", "--sync", "--dry-run")
+        # --verbose: the merged text is what this assertion is about, and
+        # a plain --dry-run now reports actions rather than file contents.
+        sync_merge = self.cli("--profile", "codex", "--sync", "--dry-run", "--verbose")
         self.assertEqual(sync_merge.returncode, 0, sync_merge.stderr + sync_merge.stdout)
         self.assertIn("Custom notes.", sync_merge.stdout)
         self.assertEqual(self.cli("--profile", "codex", "--sync").returncode, 0)

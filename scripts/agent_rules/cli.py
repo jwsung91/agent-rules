@@ -12,6 +12,7 @@ from .checking import check_adoption, list_shared_skills
 from .constants import DEFAULT_SHARED_URL, VALID_PROFILES, VALID_VISIBILITIES
 from .planning import build_plan
 from .source import (
+    adoption_is_current,
     infer_profile_from_existing,
     parse_profile,
     resolve_target_repo,
@@ -53,6 +54,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dry-run", action="store_true", help="Print planned changes without writing.")
     parser.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="With --dry-run, also print the full content of each planned file.",
+    )
     parser.add_argument("--check", action="store_true", help="Check adoption health.")
     parser.add_argument(
         "--sync",
@@ -79,6 +85,11 @@ def parse_args() -> argparse.Namespace:
         "--list-skills",
         action="store_true",
         help="List the shared skills that --skills installs, then exit.",
+    )
+    parser.add_argument(
+        "--problems-only",
+        action="store_true",
+        help="With --check, print only WARN/FAIL lines instead of every result.",
     )
     parser.add_argument(
         "--batch",
@@ -132,6 +143,21 @@ def main() -> int:
     target_repo = resolve_target_repo(args.target_repo)
     profile = parse_profile(args.profile)
 
+    # Re-running the adoption command on a repository that is already adopted
+    # reads as "bring this up to date", which is what --sync does. Without
+    # this it failed on the first existing file and told the user to add
+    # --sync, so the most natural second command was always an error. --force
+    # is left alone: asking to overwrite is a different intent, and --sync is
+    # non-destructive (it merges, and refuses to write a conflict).
+    if not (args.check or args.sync or args.force) and adoption_is_current(
+        target_repo, profile
+    ):
+        print(
+            "Already adopted; syncing instead of refusing to overwrite. "
+            "Use --force to regenerate from the templates."
+        )
+        args.sync = True
+
     # Auto-detect profile from existing files when --check or --sync is requested
     if profile is None and (args.check or args.sync):
         profile = infer_profile_from_existing(target_repo)
@@ -158,6 +184,7 @@ def main() -> int:
             check_skills=args.skills,
             visibility=args.visibility,
             profile_override=profile,
+            problems_only=args.problems_only,
         )
 
     plan = build_plan(target_repo, args, profile)

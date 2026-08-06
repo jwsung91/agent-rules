@@ -116,6 +116,7 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
                     check_skills=entry_args.skills,
                     visibility=entry_args.visibility,
                     profile_override=profile,
+                    problems_only=entry_args.problems_only,
                 )
             else:
                 if not profile:

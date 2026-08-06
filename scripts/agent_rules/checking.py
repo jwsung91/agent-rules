@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path
 
 from .constants import (
@@ -63,6 +64,7 @@ def check_adoption(
     check_skills: bool = False,
     visibility: str = "local",
     profile_override: str | None = None,
+    problems_only: bool = False,
 ) -> int:
     results: list[tuple[str, str]] = []
     git_root = find_repo_root(target_repo)
@@ -188,11 +190,16 @@ def check_adoption(
                 "shared-skill installation path exists for it yet",
             )
         elif unsupported:
+            # NOTE, not WARN: this branch is only reachable for --profile all,
+            # where an entrypoint without a shared-skill path (GEMINI.md) is
+            # the expected outcome, not a defect. Reporting it as a warning
+            # pinned --profile all --skills at exit 2 no matter how the
+            # repository was configured, which cost the exit code its meaning.
             append_check(
                 results,
-                "WARN",
+                "NOTE",
                 "shared skills are not supported for "
-                f"{', '.join(unsupported)} ({profile} profile)",
+                f"{', '.join(unsupported)} ({profile} profile); nothing to fix",
             )
         # Derived from the same file list shared_skill_file_specs() installs,
         # so every installed file is checked, not just SKILL.md — a deleted
@@ -357,8 +364,25 @@ def check_adoption(
             "root-level templates/ looks like an agent-rules copy; use .agents/agent-rules/",
         )
 
+    counts = Counter(status for status, _ in results)
+    # A healthy --profile all --skills adoption reports ~53 [OK] lines, so
+    # the handful that need attention are easy to miss. Lead with the tally,
+    # and let --problems-only drop the passing lines entirely -- the case
+    # that matters when checking a fleet with --batch.
+    print(
+        "Summary: "
+        + " · ".join(
+            f"{counts.get(status, 0)} {status}"
+            for status in ("FAIL", "WARN", "NOTE", "OK")
+        )
+        + "\n"
+    )
     for status, message in results:
+        if problems_only and status == "OK":
+            continue
         print(f"[{status}] {message}")
+    if problems_only and not counts.get("FAIL") and not counts.get("WARN"):
+        print("No problems found.")
 
     source_status = get_source_status(shared_url)
     target_status = latest_status_for_target(metadata, source_status)
