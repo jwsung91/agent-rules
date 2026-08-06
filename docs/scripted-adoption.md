@@ -106,7 +106,7 @@ Use `--sync` when the target repository already has an agent file. The helper au
 - **sync baseline present** → performs a 3-way merge between the previous generated baseline, the locally edited file, and the new shared source. Non-conflicting edits are preserved anywhere in generated entrypoints and installed skills.
 - **merge conflict** → stops before writing any file. Use `--dry-run` to inspect the conflict, reconcile the local edit, or use `--force` intentionally.
 - **metadata present, baseline absent** → uses the legacy managed-block refresh once and records a baseline for future 3-way merges.
-- **metadata present, no managed markers** → the file was generated before markers were added to CLAUDE.md/GEMINI.md templates; it is fully regenerated once (manual edits in that file are replaced — keep local content outside the managed block afterwards).
+- **metadata present, no managed markers** → refused. The markers are what separates shared content from yours; without them a sync would either discard local edits or leave the old shared sections behind as duplicates. Re-run with `--force` to regenerate from the templates. The previous file is copied under `.agent-rules/backups/<timestamp>/` first.
 - **no metadata** → merges shared sections into the existing file without overwriting it (AGENTS.md only).
 
 ```bash
@@ -153,6 +153,16 @@ the managed block would strand them on an old copy.
 Adoptions created before the markers existed pick them up on their first
 `--sync`, which recovers the configured values from the template text around
 them. Nothing needs to be re-entered.
+
+### Backups
+
+`--force` replaces a file wholesale. Before it does, the existing file is
+copied to `.agent-rules/backups/<timestamp>/<path>` — one directory per run,
+so a `--profile all --force` keeps its three files together. Backups are
+local-only, like the baselines and generated entrypoints.
+
+Nothing else in this helper keeps a copy, which matters because `--force` is
+the documented answer to several refusals.
 
 Baselines are stored under `.agent-rules/bases/`. Local visibility ignores
 them together with generated files; tracked visibility keeps them trackable so

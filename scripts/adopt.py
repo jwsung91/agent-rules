@@ -27,6 +27,7 @@ if _SCRIPTS_DIR not in sys.path:
 
 from agent_rules.constants import (  # noqa: E402
     LOCAL_REGION_RE,
+    BACKUP_ROOT,
     DEFAULT_SHARED_URL,
     SOURCE_REF,
     VALID_PROFILES,
@@ -143,6 +144,7 @@ from agent_rules.checking import (  # noqa: E402
     list_shared_skills,
 )
 from agent_rules.applying import (  # noqa: E402
+    backup_path,
     write_plan_file,
     validate_plan_before_write,
     print_summary,
@@ -162,6 +164,8 @@ from agent_rules.batch import tomllib  # noqa: E402
 
 # Re-exported for `import adopt` consumers; see the module docstring.
 __all__ = [
+    "backup_path",
+    "BACKUP_ROOT",
     "baseline_content_for",
     "extract_local_regions",
     "strip_local_markers",

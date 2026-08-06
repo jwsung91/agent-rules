@@ -115,6 +115,8 @@ BOUNDARY_PLACEHOLDER = "Add project-specific rules here."
 VALIDATION_PLACEHOLDER = "# Add project-specific build/test/lint commands here."
 GITIGNORE_AGENT_COMMENT = "# agent-rules (local only)"
 SYNC_BASE_ROOT = ".agent-rules/bases"
+# Copies of files --force is about to replace. Local-only, like the baselines.
+BACKUP_ROOT = ".agent-rules/backups"
 
 
 # Regions of a generated entrypoint that belong to the adopting repository.

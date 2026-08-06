@@ -4,12 +4,25 @@ from __future__ import annotations
 
 import argparse
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
-from .constants import ENTRYPOINT_FILES, SYNC_BASE_ROOT
+from .constants import BACKUP_ROOT, ENTRYPOINT_FILES, SYNC_BASE_ROOT
 from .gitignore import add_to_gitignore, fail_on_ignored
 from .gitio import check_generated_files_ignored
 from .models import AdoptionPlan, FilePlan
+
+# One stamp per process, so every file a single run backs up lands together.
+_RUN_STAMP = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def backup_path(target_repo: Path, relative_path: str) -> Path:
+    """Where a file about to be overwritten is copied.
+
+    One directory per run, so a --profile all --force keeps its three files
+    together and repeated runs do not overwrite each other's copies.
+    """
+    return target_repo / BACKUP_ROOT / _RUN_STAMP / relative_path
 
 
 def write_plan_file(
@@ -33,6 +46,16 @@ def write_plan_file(
             f"Refusing to update file without agent-rules metadata: {path}\n"
             "Use --sync to preserve existing content and add metadata, or --force "
             "to overwrite intentionally."
+        )
+    if plan.action == "missing-managed-block":
+        raise SystemExit(
+            f"Refusing to update a generated file with no managed-block markers: {path}\n"
+            "The markers are what separates this helper's content from yours. "
+            "Without them a sync would either discard your edits or leave the "
+            "old shared sections behind as duplicates.\n"
+            "Re-run with --force to regenerate it from the templates. Your "
+            "current file is copied under .agent-rules/backups/ first, so "
+            "anything only that file has can be recovered."
         )
     if plan.action == "sync-base-missing":
         raise SystemExit(
@@ -74,6 +97,15 @@ def write_plan_file(
             print(f"Source: {plan.source}")
         return ("Updated" if existed else "Created", plan.path)
 
+    if plan.action == "overwrite" and existed:
+        # --force replaces the file wholesale, and nothing else in this
+        # helper keeps a copy. A sync during a fleet rollout destroyed a
+        # hand-edited section once; only an ad-hoc snapshot got it back.
+        backup = backup_path(target_repo, plan.path)
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, backup)
+        print(f"Backed up: {backup}")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     if plan.content is not None:
         path.write_text(plan.content, encoding="utf-8")
@@ -98,6 +130,7 @@ def validate_plan_before_write(plan: AdoptionPlan) -> int:
         if item.action in {
             "exists",
             "metadata-missing",
+            "missing-managed-block",
             "blocked-existing-local-copy",
             "sync-base-missing",
             "merge-conflict",
@@ -263,6 +296,16 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
         and any(item.content is not None for item in plan.files)
     ):
         print("\nRe-run with --verbose to print the content of each planned file.")
+
+    # Backups land beside the baselines and get the same local-only
+    # treatment, so a --force run does not leave untracked copies behind.
+    generated_local_paths.extend(
+        backup_path(plan.target_repo, item.path)
+        .relative_to(plan.target_repo)
+        .as_posix()
+        for item in plan.files
+        if item.action == "overwrite" and (plan.target_repo / item.path).exists()
+    )
 
     # Keyed on the planned files, not on what this run happened to write: an
     # idempotent --sync writes nothing, and a missing .gitignore entry still
