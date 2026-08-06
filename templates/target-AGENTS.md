@@ -52,13 +52,17 @@ Keep the subject concise, lowercase, imperative mood, no trailing period.
 
 ## Repository-specific Boundaries
 
+<!-- agent-rules-local:boundaries:start -->
 {{REPOSITORY_SPECIFIC_BOUNDARIES}}
+<!-- agent-rules-local:boundaries:end -->
 
 ## Validation
 
 Before choosing commands, check repository-local scripts and configuration first.
 
+<!-- agent-rules-local:validation_commands:start -->
 {{VALIDATION_COMMANDS}}
+<!-- agent-rules-local:validation_commands:end -->
 
 Use conservative parallelism for local build or test validation when the environment is unknown. Prefer `-j2`, or `-j1` when memory pressure, OOM, VM/WSL constraints, embedded devices, or previous instability are involved.
 

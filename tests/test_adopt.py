@@ -1119,6 +1119,86 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertNotIn("Already adopted; syncing", result.stdout)
         self.assertNotIn("keep me", path.read_text(encoding="utf-8"))
 
+    def test_generated_entrypoints_mark_repository_owned_regions(self) -> None:
+        self.assertEqual(self.cli("--profile", "all", "--skills").returncode, 0)
+        agents = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        claude = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertEqual(
+            set(adopt.extract_local_regions(agents)),
+            {"boundaries", "validation_commands"},
+        )
+        # Only AGENTS.md has a boundaries section.
+        self.assertEqual(
+            set(adopt.extract_local_regions(claude)), {"validation_commands"}
+        )
+
+    def test_sync_never_rewrites_a_repository_owned_region(self) -> None:
+        # The structural guarantee: whatever the repository puts inside its
+        # own region survives a sync untouched, without the helper having to
+        # recognise the content or locate it by surrounding prose.
+        self.assertEqual(self.cli("--profile", "codex").returncode, 0)
+        path = self.repo / "AGENTS.md"
+        content = path.read_text(encoding="utf-8")
+        start = "<!-- agent-rules-local:boundaries:start -->\n"
+        end = "\n<!-- agent-rules-local:boundaries:end -->"
+        head, _, rest = content.partition(start)
+        _, _, tail = rest.partition(end)
+        mine = "- no vendored dependencies\n- benchmark numbers stay reproducible"
+        path.write_text(head + start + mine + end + tail, encoding="utf-8")
+
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assertEqual(
+            adopt.extract_local_regions(path.read_text(encoding="utf-8"))["boundaries"],
+            mine,
+        )
+
+    def test_sync_still_updates_shared_content_outside_the_managed_block(self) -> None:
+        # Why ownership is marked per region rather than "regenerate only the
+        # managed block": shared content lives outside that block too (the
+        # Validation guidance, the whole Final Report section) and has been
+        # revised since repositories started adopting. It must still update.
+        self.assertEqual(self.cli("--profile", "codex").returncode, 0)
+        shared = "If validation cannot be run, explain why"
+        paths = [self.repo / "AGENTS.md", self.repo / adopt.sync_base_path("AGENTS.md")]
+        for path in paths:
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(shared, "Stale shared text"),
+                encoding="utf-8",
+            )
+
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        refreshed = paths[0].read_text(encoding="utf-8")
+        self.assertIn(shared, refreshed)
+        self.assertNotIn("Stale shared text", refreshed)
+
+    def test_sync_migrates_an_adoption_written_before_the_markers(self) -> None:
+        # Existing adoptions have no markers. The first sync must add them
+        # while keeping the configured values, which it recovers from the
+        # template text around them.
+        self.assertEqual(
+            self.cli(
+                "--profile", "codex",
+                "--boundary", "public API compatibility",
+                "--validation", "pytest -q",
+            ).returncode,
+            0,
+        )
+        path = self.repo / "AGENTS.md"
+        for target in (path, self.repo / adopt.sync_base_path("AGENTS.md")):
+            target.write_text(
+                adopt.strip_local_markers(target.read_text(encoding="utf-8")),
+                encoding="utf-8",
+            )
+        self.assertEqual(adopt.extract_local_regions(path.read_text(encoding="utf-8")), {})
+
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        content = path.read_text(encoding="utf-8")
+        regions = adopt.extract_local_regions(content)
+        self.assertEqual(set(regions), {"boundaries", "validation_commands"})
+        self.assertIn("public API compatibility", regions["boundaries"])
+        self.assertIn("pytest -q", regions["validation_commands"])
+        self.assertNotIn(adopt.BOUNDARY_PLACEHOLDER, content)
+
     def test_sync_preserves_repository_boundaries_and_validation(self) -> None:
         # Regression: --sync re-rendered the whole file from the current
         # arguments, so with no --boundary/--validation on the sync run the

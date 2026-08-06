@@ -52,7 +52,9 @@ Keep the subject concise, lowercase, imperative mood, no trailing period.
 - Before committing, run at minimum: `git diff --check`.
 - Use resource-safe parallelism: prefer `-j2` by default, `-j1` under memory pressure or resource-constrained environments (e.g., WSL, VMs).
 
+<!-- agent-rules-local:validation_commands:start -->
 {{VALIDATION_COMMANDS}}
+<!-- agent-rules-local:validation_commands:end -->
 
 Report validation using this format:
 
