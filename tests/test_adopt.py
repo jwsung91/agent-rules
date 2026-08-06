@@ -1171,6 +1171,46 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn(shared, refreshed)
         self.assertNotIn("Stale shared text", refreshed)
 
+    def test_sync_without_a_baseline_records_what_it_wrote(self) -> None:
+        # Regression: with no baseline, --sync takes the legacy refresh, which
+        # replaces the metadata and managed block and leaves the rest alone --
+        # so the file keeps no ownership markers, since those sit outside the
+        # block. Recording the render as the baseline left it claiming markers
+        # the file lacked, and the next 3-way merge read their absence as a
+        # local deletion and preserved it forever. AGENTS.md always takes that
+        # path, so an adoption predating baselines could never gain markers.
+        self.assertEqual(
+            self.cli("--profile", "codex", "--validation", "pytest -q").returncode, 0
+        )
+        # Reproduce an adoption that predates both baselines and markers.
+        shutil.rmtree(self.repo / ".agent-rules")
+        path = self.repo / "AGENTS.md"
+        path.write_text(
+            adopt.strip_local_markers(path.read_text(encoding="utf-8")), encoding="utf-8"
+        )
+        self.assertEqual(adopt.extract_local_regions(path.read_text(encoding="utf-8")), {})
+
+        # First sync has nothing to merge against, so it records the file it
+        # actually wrote rather than the render.
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        baseline = self.repo / adopt.sync_base_path("AGENTS.md")
+        self.assertEqual(
+            adopt.extract_local_regions(baseline.read_text(encoding="utf-8")),
+            adopt.extract_local_regions(path.read_text(encoding="utf-8")),
+            "baseline must describe the file it was recorded from",
+        )
+
+        # With an honest baseline the next sync sees the markers as an
+        # upstream addition and applies them, keeping the configured value.
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        regions = adopt.extract_local_regions(path.read_text(encoding="utf-8"))
+        self.assertEqual(set(regions), {"boundaries", "validation_commands"})
+        self.assertIn("pytest -q", regions["validation_commands"])
+
+        before = path.read_bytes()
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assertEqual(path.read_bytes(), before)
+
     def test_sync_migrates_an_adoption_written_before_the_markers(self) -> None:
         # Existing adoptions have no markers. The first sync must add them
         # while keeping the configured values, which it recovers from the

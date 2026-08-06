@@ -143,6 +143,28 @@ def file_action(target_repo: Path, relative_path: str, *, update: bool, force: b
     return "create"
 
 
+def baseline_content_for(
+    baseline_existed: bool, rendered: str, written: str | None
+) -> str:
+    """What the next sync should treat as the shared source it merged from.
+
+    With a baseline present the file was reconciled against the render, so the
+    render is the new baseline. Without one the legacy refresh runs instead:
+    it replaces the metadata and managed block and leaves everything else
+    alone, so the file keeps content the render does not have -- most visibly
+    the region ownership markers, which sit outside the managed block.
+
+    Recording the render in that case would leave a baseline claiming markers
+    the file does not contain, and the next 3-way merge would read their
+    absence as a deliberate local deletion and preserve it forever. Record
+    what was actually written, so the next sync sees the markers as an
+    upstream addition and applies them.
+    """
+    if baseline_existed or written is None:
+        return rendered
+    return written
+
+
 def build_entrypoint_plans(
     target_repo: Path,
     profile: str,
@@ -170,6 +192,7 @@ def build_entrypoint_plans(
     for relative_path in required_files_for_profile(profile):
         rendered = render_file_for_profile(relative_path, context)
         path = target_repo / relative_path
+        baseline_existed = (target_repo / sync_base_path(relative_path)).exists()
         action = file_action(target_repo, relative_path, update=update, force=force)
 
         if action == "exists" and not merge:
@@ -215,7 +238,13 @@ def build_entrypoint_plans(
             else:
                 content = None
             plans.append(FilePlan(path=relative_path, action=action, content=content))
-            plans.append(baseline_plan(target_repo, relative_path, rendered))
+            plans.append(
+                baseline_plan(
+                    target_repo,
+                    relative_path,
+                    baseline_content_for(baseline_existed, rendered, content),
+                )
+            )
             continue
 
         if relative_path in TOOL_ENTRYPOINTS and path.exists() and update:
@@ -241,7 +270,13 @@ def build_entrypoint_plans(
                 content = None
                 action = "metadata-missing"
             plans.append(FilePlan(path=relative_path, action=action, content=content))
-            plans.append(baseline_plan(target_repo, relative_path, rendered))
+            plans.append(
+                baseline_plan(
+                    target_repo,
+                    relative_path,
+                    baseline_content_for(baseline_existed, rendered, content),
+                )
+            )
             continue
 
         plans.append(FilePlan(path=relative_path, action=action, content=rendered))

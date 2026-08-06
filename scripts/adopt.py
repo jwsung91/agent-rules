@@ -120,6 +120,7 @@ from agent_rules.gitignore import (  # noqa: E402
     fail_on_ignored,
 )
 from agent_rules.planning import (  # noqa: E402
+    baseline_content_for,
     detect_repository_type,
     baseline_plan,
     plan_three_way_update,
@@ -161,6 +162,7 @@ from agent_rules.batch import tomllib  # noqa: E402
 
 # Re-exported for `import adopt` consumers; see the module docstring.
 __all__ = [
+    "baseline_content_for",
     "extract_local_regions",
     "strip_local_markers",
     "LOCAL_REGION_RE",
