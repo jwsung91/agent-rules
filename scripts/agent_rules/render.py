@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import re
+from dataclasses import replace
+from pathlib import Path
 from datetime import datetime
 
 from .constants import (
@@ -20,7 +22,7 @@ from .constants import (
 )
 from .metadata import render_metadata
 from .models import DetectionResult, RenderContext, SourceStatus
-from .source import read_template
+from .source import read_template, required_files_for_profile
 
 
 def format_boundaries(items: list[str]) -> str:
@@ -98,6 +100,78 @@ def build_render_context(
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         install_skills=args.skills,
     )
+
+
+PRESERVED_PLACEHOLDERS = (
+    ("boundaries", "{{REPOSITORY_SPECIFIC_BOUNDARIES}}"),
+    ("validation_commands", "{{VALIDATION_COMMANDS}}"),
+)
+# Literal characters of template text used to locate a placeholder's expansion
+# in an already-generated file. Long enough to be unambiguous, short enough to
+# survive light local editing around the section.
+PLACEHOLDER_ANCHOR = 40
+
+
+def recover_placeholder(existing: str, template: str, placeholder: str) -> str | None:
+    """Recover what `placeholder` expanded to in an already-generated file.
+
+    Anchors are taken from the template itself -- the literal text on either
+    side of the placeholder -- so no prose is hardcoded here and the recovery
+    follows the template if it is edited. Returns None when the surrounding
+    text cannot be found, in which case the caller keeps the freshly rendered
+    value rather than guessing.
+    """
+    head, separator, tail = template.partition(placeholder)
+    if not separator:
+        return None
+    lead, trail = head[-PLACEHOLDER_ANCHOR:], tail[:PLACEHOLDER_ANCHOR]
+    if not lead or not trail:
+        return None
+    start = existing.find(lead)
+    if start == -1:
+        return None
+    start += len(lead)
+    end = existing.find(trail, start)
+    if end == -1:
+        return None
+    return existing[start:end]
+
+
+def with_preserved_sections(
+    context: RenderContext,
+    target_repo: Path,
+    profile: str,
+    args: argparse.Namespace,
+) -> RenderContext:
+    """Carry a repository's own boundaries and validation commands across a sync.
+
+    Those two sections belong to the adopting repository, not to the shared
+    source, but --sync re-renders the whole file and the 3-way merge then
+    prefers the freshly rendered placeholder text over what the repository
+    configured -- silently replacing real boundaries and validation commands
+    with "Add project-specific rules here." Re-render the existing values
+    instead, so the merge sees no change there.
+
+    Values supplied on this run (--boundary/--validation) still win, and
+    --force still regenerates from the templates: asking to overwrite is a
+    different request.
+    """
+    primary = required_files_for_profile(profile)[0]
+    path = target_repo / primary
+    if not path.exists():
+        return context
+    existing = path.read_text(encoding="utf-8", errors="replace")
+    template = read_template(f"target-{primary}")
+
+    supplied = {"boundaries": bool(args.boundary), "validation_commands": bool(args.validation)}
+    replacements: dict[str, str] = {}
+    for field_name, placeholder in PRESERVED_PLACEHOLDERS:
+        if supplied[field_name]:
+            continue
+        recovered = recover_placeholder(existing, template, placeholder)
+        if recovered is not None and recovered != getattr(context, field_name):
+            replacements[field_name] = recovered
+    return replace(context, **replacements) if replacements else context
 
 
 def shared_skills_section(relative_path: str) -> str:

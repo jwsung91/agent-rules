@@ -1119,6 +1119,74 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertNotIn("Already adopted; syncing", result.stdout)
         self.assertNotIn("keep me", path.read_text(encoding="utf-8"))
 
+    def test_sync_preserves_repository_boundaries_and_validation(self) -> None:
+        # Regression: --sync re-rendered the whole file from the current
+        # arguments, so with no --boundary/--validation on the sync run the
+        # 3-way merge took the freshly rendered placeholder over what the
+        # repository had configured -- silently replacing real boundaries and
+        # validation commands with "Add project-specific rules here."
+        self.assertEqual(
+            self.cli(
+                "--profile", "all", "--skills",
+                "--boundary", "public API compatibility",
+                "--validation", "pytest -q",
+            ).returncode,
+            0,
+        )
+        self.assertEqual(self.cli("--check").returncode, 0)
+
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        # Only AGENTS.md carries a boundaries section; all three carry validation.
+        agents = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("public API compatibility", agents)
+        self.assertNotIn(adopt.BOUNDARY_PLACEHOLDER, agents)
+        for name in adopt.ENTRYPOINT_FILES:
+            content = (self.repo / name).read_text(encoding="utf-8")
+            with self.subTest(name=name):
+                self.assertIn("pytest -q", content)
+                self.assertNotIn(adopt.VALIDATION_PLACEHOLDER, content)
+        self.assertEqual(self.cli("--check").returncode, 0)
+
+    def test_sync_accepts_replacement_boundaries(self) -> None:
+        # Preserving the existing values must not make them unchangeable.
+        # AGENTS.md is the entrypoint that has a boundaries section.
+        self.assertEqual(
+            self.cli("--profile", "codex", "--boundary", "first rule").returncode, 0
+        )
+        self.assertEqual(
+            self.cli("--sync", "--boundary", "second rule").returncode, 0
+        )
+        content = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("second rule", content)
+        self.assertNotIn("first rule", content)
+
+    def test_force_regenerates_boundaries_from_the_template(self) -> None:
+        # --force means "overwrite from the templates", which is a different
+        # request from --sync and must not preserve local sections.
+        self.assertEqual(
+            self.cli("--profile", "codex", "--boundary", "keep me?").returncode, 0
+        )
+        self.assertEqual(self.cli("--profile", "codex", "--force").returncode, 0)
+        content = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertNotIn("keep me?", content)
+        self.assertIn(adopt.BOUNDARY_PLACEHOLDER, content)
+
+    def test_recover_placeholder_declines_when_anchors_are_gone(self) -> None:
+        # If the surrounding template text was edited away, recovery returns
+        # None so the caller keeps the freshly rendered value instead of
+        # slicing out something arbitrary.
+        template = "before text here that is long enough\n{{X}}\nafter text here too"
+        self.assertEqual(
+            adopt.recover_placeholder(
+                template.replace("{{X}}", "configured value"), template, "{{X}}"
+            ),
+            "configured value",
+        )
+        self.assertIsNone(
+            adopt.recover_placeholder("nothing familiar", template, "{{X}}")
+        )
+        self.assertIsNone(adopt.recover_placeholder("anything", template, "{{ABSENT}}"))
+
     def test_repeated_sync_is_idempotent(self) -> None:
         # Regression: render_metadata() stamps a fresh generated_at on every
         # run, so --sync used to rewrite every entrypoint and baseline even

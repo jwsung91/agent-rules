@@ -24,6 +24,7 @@ from .render import (
     render_file_for_profile,
     shared_skills_section,
     update_agents_content,
+    with_preserved_sections,
 )
 from .source import (
     get_source_status,
@@ -407,6 +408,8 @@ def build_plan(
 
     if profile:
         context = build_render_context(args, profile, source_status, detected)
+        if args.sync:
+            context = with_preserved_sections(context, target_repo, profile, args)
         files.extend(
             build_entrypoint_plans(
                 target_repo,

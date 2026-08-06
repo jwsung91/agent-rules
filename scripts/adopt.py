@@ -99,6 +99,8 @@ from agent_rules.render import (  # noqa: E402
     render_template,
     build_render_context,
     shared_skills_section,
+    with_preserved_sections,
+    recover_placeholder,
     render_file_for_profile,
     extract_managed_block,
     replace_metadata_block,
@@ -156,6 +158,8 @@ from agent_rules.batch import tomllib  # noqa: E402
 
 # Re-exported for `import adopt` consumers; see the module docstring.
 __all__ = [
+    "with_preserved_sections",
+    "recover_placeholder",
     "adoption_is_current",
     "AdoptionPlan",
     "BOUNDARY_PLACEHOLDER",
