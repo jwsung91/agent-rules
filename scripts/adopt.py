@@ -74,6 +74,7 @@ from agent_rules.gitio import (  # noqa: E402
     three_way_merge,
 )
 from agent_rules.source import (  # noqa: E402
+    adoption_is_current,
     resolve_target_repo,
     source_repo_root,
     template_dir,
@@ -155,6 +156,7 @@ from agent_rules.batch import tomllib  # noqa: E402
 
 # Re-exported for `import adopt` consumers; see the module docstring.
 __all__ = [
+    "adoption_is_current",
     "AdoptionPlan",
     "BOUNDARY_PLACEHOLDER",
     "BatchEntry",

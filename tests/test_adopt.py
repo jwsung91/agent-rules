@@ -1022,6 +1022,46 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             "shared skills are not supported for GEMINI.md", check.stdout
         )
 
+    def test_rerunning_the_adoption_command_syncs_instead_of_failing(self) -> None:
+        # The most natural second command -- the same one again -- used to
+        # stop at the first existing file with "Refusing to overwrite" and
+        # exit 1, telling the user to add --sync. On an already-adopted
+        # repository that request means "bring this up to date".
+        self.assertEqual(self.cli("--profile", "all", "--skills").returncode, 0)
+        before = {
+            name: (self.repo / name).read_bytes() for name in adopt.ENTRYPOINT_FILES
+        }
+
+        again = self.cli("--profile", "all", "--skills")
+        self.assertEqual(again.returncode, 0, again.stderr + again.stdout)
+        self.assertIn("Already adopted; syncing", again.stdout)
+        for name, original in before.items():
+            with self.subTest(name=name):
+                self.assertEqual((self.repo / name).read_bytes(), original)
+
+    def test_rerun_still_refuses_a_file_it_did_not_write(self) -> None:
+        # A file without the metadata block belongs to someone else; --sync
+        # treats those differently, so the explicit refusal stays.
+        (self.repo / "CLAUDE.md").write_text("# hand-written\n", encoding="utf-8")
+        result = self.cli("--profile", "claude")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Refusing to overwrite existing file", result.stdout)
+        self.assertEqual(
+            (self.repo / "CLAUDE.md").read_text(encoding="utf-8"), "# hand-written\n"
+        )
+
+    def test_rerun_with_force_still_regenerates(self) -> None:
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        path = self.repo / "CLAUDE.md"
+        path.write_text(
+            path.read_text(encoding="utf-8") + "\n## Local Notes\n\nkeep me\n",
+            encoding="utf-8",
+        )
+        result = self.cli("--profile", "claude", "--force")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertNotIn("Already adopted; syncing", result.stdout)
+        self.assertNotIn("keep me", path.read_text(encoding="utf-8"))
+
     def test_repeated_sync_is_idempotent(self) -> None:
         # Regression: render_metadata() stamps a fresh generated_at on every
         # run, so --sync used to rewrite every entrypoint and baseline even

@@ -184,6 +184,25 @@ def infer_profile_from_existing(target_repo: Path) -> str | None:
     return None
 
 
+def adoption_is_current(target_repo: Path, profile: str | None) -> bool:
+    """True when every file this profile generates exists and is ours.
+
+    Deliberately strict about the metadata block: a file that exists without
+    one was written by someone else, and --sync handles those differently
+    (merge for AGENTS.md, refuse for the rest), so the plain refusal and its
+    explanation remain the better answer in that case.
+    """
+    if profile not in VALID_PROFILES:
+        return False
+    for name in required_files_for_profile(profile):
+        path = target_repo / name
+        if not path.exists():
+            return False
+        if not parse_metadata(path.read_text(encoding="utf-8", errors="replace")):
+            return False
+    return True
+
+
 def skills_installed(target_repo: Path, profile: str) -> bool:
     for root in PROFILE_SKILL_ROOTS.get(profile, ()):
         for skill_name in SHARED_SKILLS:
