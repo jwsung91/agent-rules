@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .constants import (
+    BACKUP_ROOT,
     GITIGNORE_AGENT_COMMENT,
     SHARED_SKILLS,
     SKILL_ROOTS,
@@ -12,6 +13,10 @@ from .constants import (
 )
 from .models import IgnoreStatus
 from .render import dedupe
+
+# Directories this helper creates and owns outright, so one pattern each
+# covers everything they will ever contain.
+OWNED_DIRECTORY_ROOTS = (SYNC_BASE_ROOT, BACKUP_ROOT)
 
 
 def gitignore_patterns(paths: list[str]) -> list[str]:
@@ -31,8 +36,16 @@ def gitignore_patterns(paths: list[str]) -> list[str]:
     """
     patterns: list[str] = []
     for path in paths:
-        if path.startswith(f"{SYNC_BASE_ROOT}/"):
-            patterns.append(f"{SYNC_BASE_ROOT}/")
+        owned = next(
+            (
+                root
+                for root in OWNED_DIRECTORY_ROOTS
+                if path.startswith(f"{root}/")
+            ),
+            None,
+        )
+        if owned is not None:
+            patterns.append(f"{owned}/")
             continue
         for root in SKILL_ROOTS:
             prefix = f"{root}/"
@@ -57,7 +70,7 @@ def is_legacy_gitignore_entry(line: str) -> bool:
     entry = line.strip().lstrip("/")
     if not entry or entry.startswith("#"):
         return False
-    owned_roots = [f"{SYNC_BASE_ROOT}/"]
+    owned_roots = [f"{SYNC_BASE_ROOT}/", f"{BACKUP_ROOT}/"]
     owned_roots += [
         f"{root}/{skill_name}/" for root in SKILL_ROOTS for skill_name in SHARED_SKILLS
     ]

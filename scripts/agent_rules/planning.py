@@ -115,20 +115,23 @@ def plan_three_way_update(
 
 
 def plan_generated_update(
-    existing: str, rendered: str, metadata: str, relative_path: str
-) -> tuple[str, str]:
+    existing: str, rendered: str, metadata: str
+) -> tuple[str | None, str]:
     """Refresh a generated entrypoint that carries agent-rules metadata.
 
-    Files with managed markers get an in-place managed-block update that
-    preserves local sections. Legacy generated files without markers are fully
-    regenerated (partial update cannot locate the shared content in them).
-    AGENTS.md always takes the in-place path: replace_managed_block knows how
-    to insert the block before its Repository-specific Boundaries section.
+    Requires the managed-block markers. With them the shared content can be
+    replaced in place and everything else in the file is left alone.
+
+    Without them there is no way to tell the file's shared content from what
+    the repository wrote: replacing the whole file discards local edits, and
+    inserting the block leaves the old shared sections behind it as
+    duplicates. This used to regenerate anyway, which silently destroyed a
+    hand-edited validation section during a fleet sync. Refuse instead and
+    let the caller explain the options.
     """
-    if MANAGED_START in existing or relative_path == "AGENTS.md":
-        content = update_agents_content(existing, rendered, metadata)
-    else:
-        content = rendered
+    if MANAGED_START not in existing:
+        return None, "missing-managed-block"
+    content = update_agents_content(existing, rendered, metadata)
     return content, ("no-op" if same_content(content, existing) else "update")
 
 
@@ -213,9 +216,7 @@ def build_entrypoint_plans(
                     relative_path,
                     existing,
                     rendered,
-                    fallback=plan_generated_update(
-                        existing, rendered, metadata, relative_path
-                    ),
+                    fallback=plan_generated_update(existing, rendered, metadata),
                 )
             elif update:
                 content = None
@@ -256,9 +257,7 @@ def build_entrypoint_plans(
                     source_commit=context.source_commit,
                     generated_at=context.generated_at,
                 )
-                content, action = plan_generated_update(
-                    existing, rendered, metadata, relative_path
-                )
+                content, action = plan_generated_update(existing, rendered, metadata)
                 content, action = plan_three_way_update(
                     target_repo,
                     relative_path,

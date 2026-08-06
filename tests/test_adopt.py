@@ -1171,6 +1171,62 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn(shared, refreshed)
         self.assertNotIn("Stale shared text", refreshed)
 
+    def _legacy_claude_file(self) -> Path:
+        """A CLAUDE.md as generated before managed markers, plus local edits."""
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        path = self.repo / "CLAUDE.md"
+        content = adopt.strip_local_markers(path.read_text(encoding="utf-8"))
+        content = content.replace(adopt.MANAGED_START + "\n\n", "")
+        content = content.replace(adopt.MANAGED_END + "\n\n", "")
+        content = content.replace(
+            "Confirmed for this repository:", "Preferred checks for this repository:"
+        )
+        content += "\n## Local Notes\n\nhand-written, not from any template\n"
+        path.write_text(content, encoding="utf-8")
+        shutil.rmtree(self.repo / ".agent-rules")
+        return path
+
+    def test_sync_refuses_a_file_without_managed_markers(self) -> None:
+        # Regression: this path regenerated the file from the templates, which
+        # destroyed a hand-edited validation section in a real repository
+        # during a fleet sync. Nothing warned, and nothing kept a copy.
+        path = self._legacy_claude_file()
+        before = path.read_text(encoding="utf-8")
+
+        result = self.cli("--sync")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no managed-block markers", result.stdout)
+        self.assertIn("--force", result.stdout)
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+
+    def test_force_backs_up_the_file_it_replaces(self) -> None:
+        path = self._legacy_claude_file()
+        before = path.read_text(encoding="utf-8")
+
+        result = self.cli("--profile", "claude", "--force")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("Backed up:", result.stdout)
+        # The regeneration does discard local content -- that is what --force
+        # means -- but it is recoverable.
+        self.assertNotIn("Local Notes", path.read_text(encoding="utf-8"))
+        backups = list((self.repo / adopt.BACKUP_ROOT).glob("*/CLAUDE.md"))
+        self.assertEqual(len(backups), 1, backups)
+        self.assertEqual(backups[0].read_text(encoding="utf-8"), before)
+
+    def test_backups_are_local_only(self) -> None:
+        self._legacy_claude_file()
+        self.assertEqual(self.cli("--profile", "claude", "--force").returncode, 0)
+        backup = next((self.repo / adopt.BACKUP_ROOT).glob("*/CLAUDE.md"))
+        relative = backup.relative_to(self.repo).as_posix()
+        self.assertTrue(
+            adopt.check_ignore_status(self.repo, relative).ignored,
+            f"{relative} is not ignored",
+        )
+
+    def test_force_without_an_existing_file_writes_no_backup(self) -> None:
+        self.assertEqual(self.cli("--profile", "claude", "--force").returncode, 0)
+        self.assertFalse((self.repo / adopt.BACKUP_ROOT).exists())
+
     def test_sync_without_a_baseline_records_what_it_wrote(self) -> None:
         # Regression: with no baseline, --sync takes the legacy refresh, which
         # replaces the metadata and managed block and leaves the rest alone --
