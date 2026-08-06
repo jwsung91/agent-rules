@@ -26,30 +26,56 @@ def parse_args() -> argparse.Namespace:
         help="Output file path. Format is chosen by extension: .toml or .txt.",
     )
     parser.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
+    parser.add_argument(
+        "--adopted-only",
+        action="store_true",
+        help="List only repositories that already carry an agent-rules metadata block.",
+    )
+    parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=3,
+        metavar="N",
+        help="With --adopted-only, how many directory levels to search. Default: 3.",
+    )
     return parser.parse_args()
 
 
-def find_git_repos(root: Path) -> list[Path]:
+def find_git_repos(
+    root: Path, *, descend_past_repos: bool = False, max_depth: int | None = None
+) -> list[Path]:
     """Recursively find Git repository roots under `root`.
 
-    Once a directory is identified as a repo (has a .git entry), its
-    subdirectories are not searched further, so submodules and vendored
-    repos nested inside a found repo aren't picked up as separate entries.
+    By default a directory with a .git entry ends that branch of the search,
+    so submodules and vendored repos nested inside a found repo aren't picked
+    up as separate entries.
+
+    `descend_past_repos` keeps going instead, which is what --adopted-only
+    needs: a repository can sit inside another one -- a workspace repo holding
+    per-component repos, say -- and stopping at the outer one hides every
+    adopted repository under it. Walking everything is expensive (37k
+    directories under a real workspace root, versus 2k at depth 3), so that
+    search is bounded by `max_depth`.
     """
     found: list[Path] = []
 
-    def walk(directory: Path) -> None:
+    def walk(directory: Path, depth: int) -> None:
         if (directory / ".git").exists():
             found.append(directory)
+            if not descend_past_repos:
+                return
+        if max_depth is not None and depth >= max_depth:
             return
         try:
-            children = sorted(p for p in directory.iterdir() if p.is_dir())
-        except PermissionError:
+            children = sorted(
+                p for p in directory.iterdir() if p.is_dir() and not p.is_symlink()
+            )
+        except (PermissionError, OSError):
             return
         for child in children:
-            walk(child)
+            walk(child, depth + 1)
 
-    walk(root)
+    walk(root, 0)
     return sorted(found, key=lambda p: p.as_posix())
 
 
@@ -78,11 +104,23 @@ def main() -> int:
         raise SystemExit(f"Unsupported output extension: {output.suffix or '(none)'}. Use .toml or .txt.")
 
     root = resolve_target_repo(args.root)
-    repos = find_git_repos(root)
+    repos = find_git_repos(
+        root,
+        descend_past_repos=args.adopted_only,
+        max_depth=args.max_depth if args.adopted_only else None,
+    )
     if not repos:
         raise SystemExit(f"No Git repositories found under: {root}")
 
     entries = [(repo, infer_profile_from_existing(repo)) for repo in repos]
+    if args.adopted_only:
+        # An inferred profile means an entrypoint carrying agent-rules
+        # metadata, which is what "already adopted" means everywhere else in
+        # this helper. Answering "which repositories have adopted this?"
+        # otherwise takes a hand-rolled find | grep.
+        entries = [(repo, profile) for repo, profile in entries if profile]
+        if not entries:
+            raise SystemExit(f"No adopted repositories found under: {root}")
 
     content = render_toml(entries) if suffix == ".toml" else render_text(entries)
     output.parent.mkdir(parents=True, exist_ok=True)

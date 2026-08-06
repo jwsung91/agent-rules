@@ -619,6 +619,34 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
                     adopt.check_ignore_status(self.repo, relative_path).ignored
                 )
 
+    def test_gitignore_reroots_bare_entrypoint_entries(self) -> None:
+        # Earlier versions wrote a bare "AGENTS.md", which gitignore matches
+        # at any depth -- including .agents/agent-rules/AGENTS.md, the local
+        # copy that is meant to be committed.
+        self.assertEqual(self.cli("--profile", "all").returncode, 0)
+        gitignore = self.repo / ".gitignore"
+        gitignore.write_text(
+            f"{adopt.GITIGNORE_AGENT_COMMENT}\nAGENTS.md\nCLAUDE.md\nGEMINI.md\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(self.cli("--sync").returncode, 0)
+        lines = [
+            line.strip()
+            for line in gitignore.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        for name in adopt.ENTRYPOINT_FILES:
+            with self.subTest(name=name):
+                self.assertIn(f"/{name}", lines)
+                self.assertNotIn(name, lines)
+        # A local copy under .agents/ must not be caught by them.
+        self.assertFalse(
+            adopt.check_ignore_status(
+                self.repo, ".agents/agent-rules/AGENTS.md"
+            ).ignored
+        )
+
     def test_gitignore_migrates_legacy_per_file_entries(self) -> None:
         result = self.cli("--profile", "codex", "--skills")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)

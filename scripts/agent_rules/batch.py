@@ -70,6 +70,7 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
         return 0
 
     results: list[tuple[str, int]] = []
+    changed: dict[str, int] = {}
     for entry in entries:
         print(f"\n{'─' * 60}")
         print(f"  {entry.path}")
@@ -129,6 +130,8 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
                     results.append((entry.path, 1))
                     continue
                 code = apply_plan(plan, entry_args)
+                if code == 0:
+                    changed[entry.path] = len(plan.written)
         except (SystemExit, Exception) as exc:
             print(f"FAIL: {exc}")
             code = 1
@@ -141,6 +144,13 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
     warned = [p for p, c in results if c == 2]
     failed = [p for p, c in results if c not in (0, 2)]
     print(f"{len(succeeded)} succeeded, {len(warned)} warned, {len(failed)} failed")
+    if changed:
+        # --sync is idempotent, so "succeeded" alone cannot tell a fleet that
+        # was already current from one this run rewrote.
+        touched = {path: count for path, count in changed.items() if count}
+        print(f"{len(touched)} changed, {len(changed) - len(touched)} already current")
+        for path, count in touched.items():
+            print(f"  - {path} ({count} file{'s' if count != 1 else ''})")
     if warned:
         print("\nWarnings only:")
         for p in warned:
