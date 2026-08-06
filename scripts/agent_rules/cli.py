@@ -82,6 +82,11 @@ def parse_args() -> argparse.Namespace:
         help="List the shared skills that --skills installs, then exit.",
     )
     parser.add_argument(
+        "--problems-only",
+        action="store_true",
+        help="With --check, print only WARN/FAIL lines instead of every result.",
+    )
+    parser.add_argument(
         "--batch",
         metavar="FILE",
         help="Apply to multiple repositories listed in a .toml or .txt file.",
@@ -174,6 +179,7 @@ def main() -> int:
             check_skills=args.skills,
             visibility=args.visibility,
             profile_override=profile,
+            problems_only=args.problems_only,
         )
 
     plan = build_plan(target_repo, args, profile)

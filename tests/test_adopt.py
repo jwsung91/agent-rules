@@ -979,6 +979,42 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertFalse((self.repo / "GEMINI.md").exists())
         self.assertFalse((self.repo / ".gemini").exists())
 
+    def test_check_leads_with_a_status_summary(self) -> None:
+        self.assertEqual(self.cli("--profile", "all", "--skills").returncode, 0)
+        check = self.cli("--check")
+        first = check.stdout.splitlines()[0]
+        self.assertRegex(first, r"^Summary: \d+ FAIL · \d+ WARN · \d+ NOTE · \d+ OK$")
+        # The tally has to agree with the lines actually printed.
+        for status in ("FAIL", "WARN", "NOTE", "OK"):
+            printed = check.stdout.count(f"[{status}] ")
+            reported = int(re.search(rf"(\d+) {status}", first).group(1))
+            with self.subTest(status=status):
+                self.assertEqual(reported, printed)
+
+    def test_check_problems_only_drops_passing_lines(self) -> None:
+        self.assertEqual(self.cli("--profile", "all", "--skills").returncode, 0)
+        full = self.cli("--check")
+        terse = self.cli("--check", "--problems-only")
+        self.assertEqual(terse.returncode, full.returncode)
+        self.assertNotIn("[OK]", terse.stdout)
+        self.assertIn("[WARN]", terse.stdout)
+        self.assertLess(
+            len(terse.stdout.splitlines()), len(full.stdout.splitlines())
+        )
+        # The summary still reports the passing checks that were not printed.
+        self.assertIn("OK", terse.stdout.splitlines()[0])
+
+    def test_check_problems_only_says_so_when_clean(self) -> None:
+        result = self.cli(
+            "--profile", "claude",
+            "--boundary", "public API compatibility",
+            "--validation", "pytest -q",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        terse = self.cli("--check", "--problems-only")
+        self.assertEqual(terse.returncode, 0, terse.stderr + terse.stdout)
+        self.assertIn("No problems found.", terse.stdout)
+
     def test_check_skills_fails_for_gemini_only_profile(self) -> None:
         self.assertEqual(self.cli("--profile", "gemini").returncode, 0)
         check = self.cli("--check", "--skills", "--profile", "gemini")
