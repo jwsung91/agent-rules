@@ -26,6 +26,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from agent_rules.constants import (  # noqa: E402
+    LOCAL_REGION_RE,
     DEFAULT_SHARED_URL,
     SOURCE_REF,
     VALID_PROFILES,
@@ -101,6 +102,8 @@ from agent_rules.render import (  # noqa: E402
     shared_skills_section,
     with_preserved_sections,
     recover_placeholder,
+    extract_local_regions,
+    strip_local_markers,
     render_file_for_profile,
     extract_managed_block,
     replace_metadata_block,
@@ -158,6 +161,9 @@ from agent_rules.batch import tomllib  # noqa: E402
 
 # Re-exported for `import adopt` consumers; see the module docstring.
 __all__ = [
+    "extract_local_regions",
+    "strip_local_markers",
+    "LOCAL_REGION_RE",
     "with_preserved_sections",
     "recover_placeholder",
     "adoption_is_current",

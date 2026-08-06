@@ -115,3 +115,24 @@ BOUNDARY_PLACEHOLDER = "Add project-specific rules here."
 VALIDATION_PLACEHOLDER = "# Add project-specific build/test/lint commands here."
 GITIGNORE_AGENT_COMMENT = "# agent-rules (local only)"
 SYNC_BASE_ROOT = ".agent-rules/bases"
+
+
+# Regions of a generated entrypoint that belong to the adopting repository.
+# --sync refreshes everything else from the shared source and never these.
+#
+# Marking ownership in the file is what makes that guarantee structural. The
+# alternative considered -- "only regenerate the managed block" -- does not
+# work here: shared content lives outside that block too (the Validation
+# guidance and the whole Final Report section), and it has been revised since
+# repositories started adopting, so freezing it would strand them.
+#
+# The region name is the RenderContext field it fills.
+LOCAL_REGION_RE = re.compile(
+    r"<!--\s*agent-rules-local:(?P<name>[a-z_]+):start\s*-->\n"
+    r"(?P<body>.*?)"
+    r"\n<!--\s*agent-rules-local:(?P=name):end\s*-->",
+    re.DOTALL,
+)
+LOCAL_MARKER_LINE_RE = re.compile(
+    r"^<!--\s*agent-rules-local:[a-z_]+:(?:start|end)\s*-->\n", re.MULTILINE
+)

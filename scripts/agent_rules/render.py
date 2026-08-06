@@ -10,6 +10,8 @@ from datetime import datetime
 
 from .constants import (
     BOUNDARY_PLACEHOLDER,
+    LOCAL_MARKER_LINE_RE,
+    LOCAL_REGION_RE,
     ENTRYPOINT_FILES,
     ENTRYPOINT_SKILL_ROOTS,
     MANAGED_END,
@@ -137,6 +139,22 @@ def recover_placeholder(existing: str, template: str, placeholder: str) -> str |
     return existing[start:end]
 
 
+def strip_local_markers(text: str) -> str:
+    """The same text without the region ownership markers."""
+    return LOCAL_MARKER_LINE_RE.sub("", text)
+
+
+def extract_local_regions(content: str) -> dict[str, str]:
+    """Bodies of the repository-owned regions in a generated entrypoint.
+
+    Keyed by region name, which is the RenderContext field the region fills.
+    """
+    return {
+        match.group("name"): match.group("body")
+        for match in LOCAL_REGION_RE.finditer(content)
+    }
+
+
 def with_preserved_sections(
     context: RenderContext,
     target_repo: Path,
@@ -164,11 +182,21 @@ def with_preserved_sections(
     template = read_template(f"target-{primary}")
 
     supplied = {"boundaries": bool(args.boundary), "validation_commands": bool(args.validation)}
+    regions = extract_local_regions(existing)
     replacements: dict[str, str] = {}
     for field_name, placeholder in PRESERVED_PLACEHOLDERS:
         if supplied[field_name]:
             continue
-        recovered = recover_placeholder(existing, template, placeholder)
+        recovered = regions.get(field_name)
+        if recovered is None:
+            # Adopted before the ownership markers existed. Fall back to
+            # locating the value by the template text around it, with the
+            # markers stripped so the anchors match how that file was
+            # actually generated. This sync writes the markers, after which
+            # the marker path is used.
+            recovered = recover_placeholder(
+                existing, strip_local_markers(template), placeholder
+            )
         if recovered is not None and recovered != getattr(context, field_name):
             replacements[field_name] = recovered
     return replace(context, **replacements) if replacements else context

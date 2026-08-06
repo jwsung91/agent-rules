@@ -128,6 +128,32 @@ file actually changes, so repeated syncs do not produce empty diffs (or, under
 `--visibility tracked`, no-content commits). Missing `.gitignore` entries are
 still repaired on a sync that writes nothing.
 
+### What --sync will and will not rewrite
+
+Generated entrypoints mark the regions that belong to the adopting repository:
+
+```markdown
+## Repository-specific Boundaries
+
+<!-- agent-rules-local:boundaries:start -->
+- no vendored dependencies
+<!-- agent-rules-local:boundaries:end -->
+```
+
+`--sync` refreshes everything outside those markers from the shared source and
+never rewrites what is inside them. Edit freely between the markers; keep the
+marker lines themselves.
+
+Ownership is marked per region rather than by regenerating only the managed
+block, because shared content lives outside that block as well -- the
+`## Validation` guidance and the whole `## Final Report` section -- and it has
+been revised since repositories started adopting. Freezing everything outside
+the managed block would strand them on an old copy.
+
+Adoptions created before the markers existed pick them up on their first
+`--sync`, which recovers the configured values from the template text around
+them. Nothing needs to be re-entered.
+
 Baselines are stored under `.agent-rules/bases/`. Local visibility ignores
 them together with generated files; tracked visibility keeps them trackable so
 other team members can reproduce later merges. A previously installed,
