@@ -392,7 +392,42 @@ If an agent file is already in `.gitignore`, the helper skips the `.gitignore` u
 
 Local copy files (`.agents/agent-rules/`) are different: they are meant to be committed if you want them shared with the team. If `.agents/` is blocked by `.gitignore`, the helper will fail with a message to remove or narrow the ignore rule.
 
-## 10. Validation Command Detection
+## 10. Removing an Adoption
+
+```bash
+python scripts/adopt.py /path/to/repo --remove --dry-run
+python scripts/adopt.py /path/to/repo --remove
+```
+
+`--remove` deletes the files this helper generated for the active profile:
+the entrypoints, the installed shared skills, and the sync baselines. The
+profile is inferred from the existing metadata when `--profile` is omitted.
+
+Everything it deletes is copied to `.agent-rules/backups/<timestamp>/` first.
+That matters more than it sounds: an entrypoint holds the repository's own
+boundaries and validation commands, and a local-only adoption is not in Git,
+so the backup is the only copy.
+
+It refuses rather than guessing in two cases:
+
+- **A file with no agent-rules metadata block** — it was written by someone
+  else. Delete it yourself if that is what you want.
+- **A tracked file** — removing it changes the repository for everyone.
+  `--force` overrides; Git still has the committed copies either way.
+
+Left alone deliberately:
+
+- `.agents/agent-rules/` — a local copy is meant to be committed and shared,
+  so dropping it is a separate decision from undoing the adoption.
+- Anything under `.agent-rules/backups/`.
+- `.gitignore` rules the repository wrote itself. Only the
+  `# agent-rules (local only)` block is removed.
+
+The backup survives with no ignore rule left to hide it, so it shows up in
+`git status` until you delete it — deliberately, since it is the only copy of
+what was removed.
+
+## 11. Validation Command Detection
 
 The helper always inspects the target repository for known build files and suggests matching commands. Detected commands are written into the generated file automatically.
 

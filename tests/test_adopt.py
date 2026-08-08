@@ -1391,6 +1391,100 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         )
         self.assertIsNone(adopt.recover_placeholder("anything", template, "{{ABSENT}}"))
 
+    def test_remove_deletes_generated_files_and_backs_them_up(self) -> None:
+        (self.repo / ".gitignore").write_text("build/\n", encoding="utf-8")
+        self.assertEqual(
+            self.cli(
+                "--profile", "all", "--skills", "--boundary", "public API compatibility"
+            ).returncode,
+            0,
+        )
+        generated = [
+            path
+            for path in self.repo.rglob("*")
+            if path.is_file() and ".git/" not in path.as_posix()
+        ]
+        self.assertGreater(len(generated), 20)
+
+        result = self.cli("--remove")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+        for name in adopt.ENTRYPOINT_FILES:
+            with self.subTest(name=name):
+                self.assertFalse((self.repo / name).exists())
+        self.assertFalse((self.repo / ".codex").exists())
+        self.assertFalse((self.repo / ".claude").exists())
+        self.assertFalse((self.repo / adopt.SYNC_BASE_ROOT).exists())
+
+        # The repository's own ignore rule survives; the helper's block does not.
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("build/", gitignore)
+        self.assertNotIn(adopt.GITIGNORE_AGENT_COMMENT, gitignore)
+
+        # Everything removed is recoverable, including the boundary the
+        # repository wrote, which a local-only adoption keeps nowhere else.
+        backups = list((self.repo / adopt.BACKUP_ROOT).rglob("AGENTS.md"))
+        self.assertTrue(backups)
+        self.assertIn(
+            "public API compatibility", backups[0].read_text(encoding="utf-8")
+        )
+
+    def test_remove_dry_run_changes_nothing(self) -> None:
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        before = (self.repo / "CLAUDE.md").read_bytes()
+        gitignore = (self.repo / ".gitignore").read_bytes()
+
+        result = self.cli("--remove", "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("Would remove", result.stdout)
+        self.assertEqual((self.repo / "CLAUDE.md").read_bytes(), before)
+        self.assertEqual((self.repo / ".gitignore").read_bytes(), gitignore)
+        self.assertFalse((self.repo / adopt.BACKUP_ROOT).exists())
+
+    def test_remove_refuses_a_file_it_did_not_generate(self) -> None:
+        (self.repo / "AGENTS.md").write_text("# hand-written\n", encoding="utf-8")
+        result = self.cli("--profile", "codex", "--remove")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("did not generate", result.stdout)
+        self.assertEqual(
+            (self.repo / "AGENTS.md").read_text(encoding="utf-8"), "# hand-written\n"
+        )
+
+    def test_remove_refuses_tracked_files_without_force(self) -> None:
+        self.assertEqual(
+            self.cli("--profile", "codex", "--visibility", "tracked").returncode, 0
+        )
+        run(["git", "add", "-A"], self.repo)
+        git_commit(self.repo, "adopt")
+
+        result = self.cli("--remove")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Refusing to remove tracked files", result.stdout)
+        self.assertTrue((self.repo / "AGENTS.md").exists())
+
+        forced = self.cli("--remove", "--force")
+        self.assertEqual(forced.returncode, 0, forced.stderr + forced.stdout)
+        self.assertFalse((self.repo / "AGENTS.md").exists())
+
+    def test_remove_leaves_the_local_copy_alone(self) -> None:
+        self.assertEqual(
+            self.cli("--profile", "codex", "--local-copy", "--visibility", "tracked").returncode,
+            0,
+        )
+        local_copy = self.repo / ".agents" / "agent-rules"
+        self.assertTrue(local_copy.exists())
+
+        self.assertEqual(self.cli("--remove").returncode, 0)
+        # A local copy is meant to be committed and shared, so dropping it is
+        # a separate decision from undoing the adoption.
+        self.assertTrue(local_copy.exists())
+        self.assertFalse((self.repo / "AGENTS.md").exists())
+
+    def test_remove_on_an_unadopted_repository_says_so(self) -> None:
+        result = self.cli("--profile", "codex", "--remove")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("Nothing to remove", result.stdout)
+
     def test_repeated_sync_is_idempotent(self) -> None:
         # Regression: render_metadata() stamps a fresh generated_at on every
         # run, so --sync used to rewrite every entrypoint and baseline even

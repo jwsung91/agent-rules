@@ -114,11 +114,20 @@ from agent_rules.render import (  # noqa: E402
     merge_agents_content,
 )
 from agent_rules.gitignore import (  # noqa: E402
+    remove_agent_rules_block,
     gitignore_patterns,
     is_legacy_gitignore_entry,
     strip_legacy_gitignore_entries,
     add_to_gitignore,
     fail_on_ignored,
+)
+from agent_rules.removal import (  # noqa: E402
+    RemovalPlan,
+    adoption_paths,
+    apply_removal,
+    build_removal_plan,
+    prune_empty_parents,
+    report_removal_blockers,
 )
 from agent_rules.planning import (  # noqa: E402
     baseline_content_for,
@@ -164,6 +173,13 @@ from agent_rules.batch import tomllib  # noqa: E402
 
 # Re-exported for `import adopt` consumers; see the module docstring.
 __all__ = [
+    "remove_agent_rules_block",
+    "report_removal_blockers",
+    "prune_empty_parents",
+    "build_removal_plan",
+    "apply_removal",
+    "adoption_paths",
+    "RemovalPlan",
     "backup_path",
     "BACKUP_ROOT",
     "baseline_content_for",
