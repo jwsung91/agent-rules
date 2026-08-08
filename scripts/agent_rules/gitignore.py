@@ -220,3 +220,45 @@ def fail_on_ignored(statuses: list[IgnoreStatus]) -> int:
     print("1. Remove or narrow the ignore rule in .gitignore.")
     print("2. Re-run with --dry-run to verify.")
     return 1
+
+
+def remove_agent_rules_block(git_root: Path, *, dry_run: bool) -> int:
+    """Drop the agent-rules block from .gitignore, returning entries removed.
+
+    Only the block this helper writes, identified by its comment header --
+    rules a repository added itself stay, wherever they sit.
+    """
+    gitignore_path = git_root / ".gitignore"
+    if not gitignore_path.exists():
+        return 0
+    lines = gitignore_path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+    kept: list[str] = []
+    removed = 0
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() != GITIGNORE_AGENT_COMMENT:
+            kept.append(lines[index])
+            index += 1
+            continue
+        block_end = index + 1
+        while block_end < len(lines) and lines[block_end].strip():
+            block_end += 1
+        removed += block_end - index - 1
+        index = block_end
+        # Drop one blank line the block left behind, so removing it does not
+        # widen the gap between the rules around it.
+        if index < len(lines) and not lines[index].strip():
+            index += 1
+
+    if not removed:
+        return 0
+    if dry_run:
+        print(f"Would remove {removed} agent-rules entr(ies) from .gitignore")
+        return removed
+
+    updated = "\n".join(kept)
+    if updated:
+        updated += "\n"
+    gitignore_path.write_text(updated, encoding="utf-8")
+    return removed

@@ -69,6 +69,13 @@ Preview before applying:
 python scripts/adopt.py /path/to/repo --profile claude --dry-run
 ```
 
+Remove an adoption (everything it deletes is backed up first):
+
+```bash
+python scripts/adopt.py /path/to/repo --remove --dry-run
+python scripts/adopt.py /path/to/repo --remove
+```
+
 Check and update an existing adoption:
 
 ```bash

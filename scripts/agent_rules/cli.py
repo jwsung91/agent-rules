@@ -11,6 +11,7 @@ from .batch import run_batch
 from .checking import check_adoption, list_shared_skills
 from .constants import DEFAULT_SHARED_URL, VALID_PROFILES, VALID_VISIBILITIES
 from .planning import build_plan
+from .removal import apply_removal, build_removal_plan
 from .source import (
     adoption_is_current,
     infer_profile_from_existing,
@@ -60,6 +61,11 @@ def parse_args() -> argparse.Namespace:
         help="With --dry-run, also print the full content of each planned file.",
     )
     parser.add_argument("--check", action="store_true", help="Check adoption health.")
+    parser.add_argument(
+        "--remove",
+        action="store_true",
+        help="Remove the files this helper generated, backing them up first.",
+    )
     parser.add_argument(
         "--sync",
         action="store_true",
@@ -111,9 +117,13 @@ def print_profile_help() -> None:
 def validate_args(args: argparse.Namespace, profile: str | None) -> None:
     if args.sync and args.force:
         raise SystemExit("Use either --sync or --force, not both.")
+    if args.remove and args.sync:
+        raise SystemExit("Use either --remove or --sync, not both.")
+    if args.remove and args.check:
+        raise SystemExit("Use either --remove or --check, not both.")
     if args.batch:
         return
-    write_requested = not args.check
+    write_requested = not (args.check or args.remove)
     if write_requested and not profile:
         print_profile_help()
         raise SystemExit(2)
@@ -149,7 +159,7 @@ def main() -> int:
     # --sync, so the most natural second command was always an error. --force
     # is left alone: asking to overwrite is a different intent, and --sync is
     # non-destructive (it merges, and refuses to write a conflict).
-    if not (args.check or args.sync or args.force) and adoption_is_current(
+    if not (args.check or args.sync or args.force or args.remove) and adoption_is_current(
         target_repo, profile
     ):
         print(
@@ -159,7 +169,7 @@ def main() -> int:
         args.sync = True
 
     # Auto-detect profile from existing files when --check or --sync is requested
-    if profile is None and (args.check or args.sync):
+    if profile is None and (args.check or args.sync or args.remove):
         profile = infer_profile_from_existing(target_repo)
 
     # Without this, --sync would render entrypoints skill-free and the 3-way
@@ -168,7 +178,7 @@ def main() -> int:
     # inference for a different reason: without it a health check silently
     # skips every skill assertion, so a deleted skill file reports clean.
     if (
-        (args.sync or args.check)
+        (args.sync or args.check or args.remove)
         and not args.skills
         and profile
         and skills_installed(target_repo, profile)
@@ -176,6 +186,17 @@ def main() -> int:
         args.skills = True
 
     validate_args(args, profile)
+
+    if args.remove:
+        if not profile:
+            print_profile_help()
+            return 2
+        return apply_removal(
+            build_removal_plan(
+                target_repo, profile, skills=args.skills, force=args.force
+            ),
+            dry_run=args.dry_run,
+        )
 
     if args.check:
         return check_adoption(

@@ -380,6 +380,15 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             ROOT,
         )
 
+    def assert_cli_ok(self, result: subprocess.CompletedProcess[str]) -> None:
+        """Assert success, and show the run's output when it was not.
+
+        A bare `assertEqual(result.returncode, 0)` reports "1 != 0" and
+        nothing else, which is useless when the failure only reproduces on a
+        CI runner.
+        """
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_plan_and_profile_dry_runs(self) -> None:
         for profile in ("codex", "claude", "gemini", "all"):
             result = self.cli("--profile", profile, "--dry-run")
@@ -630,7 +639,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         lines = [
             line.strip()
             for line in gitignore.read_text(encoding="utf-8").splitlines()
@@ -684,7 +693,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(self.cli("--profile", "codex", "--skills").returncode, 0)
         gitignore = self.repo / ".gitignore"
         before = gitignore.read_text(encoding="utf-8")
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         self.assertEqual(gitignore.read_text(encoding="utf-8"), before)
 
     def test_gitignore_migration_leaves_foreign_skill_entries_alone(self) -> None:
@@ -698,7 +707,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         self.assertIn(
             "/.codex/skills/team-only-skill/SKILL.md",
             gitignore.read_text(encoding="utf-8"),
@@ -1174,7 +1183,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         mine = "- no vendored dependencies\n- benchmark numbers stay reproducible"
         path.write_text(head + start + mine + end + tail, encoding="utf-8")
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         self.assertEqual(
             adopt.extract_local_regions(path.read_text(encoding="utf-8"))["boundaries"],
             mine,
@@ -1194,7 +1203,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         refreshed = paths[0].read_text(encoding="utf-8")
         self.assertIn(shared, refreshed)
         self.assertNotIn("Stale shared text", refreshed)
@@ -1276,7 +1285,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
 
         # First sync has nothing to merge against, so it records the file it
         # actually wrote rather than the render.
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         baseline = self.repo / adopt.sync_base_path("AGENTS.md")
         self.assertEqual(
             adopt.extract_local_regions(baseline.read_text(encoding="utf-8")),
@@ -1286,13 +1295,13 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
 
         # With an honest baseline the next sync sees the markers as an
         # upstream addition and applies them, keeping the configured value.
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         regions = adopt.extract_local_regions(path.read_text(encoding="utf-8"))
         self.assertEqual(set(regions), {"boundaries", "validation_commands"})
         self.assertIn("pytest -q", regions["validation_commands"])
 
         before = path.read_bytes()
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         self.assertEqual(path.read_bytes(), before)
 
     def test_sync_migrates_an_adoption_written_before_the_markers(self) -> None:
@@ -1315,7 +1324,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(adopt.extract_local_regions(path.read_text(encoding="utf-8")), {})
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         content = path.read_text(encoding="utf-8")
         regions = adopt.extract_local_regions(content)
         self.assertEqual(set(regions), {"boundaries", "validation_commands"})
@@ -1339,7 +1348,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(self.cli("--check").returncode, 0)
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         # Only AGENTS.md carries a boundaries section; all three carry validation.
         agents = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("public API compatibility", agents)
@@ -1390,6 +1399,138 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             adopt.recover_placeholder("nothing familiar", template, "{{X}}")
         )
         self.assertIsNone(adopt.recover_placeholder("anything", template, "{{ABSENT}}"))
+
+    def test_remove_deletes_generated_files_and_backs_them_up(self) -> None:
+        (self.repo / ".gitignore").write_text("build/\n", encoding="utf-8")
+        self.assertEqual(
+            self.cli(
+                "--profile", "all", "--skills", "--boundary", "public API compatibility"
+            ).returncode,
+            0,
+        )
+        generated = [
+            path
+            for path in self.repo.rglob("*")
+            if path.is_file() and ".git/" not in path.as_posix()
+        ]
+        self.assertGreater(len(generated), 20)
+
+        result = self.cli("--remove")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+        for name in adopt.ENTRYPOINT_FILES:
+            with self.subTest(name=name):
+                self.assertFalse((self.repo / name).exists())
+        self.assertFalse((self.repo / ".codex").exists())
+        self.assertFalse((self.repo / ".claude").exists())
+        self.assertFalse((self.repo / adopt.SYNC_BASE_ROOT).exists())
+
+        # The repository's own ignore rule survives; the helper's block does not.
+        gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("build/", gitignore)
+        self.assertNotIn(adopt.GITIGNORE_AGENT_COMMENT, gitignore)
+
+        # Everything removed is recoverable, including the boundary the
+        # repository wrote, which a local-only adoption keeps nowhere else.
+        backups = list((self.repo / adopt.BACKUP_ROOT).rglob("AGENTS.md"))
+        self.assertTrue(backups)
+        self.assertIn(
+            "public API compatibility", backups[0].read_text(encoding="utf-8")
+        )
+
+    def test_remove_dry_run_changes_nothing(self) -> None:
+        self.assertEqual(self.cli("--profile", "claude").returncode, 0)
+        before = (self.repo / "CLAUDE.md").read_bytes()
+        gitignore = (self.repo / ".gitignore").read_bytes()
+
+        result = self.cli("--remove", "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("Would remove", result.stdout)
+        self.assertEqual((self.repo / "CLAUDE.md").read_bytes(), before)
+        self.assertEqual((self.repo / ".gitignore").read_bytes(), gitignore)
+        self.assertFalse((self.repo / adopt.BACKUP_ROOT).exists())
+
+    def test_remove_refuses_a_file_it_did_not_generate(self) -> None:
+        (self.repo / "AGENTS.md").write_text("# hand-written\n", encoding="utf-8")
+        result = self.cli("--profile", "codex", "--remove")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("did not generate", result.stdout)
+        self.assertEqual(
+            (self.repo / "AGENTS.md").read_text(encoding="utf-8"), "# hand-written\n"
+        )
+
+    def test_remove_refuses_tracked_files_without_force(self) -> None:
+        self.assertEqual(
+            self.cli("--profile", "codex", "--visibility", "tracked").returncode, 0
+        )
+        run(["git", "add", "-A"], self.repo)
+        git_commit(self.repo, "adopt")
+
+        result = self.cli("--remove")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Refusing to remove tracked files", result.stdout)
+        self.assertTrue((self.repo / "AGENTS.md").exists())
+
+        forced = self.cli("--remove", "--force")
+        self.assertEqual(forced.returncode, 0, forced.stderr + forced.stdout)
+        self.assertFalse((self.repo / "AGENTS.md").exists())
+
+    def test_remove_leaves_the_local_copy_alone(self) -> None:
+        self.assertEqual(
+            self.cli("--profile", "codex", "--local-copy", "--visibility", "tracked").returncode,
+            0,
+        )
+        local_copy = self.repo / ".agents" / "agent-rules"
+        self.assertTrue(local_copy.exists())
+
+        self.assertEqual(self.cli("--remove").returncode, 0)
+        # A local copy is meant to be committed and shared, so dropping it is
+        # a separate decision from undoing the adoption.
+        self.assertTrue(local_copy.exists())
+        self.assertFalse((self.repo / "AGENTS.md").exists())
+
+    def test_remove_on_an_unadopted_repository_says_so(self) -> None:
+        result = self.cli("--profile", "codex", "--remove")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("Nothing to remove", result.stdout)
+
+    def test_sync_survives_a_drifted_baseline_timestamp(self) -> None:
+        # Regression: generated_at is rewritten on every render, and the merge
+        # saw it raw. Once the baseline's timestamp drifted from the file's,
+        # all three inputs differed on that one line and git reported a
+        # conflict the repository could never resolve -- --sync refused
+        # forever. It only showed up on the Windows CI runner, where the suite
+        # is slow enough for consecutive syncs to cross a second boundary;
+        # this reproduces it directly by moving the baseline's timestamp.
+        self.assert_cli_ok(self.cli("--profile", "codex"))
+        baseline = self.repo / adopt.sync_base_path("AGENTS.md")
+        drifted = re.sub(
+            r"generated_at=.*",
+            "generated_at=2020-01-01T00:00:00+00:00",
+            baseline.read_text(encoding="utf-8"),
+            count=1,
+        )
+        baseline.write_text(drifted, encoding="utf-8")
+
+        path = self.repo / "AGENTS.md"
+        path.write_text(
+            re.sub(
+                r"generated_at=.*",
+                "generated_at=2021-01-01T00:00:00+00:00",
+                path.read_text(encoding="utf-8"),
+                count=1,
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.cli("--sync")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("merge conflict", result.stdout.lower())
+        content = path.read_text(encoding="utf-8")
+        self.assertNotIn("<<<<<<<", content)
+        # Exactly one timestamp survives, and the rest of the file is intact.
+        self.assertEqual(content.count("generated_at="), 1)
+        self.assertIn("## Agent Usage Model", content)
 
     def test_repeated_sync_is_idempotent(self) -> None:
         # Regression: render_metadata() stamps a fresh generated_at on every
