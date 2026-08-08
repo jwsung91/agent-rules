@@ -67,3 +67,23 @@ def mask_generated_at(content: str) -> str:
 def same_content(left: str, right: str) -> bool:
     """Compare rendered content while ignoring the generated_at timestamp."""
     return mask_generated_at(left) == mask_generated_at(right)
+
+
+def generated_at_line(content: str) -> str | None:
+    """The metadata block's generated_at line, if there is one."""
+    match = METADATA_RE.search(content)
+    if not match:
+        return None
+    line = GENERATED_AT_RE.search(match.group(0))
+    return line.group(0) if line else None
+
+
+def apply_generated_at(content: str, line: str | None) -> str:
+    """Put `line` back as the metadata block's generated_at."""
+    if line is None:
+        return content
+    match = METADATA_RE.search(content)
+    if not match:
+        return content
+    replaced = GENERATED_AT_RE.sub(lambda _match: line, match.group(0), count=1)
+    return content[: match.start()] + replaced + content[match.end() :]

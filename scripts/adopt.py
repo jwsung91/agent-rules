@@ -61,6 +61,8 @@ from agent_rules.models import (  # noqa: E402
     AdoptionPlan,
 )
 from agent_rules.metadata import (  # noqa: E402
+    apply_generated_at,
+    generated_at_line,
     render_metadata,
     parse_metadata,
     mask_generated_at,
@@ -173,6 +175,8 @@ from agent_rules.batch import tomllib  # noqa: E402
 
 # Re-exported for `import adopt` consumers; see the module docstring.
 __all__ = [
+    "generated_at_line",
+    "apply_generated_at",
     "remove_agent_rules_block",
     "report_removal_blockers",
     "prune_empty_parents",

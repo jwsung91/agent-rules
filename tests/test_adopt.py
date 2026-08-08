@@ -1494,6 +1494,44 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("Nothing to remove", result.stdout)
 
+    def test_sync_survives_a_drifted_baseline_timestamp(self) -> None:
+        # Regression: generated_at is rewritten on every render, and the merge
+        # saw it raw. Once the baseline's timestamp drifted from the file's,
+        # all three inputs differed on that one line and git reported a
+        # conflict the repository could never resolve -- --sync refused
+        # forever. It only showed up on the Windows CI runner, where the suite
+        # is slow enough for consecutive syncs to cross a second boundary;
+        # this reproduces it directly by moving the baseline's timestamp.
+        self.assert_cli_ok(self.cli("--profile", "codex"))
+        baseline = self.repo / adopt.sync_base_path("AGENTS.md")
+        drifted = re.sub(
+            r"generated_at=.*",
+            "generated_at=2020-01-01T00:00:00+00:00",
+            baseline.read_text(encoding="utf-8"),
+            count=1,
+        )
+        baseline.write_text(drifted, encoding="utf-8")
+
+        path = self.repo / "AGENTS.md"
+        path.write_text(
+            re.sub(
+                r"generated_at=.*",
+                "generated_at=2021-01-01T00:00:00+00:00",
+                path.read_text(encoding="utf-8"),
+                count=1,
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.cli("--sync")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("merge conflict", result.stdout.lower())
+        content = path.read_text(encoding="utf-8")
+        self.assertNotIn("<<<<<<<", content)
+        # Exactly one timestamp survives, and the rest of the file is intact.
+        self.assertEqual(content.count("generated_at="), 1)
+        self.assertIn("## Agent Usage Model", content)
+
     def test_repeated_sync_is_idempotent(self) -> None:
         # Regression: render_metadata() stamps a fresh generated_at on every
         # run, so --sync used to rewrite every entrypoint and baseline even

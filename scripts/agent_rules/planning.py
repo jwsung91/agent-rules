@@ -15,7 +15,14 @@ from .constants import (
     TOOL_ENTRYPOINTS,
 )
 from .gitio import check_generated_files_ignored, find_repo_root, three_way_merge
-from .metadata import parse_metadata, render_metadata, same_content
+from .metadata import (
+    apply_generated_at,
+    generated_at_line,
+    mask_generated_at,
+    parse_metadata,
+    render_metadata,
+    same_content,
+)
 from .models import AdoptionPlan, DetectionResult, FilePlan, RenderContext
 from .render import (
     build_render_context,
@@ -104,13 +111,20 @@ def plan_three_way_update(
         if fallback is not None:
             return fallback
         return None, "sync-base-missing"
+    # generated_at is masked out of all three inputs before merging. It is
+    # rewritten on every render, so if the baseline's timestamp has drifted
+    # from the file's, all three differ on that one line and git reports a
+    # conflict the repository can never resolve -- a sync that refuses
+    # forever. Change detection already ignores it (same_content); the merge
+    # has to as well. The upstream value goes back in afterwards.
     merged, conflicted = three_way_merge(
-        existing,
-        base.read_text(encoding="utf-8", errors="replace"),
-        upstream,
+        mask_generated_at(existing),
+        mask_generated_at(base.read_text(encoding="utf-8", errors="replace")),
+        mask_generated_at(upstream),
     )
     if conflicted:
         return merged, "merge-conflict"
+    merged = apply_generated_at(merged, generated_at_line(upstream))
     return merged, "no-op" if same_content(merged, existing) else "merge"
 
 
