@@ -380,6 +380,15 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             ROOT,
         )
 
+    def assert_cli_ok(self, result: subprocess.CompletedProcess[str]) -> None:
+        """Assert success, and show the run's output when it was not.
+
+        A bare `assertEqual(result.returncode, 0)` reports "1 != 0" and
+        nothing else, which is useless when the failure only reproduces on a
+        CI runner.
+        """
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_plan_and_profile_dry_runs(self) -> None:
         for profile in ("codex", "claude", "gemini", "all"):
             result = self.cli("--profile", profile, "--dry-run")
@@ -630,7 +639,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         lines = [
             line.strip()
             for line in gitignore.read_text(encoding="utf-8").splitlines()
@@ -684,7 +693,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(self.cli("--profile", "codex", "--skills").returncode, 0)
         gitignore = self.repo / ".gitignore"
         before = gitignore.read_text(encoding="utf-8")
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         self.assertEqual(gitignore.read_text(encoding="utf-8"), before)
 
     def test_gitignore_migration_leaves_foreign_skill_entries_alone(self) -> None:
@@ -698,7 +707,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         self.assertIn(
             "/.codex/skills/team-only-skill/SKILL.md",
             gitignore.read_text(encoding="utf-8"),
@@ -1174,7 +1183,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         mine = "- no vendored dependencies\n- benchmark numbers stay reproducible"
         path.write_text(head + start + mine + end + tail, encoding="utf-8")
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         self.assertEqual(
             adopt.extract_local_regions(path.read_text(encoding="utf-8"))["boundaries"],
             mine,
@@ -1194,7 +1203,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         refreshed = paths[0].read_text(encoding="utf-8")
         self.assertIn(shared, refreshed)
         self.assertNotIn("Stale shared text", refreshed)
@@ -1276,7 +1285,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
 
         # First sync has nothing to merge against, so it records the file it
         # actually wrote rather than the render.
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         baseline = self.repo / adopt.sync_base_path("AGENTS.md")
         self.assertEqual(
             adopt.extract_local_regions(baseline.read_text(encoding="utf-8")),
@@ -1286,13 +1295,13 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
 
         # With an honest baseline the next sync sees the markers as an
         # upstream addition and applies them, keeping the configured value.
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         regions = adopt.extract_local_regions(path.read_text(encoding="utf-8"))
         self.assertEqual(set(regions), {"boundaries", "validation_commands"})
         self.assertIn("pytest -q", regions["validation_commands"])
 
         before = path.read_bytes()
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         self.assertEqual(path.read_bytes(), before)
 
     def test_sync_migrates_an_adoption_written_before_the_markers(self) -> None:
@@ -1315,7 +1324,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(adopt.extract_local_regions(path.read_text(encoding="utf-8")), {})
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         content = path.read_text(encoding="utf-8")
         regions = adopt.extract_local_regions(content)
         self.assertEqual(set(regions), {"boundaries", "validation_commands"})
@@ -1339,7 +1348,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(self.cli("--check").returncode, 0)
 
-        self.assertEqual(self.cli("--sync").returncode, 0)
+        self.assert_cli_ok(self.cli("--sync"))
         # Only AGENTS.md carries a boundaries section; all three carry validation.
         agents = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("public API compatibility", agents)
