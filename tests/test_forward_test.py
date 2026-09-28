@@ -58,6 +58,76 @@ def run(command: list[str], cwd: Path | None = None, env: dict[str, str] | None 
 
 
 class ForwardTestUnitTests(unittest.TestCase):
+    def test_existing_changes_and_ignored_files_are_detected(self) -> None:
+        for mutation in ("edit", "restore", "delete", "ignored", "untracked"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                case = forward_test.CASES["percentage-discount-commit"]
+
+                def adopt(fixture, profile, shared_url):
+                    (fixture / ".gitignore").write_text("ignored.txt\n")
+                    (fixture / "ignored.txt").write_text("before")
+                    (fixture / "untracked.txt").write_text("before")
+
+                def agent(case, fixture, run_dir, command, timeout):
+                    target = fixture / "discount.py"
+                    if mutation == "edit":
+                        target.write_text(target.read_text() + "\n# extra change\n")
+                    elif mutation == "restore":
+                        target.write_text(case.files["discount.py"])
+                    elif mutation == "delete":
+                        target.unlink()
+                    else:
+                        (fixture / f"{mutation}.txt").write_text("after")
+                    return forward_test.RunResult(
+                        0, root / "transcript.jsonl", "", None, True, [], 0
+                    )
+
+                with mock.patch.object(forward_test, "adopt_skills", side_effect=adopt), mock.patch.object(
+                    forward_test, "run_codex", side_effect=agent
+                ):
+                    result = forward_test.do_run(
+                        case, "codex", "codex", "", root, [], [], 10
+                    )
+                self.assertFalse(result.clean)
+                expected = f"{mutation}.txt" if mutation in {"ignored", "untracked"} else "discount.py"
+                self.assertIn(expected, result.changed_paths)
+                forward_test.write_summary(root, "codex", case, result)
+                summary = json.loads((root / "summary.json").read_text())
+                self.assertIn(expected, summary["changed_paths_since_adoption"])
+
+    def test_timeout_output_is_normalized_to_text(self) -> None:
+        for output in (b"partial \xe2\x82", "partial", None):
+            with self.subTest(output=output), mock.patch.object(
+                forward_test.subprocess, "run",
+                side_effect=subprocess.TimeoutExpired("agent", 1, output=output, stderr=output),
+            ):
+                code, stdout, stderr = forward_test.run_command(["agent"], None, 1)
+                self.assertEqual(code, 124)
+                expected = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output or ""
+                self.assertEqual(stdout, expected)
+                self.assertEqual(stderr, expected)
+
+    def test_both_agents_save_partial_output_and_summary_on_timeout(self) -> None:
+        for name in ("claude", "codex"):
+            with self.subTest(agent=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                case = forward_test.CASES["percentage-discount-bug"]
+                runner = getattr(forward_test, f"run_{name}")
+                with mock.patch.object(
+                    forward_test.subprocess, "run",
+                    side_effect=subprocess.TimeoutExpired(
+                        "agent", 1, output=b'{"type":"partial"}\n', stderr=b"interrupted \xe2\x82"
+                    ),
+                ):
+                    result = runner(case, root, root, ["agent"], 1)
+                forward_test.write_summary(root, name, case, result)
+                summary = json.loads((root / "summary.json").read_text())
+                self.assertEqual(summary["returncode"], 124)
+                self.assertEqual((root / "transcript.jsonl").read_text(), '{"type":"partial"}\n')
+                self.assertIn("interrupted", (root / "stderr.txt").read_text())
+                self.assertTrue((root / "final_report.txt").exists())
+
     def test_build_fixture_writes_case_files_and_commits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = Path(tmp) / "fixture"

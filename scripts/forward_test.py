@@ -21,8 +21,10 @@ shells out to real agent CLIs, requires authentication, and can incur cost.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shlex
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -159,6 +161,7 @@ class RunResult:
     clean: bool
     new_paths: list[str]
     duration_seconds: float
+    changed_paths: list[str] = field(default_factory=list)
 
 
 def parse_args() -> argparse.Namespace:
@@ -204,8 +207,10 @@ def run_command(command: list[str], cwd: Path | None, timeout: int) -> tuple[int
     except FileNotFoundError as exc:
         raise SystemExit(f"Agent executable not found: {command[0]} ({exc})") from exc
     except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
+        # TimeoutExpired can contain bytes even when text=True. The timeout
+        # may also interrupt a UTF-8 character, so preserve readable partial output.
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr or ""
         return 124, stdout, stderr
     return result.returncode, result.stdout, result.stderr
 
@@ -295,6 +300,38 @@ def git_status_lines(fixture_dir: Path) -> list[str]:
     return [line for line in stdout.splitlines() if line.strip()]
 
 
+def snapshot_worktree(fixture_dir: Path) -> dict[str, tuple[int, str]]:
+    """Capture file contents and modes, including ignored files, outside .git.
+
+    Do not follow symlinks: record their targets instead. Exclude timestamps
+    so reading a file or rewriting identical contents does not count as an edit.
+    """
+    snapshot: dict[str, tuple[int, str]] = {}
+
+    def visit(directory: Path) -> None:
+        for path in sorted(directory.iterdir()):
+            if path == fixture_dir / ".git":
+                continue
+            mode = path.lstat().st_mode
+            if stat.S_ISLNK(mode):
+                content = str(path.readlink())
+            elif stat.S_ISDIR(mode):
+                visit(path)
+                continue
+            elif stat.S_ISREG(mode):
+                digest = hashlib.sha256()
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(65536), b""):
+                        digest.update(chunk)
+                content = digest.hexdigest()
+            else:
+                raise SystemExit(f"Cannot snapshot unsupported fixture file: {path}")
+            snapshot[path.relative_to(fixture_dir).as_posix()] = (mode, content)
+
+    visit(fixture_dir)
+    return snapshot
+
+
 def extract_claude_skill_invocations(transcript_path: Path) -> list[dict[str, str]]:
     invocations: list[dict[str, str]] = []
     with transcript_path.open(encoding="utf-8") as handle:
@@ -359,7 +396,7 @@ def run_claude(case: ForwardTestCase, fixture_dir: Path, run_dir: Path, claude_c
         transcript_path=transcript_path,
         final_report=final_report,
         skill_invocations=skill_invocations,
-        clean=True,  # filled in by caller after diffing git status
+        clean=True,  # filled in by caller after comparing the fixture
         new_paths=[],
         duration_seconds=duration,
     )
@@ -419,6 +456,7 @@ def do_run(
     build_fixture(case, fixture_dir)
     adopt_skills(fixture_dir, profile, shared_url)
     baseline = git_status_lines(fixture_dir)
+    baseline_files = snapshot_worktree(fixture_dir)
 
     if agent == "claude":
         result = run_claude(case, fixture_dir, run_dir, claude_cmd, timeout)
@@ -429,8 +467,13 @@ def do_run(
 
     after = git_status_lines(fixture_dir)
     new_paths = [line for line in after if line not in baseline]
+    after_files = snapshot_worktree(fixture_dir)
+    result.changed_paths = sorted(
+        path for path in baseline_files.keys() | after_files.keys()
+        if baseline_files.get(path) != after_files.get(path)
+    )
     result.new_paths = new_paths
-    result.clean = not new_paths
+    result.clean = not result.changed_paths and baseline == after
     return result
 
 
@@ -443,6 +486,7 @@ def write_summary(run_dir: Path, agent: str, case: ForwardTestCase, result: RunR
         "duration_seconds": result.duration_seconds,
         "clean_worktree": result.clean,
         "new_paths_since_adoption": result.new_paths,
+        "changed_paths_since_adoption": result.changed_paths,
         "skill_invocations": result.skill_invocations,
         "transcript": str(result.transcript_path.relative_to(run_dir)),
     }
@@ -486,7 +530,8 @@ def main() -> int:
             f"duration={result.duration_seconds:.1f}s -> {run_dir}"
         )
         if not result.clean:
-            print(f"  new paths since adoption: {result.new_paths}")
+            print(f"  changed files since adoption: {result.changed_paths}")
+            print(f"  new Git status entries since adoption: {result.new_paths}")
         if result.skill_invocations is not None:
             print(f"  skill invocations: {result.skill_invocations}")
 

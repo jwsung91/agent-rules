@@ -361,7 +361,7 @@ For each supported agent:
 
 `scripts/forward_test.py` automates steps 1, 2, and 4 for the bundled-request
 case documented above (fixture creation, adoption, a real `claude -p` or
-`codex exec` invocation, and a before/after `git status` diff to catch any
+`codex exec` invocation, and before/after file snapshots and `git status` comparisons to catch
 file changes):
 
 ```bash
@@ -398,6 +398,19 @@ repository already hit a real false-positive once from trying to automate
 that judgment with regex-based prose matching (see `docs/skill-authoring.md`
 on `REPORT_POLICY_MARKER`); the same risk applies to grading forward-test
 responses automatically.
+
+Cleanliness is measured relative to the post-adoption fixture, including any
+pending changes in a commit-preparation case. File snapshots compare contents,
+permissions, and symlink targets, including untracked and ignored files, while
+excluding Git internals under `.git`. Added, changed, and deleted file paths are
+saved as `changed_paths_since_adoption`; `new_paths_since_adoption` retains its
+existing meaning of new Git-status entries. Git-status changes also mark a run
+unclean. These checks compare final state, not transient edits reverted during a
+run, and do not audit commit history or empty directories.
+
+Timed-out agent runs record exit code 124 and save partial stdout and stderr
+alongside the summary. Incomplete UTF-8 characters in timeout output are replaced
+so they cannot prevent transcript persistence.
 
 Keep live model invocations outside the deterministic unit-test suite. They
 require authentication, may incur cost, and can vary by execution environment.
