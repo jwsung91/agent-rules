@@ -69,7 +69,7 @@ class ForwardTestUnitTests(unittest.TestCase):
                     (fixture / "ignored.txt").write_text("before")
                     (fixture / "untracked.txt").write_text("before")
 
-                def agent(case, fixture, run_dir, command, timeout):
+                def agent(case, fixture, run_dir, command, timeout, mutation=mutation):
                     target = fixture / "discount.py"
                     if mutation == "edit":
                         target.write_text(target.read_text() + "\n# extra change\n")
@@ -80,7 +80,7 @@ class ForwardTestUnitTests(unittest.TestCase):
                     else:
                         (fixture / f"{mutation}.txt").write_text("after")
                     return forward_test.RunResult(
-                        0, root / "transcript.jsonl", "", None, True, [], 0
+                        0, run_dir / "transcript.jsonl", "", None, True, [], 0
                     )
 
                 with mock.patch.object(forward_test, "adopt_skills", side_effect=adopt), mock.patch.object(
