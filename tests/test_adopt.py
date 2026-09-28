@@ -88,11 +88,6 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         self.assertIn("cannot be inspected", rule)
         self.assertIn("never substitute", rule)
 
-    def test_investigate_trigger_excludes_unrelated_work_from_fix_plan(self) -> None:
-        rule = adopt.SKILL_TRIGGER_RULES["investigate-bug"]
-        self.assertIn("Do not include unrelated work in the bug-fix plan", rule)
-        self.assertIn("only under Not Included or Follow-up", rule)
-
     def test_validate_trigger_preserves_worktree_and_reports_evidence(self) -> None:
         rule = adopt.SKILL_TRIGGER_RULES["validate-change"]
         self.assertIn("record the initial worktree state", rule)

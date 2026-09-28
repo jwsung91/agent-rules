@@ -175,6 +175,26 @@ For most repositories:
 
 Use `.agents/` namespacing only when local rule or template files are needed. Avoid adding root-level `rules/`, `skills/`, scripts, or automation unless the target repository explicitly needs them.
 
+## Task Continuity and Completion
+
+For long-running work, use `templates/task-checkpoint-template.md` or an existing
+project task record to retain scope, environment, decisions, evidence, and the
+next step. Short follow-ups continue the agreed work; status questions do not
+cancel it. Explicitly requested additional work stays in separate stages rather
+than being silently deferred.
+
+Performance investigations should set a baseline, acceptance criteria, and a
+bounded experiment budget before measuring. PR and release work must follow the
+destination's submission procedure and preserve signing, hooks, and checks.
+See `rules/task-scope-control.md`, `rules/test-and-validation.md`, and
+`rules/pr-discipline.md` for details. Generated entrypoints carry the essential
+rules even without `--skills` or access to the shared repository.
+
+Simple answers and progress updates need no fixed headings. Completed
+implementation/review reports retain the structured report; PR descriptions use
+the destination template. These instruction changes require fresh behavioral
+evaluation; structural tests alone do not establish model compliance.
+
 ## Effectiveness Review
 
 This repository is useful as a **soft-control layer** for agent behavior. It can improve consistency, but it is not a substitute for CI, tests, code review, or repository permissions.

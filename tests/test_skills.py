@@ -98,7 +98,7 @@ NEXT_HEADING_RE = re.compile(r"^##\s+\S", re.MULTILINE)
 # plain substring match with no natural-language ambiguity to get wrong.
 REPORT_POLICY_MARKER = "<!-- skill-report-policy: honor-repository-format -->"
 INVESTIGATE_SCOPE_POLICY_MARKER = (
-    "<!-- investigate-scope-policy: exclude-unrelated-work-from-fix-plan -->"
+    "<!-- investigate-scope-policy: preserve-requested-work-in-separate-stages -->"
 )
 REVIEW_SCOPE_POLICY_MARKER = (
     "<!-- review-scope-policy: do-not-substitute-unverified-target -->"
@@ -174,7 +174,7 @@ def test_review_change_guards_scope_and_severity() -> None:
     assert REVIEW_SEVERITY_POLICY_MARKER in severity_section
 
 
-def test_investigate_bug_excludes_unrelated_work_from_fix_plan() -> None:
+def test_investigate_bug_declares_requested_work_policy() -> None:
     content = (SKILLS_ROOT / "investigate-bug" / "SKILL.md").read_text(
         encoding="utf-8"
     )
