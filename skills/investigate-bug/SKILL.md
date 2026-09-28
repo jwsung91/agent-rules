@@ -1,6 +1,6 @@
 ---
 name: investigate-bug
-description: Investigate reported bugs and unexpected behavior before changing code. Use when an agent needs to reproduce or understand a defect, distinguish expected from actual behavior, identify the root cause, implement or recommend the smallest appropriate fix, and report focused validation and remaining gaps. Applies even when the same message also asks for unrelated work (a refactor, a new feature, cleanup) alongside the bug report — investigate the bug under this workflow first and treat the rest as a separate request.
+description: Investigate reported bugs and unexpected behavior before changing code. Use when an agent needs to reproduce or understand a defect, distinguish expected from actual behavior, identify the root cause, implement or recommend the smallest appropriate fix, and report focused validation and remaining gaps. Applies even when the same message also asks for unrelated work (a refactor, a new feature, cleanup) alongside the bug report — investigate the bug under this workflow first and keep other explicitly requested work as separate authorized stages.
 ---
 
 # Investigate Bug
@@ -22,10 +22,10 @@ Follow an evidence-first workflow. Do not modify code until the expected behavio
 
 ## Guardrails
 
-<!-- investigate-scope-policy: exclude-unrelated-work-from-fix-plan -->
+<!-- investigate-scope-policy: preserve-requested-work-in-separate-stages -->
 
 - Keep investigation and changes within the requested scope.
-- When a request bundles a bug report with unrelated work (a refactor, a new feature, cleanup) in the same message, apply this workflow to the bug only. Do not include the unrelated work in the bug-fix plan, Changes, or Investigation fix approach. Mention it only under Not Included or Follow-up as a separate request; do not provide implementation steps for it as part of the focused bug response.
+- When a request bundles a bug report with other explicitly requested work, investigate the bug first and keep its fix focused. Track the other work as separate authorized stages or commits; complete it within the agreed task unless blocked or the user requested diagnosis only. Do not silently drop it, require repeat approval merely because it is separate, or mix it into the bug fix. Unrequested cleanup remains out of scope.
 - Preserve public APIs and user-visible behavior unless the requested fix requires a change.
 - Do not hide failures by weakening tests, suppressing errors, or adding unexplained retries.
 - Do not claim reproduction, validation, or root-cause certainty without evidence.

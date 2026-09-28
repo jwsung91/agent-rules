@@ -55,10 +55,10 @@ SKILL_TRIGGER_RULES = {
         "When a message reports a bug or unexpected behavior, invoke the "
         "`investigate-bug` skill before planning any fix — even when the same "
         "message also requests unrelated work such as refactoring, new tests, "
-        "or cleanup. Investigate the bug under that workflow first and treat "
-        "the unrelated work as a separate request. Do not include unrelated "
-        "work in the bug-fix plan, Changes, or fix approach; mention it only "
-        "under Not Included or Follow-up as a separate request."
+        "or cleanup. Investigate the bug first and keep its fix focused. "
+        "Preserve other explicitly requested work as separate authorized stages "
+        "or commits; do not silently drop it or ask for repeated approval merely "
+        "because it is separate. Unrequested work remains out of scope."
     ),
     "review-change": (
         "When asked to review code, documentation, a diff, working tree, commit, "
@@ -84,7 +84,8 @@ SKILL_TRIGGER_RULES = {
         "change, run lightweight pre-commit checks including `git diff --check`, "
         "and write a Conventional Commits message. Do not amend or rewrite "
         "history, reformat code, or include unrelated changes unless separately "
-        "authorized."
+        "authorized. Never bypass signing, hooks, or required checks without an "
+        "explicit user request."
     ),
 }
 # Shared skill trigger rules can overlap (e.g. "review and test this bug fix");

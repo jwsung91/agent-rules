@@ -79,3 +79,26 @@ Do not run broad repository-wide formatting unless explicitly requested.
 Do not include unrelated formatting changes in the same commit.
 
 If checks cannot be run, report why and provide the command that should be run later.
+
+## Performance Experiments
+
+Before changing or measuring a performance candidate, define the baseline
+revision and environment, target metric, allowed regressions, hypothesis, and
+bounded experiment budget (time or runs). Use existing evidence first; do not
+invent a universal threshold or expand the budget merely because results are
+inconclusive.
+
+Compare the same workload and conditions. Record binary/source identity and
+relevant environment settings. Keep diagnostic builds that relax correctness
+contracts separate from product candidates. Restore temporary environment
+settings and report restoration failures.
+
+Report retained product improvement, regressions detected or reverted, and
+unresolved gaps separately. Always identify the denominator of a percentage
+(candidate versus previous candidate, or candidate versus release baseline).
+Do not present test count or a reverted optimization as product improvement.
+
+Stop the current experiment when its agreed budget is exhausted, its hypothesis
+is contradicted, or its acceptance criteria fail. Summarize the evidence and
+recommend whether to retain, reject, or redesign the approach. Continue other
+independently authorized work; do not start an open-ended series of new candidates.

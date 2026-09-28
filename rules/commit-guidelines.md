@@ -62,6 +62,14 @@ BREAKING CHANGE: `set_timeout_ms` was renamed to `set_timeout`.
 - Mention validation in the PR body or final report, not necessarily in the commit title.
 - Before committing, follow `rules/test-and-validation.md` for lightweight pre-commit checks.
 
+## Signing and Hooks
+
+Honor configured signing, hooks, and required checks. A request to commit or
+merge does not authorize disabling them. If signing waits for unavailable
+credentials or a hook fails, identify the blocker and any compliant route.
+Do not change global Git configuration or bypass the control without an explicit
+user request.
+
 ## Branch Naming
 
 Use the same type prefix as the primary commit:
