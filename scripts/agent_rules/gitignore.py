@@ -31,7 +31,7 @@ def gitignore_patterns(paths: list[str]) -> list[str]:
     file they will ever contain.
 
     Skill directories are named individually rather than ignoring
-    `.codex/skills/` or `.claude/skills/` wholesale: those roots also hold
+    `.agents/skills/`, legacy `.codex/skills/`, or `.claude/skills/` wholesale: those roots also hold
     skills the repository wrote itself, which are none of this helper's
     business.
     """

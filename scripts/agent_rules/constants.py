@@ -27,19 +27,20 @@ SHARED_SKILLS = (
     "prepare-commit",
 )
 PROFILE_SKILL_ROOTS = {
-    "codex": (".codex/skills",),
+    "codex": (".agents/skills",),
     "claude": (".claude/skills",),
     "gemini": (),
-    "all": (".codex/skills", ".claude/skills"),
+    "all": (".agents/skills", ".claude/skills"),
 }
 ENTRYPOINT_SKILL_ROOTS = {
-    "AGENTS.md": ".codex/skills",
+    "AGENTS.md": ".agents/skills",
     "CLAUDE.md": ".claude/skills",
     "GEMINI.md": None,
 }
 # Every root any profile installs skills into, in a stable order. Derived
 # rather than restated so a new agent's root only has to be added above.
-SKILL_ROOTS = tuple(
+LEGACY_CODEX_SKILL_ROOT = ".codex/skills"
+SKILL_ROOTS = (LEGACY_CODEX_SKILL_ROOT,) + tuple(
     dict.fromkeys(root for roots in PROFILE_SKILL_ROOTS.values() for root in roots)
 )
 # Paths that carry Codex-specific metadata and must not leak into another

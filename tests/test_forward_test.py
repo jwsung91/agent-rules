@@ -58,6 +58,54 @@ def run(command: list[str], cwd: Path | None = None, env: dict[str, str] | None 
 
 
 class ForwardTestUnitTests(unittest.TestCase):
+    def test_empty_commit_and_index_only_changes_are_not_clean(self) -> None:
+        for action in ("commit", "index"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                case = forward_test.CASES["percentage-discount-commit"]
+
+                def agent(case, fixture, run_dir, command, timeout, action=action):
+                    if action == "commit":
+                        command = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "test: empty evidence"]
+                    else:
+                        command = ["git", "add", "discount.py"]
+                    completed = run(command, fixture)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    return forward_test.RunResult(0, run_dir / "transcript.jsonl", "", None, True, [], 0)
+
+                with mock.patch.object(forward_test, "adopt_skills"), mock.patch.object(
+                    forward_test, "run_codex", side_effect=agent
+                ):
+                    result = forward_test.do_run(case, "codex", "codex", "", root, [], [], 10)
+                self.assertFalse(result.clean)
+                self.assertEqual(result.changed_paths, [])
+                forward_test.write_summary(root, "codex", case, result)
+                summary = json.loads((root / "summary.json").read_text())
+                self.assertTrue(summary["head_changed"] if action == "commit" else summary["index_changed"])
+                self.assertEqual(summary["behavioral_verdict"], "not_evaluated")
+
+    def test_validate_fixture_contains_a_real_regression_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp)
+            forward_test.build_fixture(forward_test.CASES["percentage-discount-validate"], fixture)
+            before = run(["git", "show", "HEAD:discount.py"], fixture).stdout
+            after = (fixture / "discount.py").read_text()
+            original, changed = {}, {}
+            exec(before, original)
+            exec(after, changed)
+            self.assertEqual(original["apply_discount"](100, 20), 80)
+            self.assertEqual(changed["apply_discount"](100, 20), -1900)
+
+    def test_model_option_is_passed_to_both_runners(self) -> None:
+        for agent in ("claude", "codex"):
+            with self.subTest(agent=agent), tempfile.TemporaryDirectory() as tmp:
+                with mock.patch.object(forward_test, "run_command", return_value=(0, "", "")) as command:
+                    getattr(forward_test, f"run_{agent}")(
+                        forward_test.CASES["percentage-discount-bug"], Path(tmp), Path(tmp), [agent], 5, model="test-model"
+                    )
+                argv = command.call_args.args[0]
+                self.assertEqual(argv[argv.index("--model") + 1], "test-model")
+
     def test_existing_changes_and_ignored_files_are_detected(self) -> None:
         for mutation in ("edit", "restore", "delete", "ignored", "untracked"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
@@ -124,6 +172,7 @@ class ForwardTestUnitTests(unittest.TestCase):
                 forward_test.write_summary(root, name, case, result)
                 summary = json.loads((root / "summary.json").read_text())
                 self.assertEqual(summary["returncode"], 124)
+                self.assertEqual(summary["execution_status"], "timeout")
                 self.assertEqual((root / "transcript.jsonl").read_text(), '{"type":"partial"}\n')
                 self.assertIn("interrupted", (root / "stderr.txt").read_text())
                 self.assertTrue((root / "final_report.txt").exists())
@@ -372,6 +421,34 @@ class ForwardTestCliTests(unittest.TestCase):
         self.assertEqual([p.name for p in run_dirs], ["run-1", "run-2"])
         for run_dir in run_dirs:
             self.assertTrue((run_dir / "summary.json").exists())
+
+    def test_strict_process_failure_records_error_and_returns_nonzero(self) -> None:
+        self.fake_codex.write_text("import sys\nif '--version' in sys.argv: print('fake 1.0')\nelse: sys.exit(7)\n")
+        result = self.cli("--agent", "codex", "--codex-bin", f"{sys.executable} {self.fake_codex}", "--out-dir", str(self.out_dir), "--strict", "--model", "test-model")
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        summary = self.latest_run_summary()
+        self.assertEqual(summary["execution_status"], "error")
+        self.assertEqual(summary["returncode"], 7)
+        self.assertEqual(summary["behavioral_verdict"], "not_evaluated")
+        provenance = summary["provenance"]
+        self.assertEqual(provenance["requested_model"], "test-model")
+        self.assertIsNone(provenance["effective_model"])
+        self.assertEqual(provenance["cli_version_output"], "fake 1.0")
+        self.assertEqual(len(provenance["source_content_sha256"]), 64)
+        self.assertTrue(provenance["source_commit"])
+
+    def test_nonpositive_runs_and_timeouts_are_rejected(self) -> None:
+        for option in ("--runs", "--timeout"):
+            with self.subTest(option=option):
+                result = self.cli("--agent", "codex", "--out-dir", str(self.out_dir), option, "0")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.out_dir.exists())
+
+    def test_strict_validation_detects_changes_despite_dirty_baseline(self) -> None:
+        self.fake_claude.write_text("import sys\nif '--version' not in sys.argv:\n    with open('discount.py', 'a') as f: f.write('\\n# unauthorized edit\\n')\n")
+        result = self.cli("--agent", "claude", "--case", "percentage-discount-validate", "--claude-bin", f"{sys.executable} {self.fake_claude}", "--out-dir", str(self.out_dir), "--strict")
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        self.assertFalse(self.latest_run_summary()["clean_worktree"])
 
     def test_unknown_case_is_rejected_by_argparse(self) -> None:
         result = self.cli(

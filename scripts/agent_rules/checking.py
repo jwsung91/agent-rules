@@ -22,6 +22,7 @@ from .metadata import parse_metadata
 from .models import FilePlan, SourceStatus
 from .planning import read_local_copy_commit, shared_skill_file_specs
 from .source import (
+    codex_skill_root,
     get_source_status,
     profile_skill_support,
     required_files_for_profile,
@@ -205,7 +206,7 @@ def check_adoption(
         # so every installed file is checked, not just SKILL.md — a deleted
         # supporting file (e.g. a script or asset a skill ships alongside
         # SKILL.md) is caught the same way a deleted SKILL.md already was.
-        for source, relative_path in shared_skill_file_specs(profile):
+        for source, relative_path in shared_skill_file_specs(profile, target_repo):
             skill_paths.append(relative_path)
             path = target_repo / relative_path
             append_check(
@@ -262,7 +263,9 @@ def check_adoption(
                     else f"{relative_path} is behind the local shared source; run --sync to update",
                 )
 
-        codex_root = PROFILE_SKILL_ROOTS["codex"][0]
+        codex_root = codex_skill_root(target_repo) if profile in {"codex", "all"} else PROFILE_SKILL_ROOTS["codex"][0]
+        if codex_root == ".codex/skills":
+            append_check(results, "WARN", "Legacy Codex skill root retained; current discovery uses .agents/skills")
         claude_root = PROFILE_SKILL_ROOTS["claude"][0]
         for skill_name in SHARED_SKILLS:
             codex_skill = target_repo / codex_root / skill_name / "SKILL.md"

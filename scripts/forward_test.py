@@ -23,10 +23,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import shlex
 import stat
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,8 +42,7 @@ class ForwardTestCase:
     files: dict[str, str]
     prompt: str
     # Files written *after* the initial commit, left uncommitted so the run
-    # starts with a working change. Used by the prepare-commit case, whose
-    # trigger is "commit the current change" and needs something to commit.
+    # starts with a working change for validation or commit preparation.
     pending_changes: dict[str, str] = field(default_factory=dict)
 
 
@@ -105,7 +106,7 @@ CASES: dict[str, ForwardTestCase] = {
             "discount.py": (
                 "def apply_discount(total, rate_percent):\n"
                 '    """Apply a percentage discount to a total."""\n'
-                "    return total - (total * rate_percent)\n"
+                "    return total - (total * rate_percent / 100)\n"
             ),
             "test_discount.py": (
                 "from discount import apply_discount\n\n\n"
@@ -118,14 +119,19 @@ CASES: dict[str, ForwardTestCase] = {
             "by running the relevant checks and report exactly what passed or "
             "failed. Do not fix anything or weaken the tests -- validation only."
         ),
+        pending_changes={
+            "discount.py": (
+                "def apply_discount(total, rate_percent):\n"
+                '    """Apply a percentage discount to a total."""\n'
+                "    return total - (total * rate_percent)\n"
+            ),
+        },
     ),
     # The ask is to *commit* an existing working change. `pending_changes`
     # leaves an uncommitted addition after the initial commit so there is
     # something to commit. Exercises prepare-commit's trigger and its
-    # message/scope discipline. Note: runs stay read-only (Claude plan / Codex
-    # read-only), so the agent cannot actually run `git commit`; this records
-    # skill selection and the drafted message, not a committed SHA. Verifying a
-    # real commit needs a relaxed sandbox and stays manual.
+    # message/scope discipline. Permission modes differ across runtimes;
+    # record actual HEAD/index changes instead of assuming commits are blocked.
     "percentage-discount-commit": ForwardTestCase(
         name="percentage-discount-commit",
         files={
@@ -162,6 +168,16 @@ class RunResult:
     new_paths: list[str]
     duration_seconds: float
     changed_paths: list[str] = field(default_factory=list)
+    git_before: dict[str, str] = field(default_factory=dict)
+    git_after: dict[str, str] = field(default_factory=dict)
+    provenance: dict = field(default_factory=dict)
+
+
+def positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
 
 
 def parse_args() -> argparse.Namespace:
@@ -181,7 +197,7 @@ def parse_args() -> argparse.Namespace:
         default=str(ROOT),
         help=f"Shared rules repository to adopt from. Default: {ROOT}",
     )
-    parser.add_argument("--runs", type=int, default=1, help="Number of repeated runs.")
+    parser.add_argument("--runs", type=positive_int, default=1, help="Number of repeated runs.")
     parser.add_argument(
         "--out-dir",
         required=True,
@@ -189,7 +205,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--claude-bin", default="claude", help="Override the claude executable (for testing).")
     parser.add_argument("--codex-bin", default="codex", help="Override the codex executable (for testing).")
-    parser.add_argument("--timeout", type=int, default=240, help="Per-run timeout in seconds.")
+    parser.add_argument("--timeout", type=positive_int, default=240, help="Per-run timeout in seconds.")
+    parser.add_argument("--model", help="Explicit model to request; omitted means the CLI default (not inferred).")
+    parser.add_argument("--strict", action="store_true", help="Exit nonzero for process failures or mutations in non-commit cases; does not grade response quality.")
     return parser.parse_args()
 
 
@@ -367,14 +385,15 @@ def extract_claude_final_report(transcript_path: Path) -> str:
     return final_report
 
 
-def run_claude(case: ForwardTestCase, fixture_dir: Path, run_dir: Path, claude_cmd: list[str], timeout: int) -> RunResult:
+def run_claude(case: ForwardTestCase, fixture_dir: Path, run_dir: Path, claude_cmd: list[str], timeout: int, model: str | None = None) -> RunResult:
     transcript_path = run_dir / "transcript.jsonl"
-    started = datetime.now(timezone.utc)
+    started = time.monotonic()
     code, stdout, stderr = run_command(
         [
             *claude_cmd,
             "-p",
             case.prompt,
+            *(["--model", model] if model else []),
             "--permission-mode",
             "plan",
             "--no-session-persistence",
@@ -385,7 +404,7 @@ def run_claude(case: ForwardTestCase, fixture_dir: Path, run_dir: Path, claude_c
         fixture_dir,
         timeout,
     )
-    duration = (datetime.now(timezone.utc) - started).total_seconds()
+    duration = time.monotonic() - started
     transcript_path.write_text(stdout, encoding="utf-8")
     (run_dir / "stderr.txt").write_text(stderr, encoding="utf-8")
     final_report = extract_claude_final_report(transcript_path)
@@ -402,14 +421,15 @@ def run_claude(case: ForwardTestCase, fixture_dir: Path, run_dir: Path, claude_c
     )
 
 
-def run_codex(case: ForwardTestCase, fixture_dir: Path, run_dir: Path, codex_cmd: list[str], timeout: int) -> RunResult:
+def run_codex(case: ForwardTestCase, fixture_dir: Path, run_dir: Path, codex_cmd: list[str], timeout: int, model: str | None = None) -> RunResult:
     transcript_path = run_dir / "transcript.jsonl"
     last_message_path = run_dir / "last_message.txt"
-    started = datetime.now(timezone.utc)
+    started = time.monotonic()
     code, stdout, stderr = run_command(
         [
             *codex_cmd,
             "exec",
+            *(["--model", model] if model else []),
             "--ephemeral",
             "-C",
             str(fixture_dir),
@@ -423,7 +443,7 @@ def run_codex(case: ForwardTestCase, fixture_dir: Path, run_dir: Path, codex_cmd
         cwd=ROOT,
         timeout=timeout,
     )
-    duration = (datetime.now(timezone.utc) - started).total_seconds()
+    duration = time.monotonic() - started
     transcript_path.write_text(stdout, encoding="utf-8")
     (run_dir / "stderr.txt").write_text(stderr, encoding="utf-8")
     final_report = last_message_path.read_text(encoding="utf-8") if last_message_path.exists() else ""
@@ -442,6 +462,38 @@ def run_codex(case: ForwardTestCase, fixture_dir: Path, run_dir: Path, codex_cmd
     )
 
 
+
+def git_evidence(fixture_dir: Path) -> dict[str, str]:
+    head = run_checked(["git", "rev-parse", "HEAD"], fixture_dir, 30, action="read HEAD").strip()
+    index = run_checked(["git", "ls-files", "--stage", "-z"], fixture_dir, 30, action="read index")
+    return {"head": head, "index_sha256": hashlib.sha256(index.encode("utf-8")).hexdigest()}
+
+
+def collect_provenance(agent: str, command: list[str], run_dir: Path, model: str | None) -> dict:
+    code, version, error = run_command([*command, "--version"], run_dir, 30)
+    digest = hashlib.sha256()
+    sources = [ROOT / name for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md")]
+    for directory in ("rules", "skills", "templates", "scripts"):
+        sources.extend(p for p in (ROOT / directory).rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+    for path in sorted(sources):
+        digest.update(path.relative_to(ROOT).as_posix().encode("utf-8") + b"\0")
+        digest.update(path.read_bytes() + b"\0")
+    return {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "os": platform.system(),
+        "os_release": platform.release(),
+        "python_version": platform.python_version(),
+        "cli_version_output": version.strip()[:2000] if code == 0 else None,
+        "cli_version_error": error.strip()[:2000] if code != 0 else None,
+        "requested_model": model,
+        "effective_model": None,  # Never guess a default or alias resolution.
+        "execution_mode": "plan" if agent == "claude" else "read-only",
+        "source_commit": run_checked(["git", "rev-parse", "HEAD"], ROOT, 30, action="read source HEAD").strip(),
+        "source_dirty": bool(run_checked(["git", "status", "--porcelain"], ROOT, 30, action="read source status").strip()),
+        "source_content_sha256": digest.hexdigest(),
+    }
+
+
 def do_run(
     case: ForwardTestCase,
     agent: str,
@@ -451,17 +503,19 @@ def do_run(
     claude_cmd: list[str],
     codex_cmd: list[str],
     timeout: int,
+    model: str | None = None,
 ) -> RunResult:
     fixture_dir = run_dir / "fixture"
     build_fixture(case, fixture_dir)
     adopt_skills(fixture_dir, profile, shared_url)
     baseline = git_status_lines(fixture_dir)
     baseline_files = snapshot_worktree(fixture_dir)
+    before_git = git_evidence(fixture_dir)
 
     if agent == "claude":
-        result = run_claude(case, fixture_dir, run_dir, claude_cmd, timeout)
+        result = run_claude(case, fixture_dir, run_dir, claude_cmd, timeout, **({"model": model} if model else {}))
     elif agent == "codex":
-        result = run_codex(case, fixture_dir, run_dir, codex_cmd, timeout)
+        result = run_codex(case, fixture_dir, run_dir, codex_cmd, timeout, **({"model": model} if model else {}))
     else:
         raise SystemExit(f"Unsupported agent: {agent}")
 
@@ -473,12 +527,22 @@ def do_run(
         if baseline_files.get(path) != after_files.get(path)
     )
     result.new_paths = new_paths
-    result.clean = not result.changed_paths and baseline == after
+    result.git_before = before_git
+    result.git_after = git_evidence(fixture_dir)
+    result.clean = not result.changed_paths and baseline == after and result.git_before == result.git_after
     return result
 
 
 def write_summary(run_dir: Path, agent: str, case: ForwardTestCase, result: RunResult) -> None:
     summary = {
+        "schema_version": 2,
+        "execution_status": "timeout" if result.returncode == 124 else "error" if result.returncode else "completed",
+        "behavioral_verdict": "not_evaluated",
+        "provenance": result.provenance,
+        "git_before": result.git_before,
+        "git_after": result.git_after,
+        "head_changed": result.git_before.get("head") != result.git_after.get("head"),
+        "index_changed": result.git_before.get("index_sha256") != result.git_after.get("index_sha256"),
         "agent": agent,
         "case": case.name,
         "prompt": case.prompt,
@@ -513,6 +577,9 @@ def main() -> int:
         run_dir = batch_dir / f"run-{index}"
         run_dir.mkdir(parents=True, exist_ok=True)
         print(f"[{index}/{args.runs}] running {args.agent} against case '{args.case}' ...")
+        provenance = collect_provenance(
+            args.agent, claude_cmd if args.agent == "claude" else codex_cmd, run_dir, args.model
+        )
         result = do_run(
             case,
             args.agent,
@@ -522,7 +589,9 @@ def main() -> int:
             claude_cmd,
             codex_cmd,
             args.timeout,
+            model=args.model,
         )
+        result.provenance = provenance
         write_summary(run_dir, args.agent, case, result)
         results.append(result)
         print(
@@ -544,6 +613,11 @@ def main() -> int:
         "to judge whether the response is behaviorally correct, then write "
         "the finding up in docs/cross-agent-validation.md by hand."
     )
+    if args.strict and any(
+        r.returncode != 0 or (case.name != "percentage-discount-commit" and not r.clean)
+        for r in results
+    ):
+        return 1
     return 0
 
 
