@@ -41,6 +41,22 @@ Any supported agent may be used in either:
 
 Actual agent assignment should be decided per task. This repository intentionally avoids environment-specific assumptions.
 
+## Local Web GUI
+
+Run the deployment screen directly on Linux, WSL, or Windows using Python 3.10+
+and Git. GUI dependencies are optional; the existing CLI remains usable without them.
+
+```bash
+python3 -m venv ~/.venvs/agent-rules
+~/.venvs/agent-rules/bin/python -m pip install -r requirements-gui.txt
+~/.venvs/agent-rules/bin/python scripts/gui.py --workspace /path/to/workspace
+```
+
+Open `http://127.0.0.1:8765` in a browser. Select repositories, inspect their
+status, preview installation or sync changes, then apply the reviewed plan.
+See [GUI setup and operation](docs/local-gui.md) for Windows, SSH access, and
+preview invalidation behavior.
+
 ## Deploy Rules and Skills
 
 Run these commands from your `agent-rules` checkout. The deployment tools do
