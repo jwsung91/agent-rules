@@ -23,81 +23,96 @@ from .source import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create, update, or check agent-rules adoption files."
+        description="Install, sync, check, or remove agent-rules in target repositories.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Workflow (run from the agent-rules checkout):\n"
+            "  Preview: python scripts/adopt.py /path/to/repo --profile codex --skills --dry-run\n"
+            "  Install: repeat the preview command without --dry-run\n"
+            "  Update:  python scripts/adopt.py /path/to/repo --sync\n"
+            "  Inspect: python scripts/adopt.py /path/to/repo --check --problems-only\n"
+            "\nBatch install/sync/check: replace the target path with --batch repos.toml.\n"
+            "Build the list with scripts/generate_batch_list.py; review its targets first.\n"
+            "Details: docs/scripted-adoption.md"
+        ),
     )
-    parser.add_argument(
+    targets = parser.add_argument_group("Targets", "Choose one repository or a reviewed batch list.")
+    operations = parser.add_argument_group("Operation", "Default: install; use --sync to update.")
+    contents = parser.add_argument_group("Installed content", "Select files and repository-specific guidance.")
+    output = parser.add_argument_group("Preview and safeguards")
+    targets.add_argument(
         "target_repo",
         nargs="?",
         default=".",
         help="Path to the target repository root. Defaults to the current directory.",
     )
-    parser.add_argument(
+    targets.add_argument(
         "--profile",
         choices=sorted(VALID_PROFILES),
         help="Agent profile to manage: codex, claude, gemini, or all.",
     )
-    parser.add_argument(
+    contents.add_argument(
         "--shared-url",
         default=DEFAULT_SHARED_URL,
         help=f"Shared rules repository URL. Default: {DEFAULT_SHARED_URL}",
     )
-    parser.add_argument(
+    contents.add_argument(
         "--boundary",
         action="append",
         default=[],
         help="Repository-specific boundary to add to AGENTS.md. May be repeated.",
     )
-    parser.add_argument(
+    contents.add_argument(
         "--validation",
         action="append",
         default=[],
         help="Validation command to add to AGENTS.md. May be repeated.",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Print planned changes without writing.")
-    parser.add_argument("--force", action="store_true", help="Overwrite existing files.")
-    parser.add_argument(
+    output.add_argument("--dry-run", action="store_true", help="Print planned changes without writing.")
+    output.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    output.add_argument(
         "--verbose",
         action="store_true",
         help="With --dry-run, also print the full content of each planned file.",
     )
-    parser.add_argument("--check", action="store_true", help="Check adoption health.")
-    parser.add_argument(
+    operations.add_argument("--check", action="store_true", help="Check adoption health.")
+    operations.add_argument(
         "--remove",
         action="store_true",
         help="Remove the files this helper generated, backing them up first.",
     )
-    parser.add_argument(
+    operations.add_argument(
         "--sync",
         action="store_true",
         help="Update metadata and managed blocks, or merge into an existing file without metadata.",
     )
-    parser.add_argument(
+    contents.add_argument(
         "--local-copy",
         action="store_true",
         help="Copy shared rules under .agents/agent-rules/ for pinned/offline use.",
     )
-    parser.add_argument(
+    contents.add_argument(
         "--visibility",
         choices=sorted(VALID_VISIBILITIES),
         default="local",
         help="Keep generated files local (default) or make them trackable.",
     )
-    parser.add_argument(
+    contents.add_argument(
         "--skills",
         action="store_true",
         help="Install shared skills for the selected agent profile.",
     )
-    parser.add_argument(
+    operations.add_argument(
         "--list-skills",
         action="store_true",
         help="List the shared skills that --skills installs, then exit.",
     )
-    parser.add_argument(
+    output.add_argument(
         "--problems-only",
         action="store_true",
         help="With --check, print only WARN/FAIL lines instead of every result.",
     )
-    parser.add_argument(
+    targets.add_argument(
         "--batch",
         metavar="FILE",
         help="Apply to multiple repositories listed in a .toml or .txt file.",

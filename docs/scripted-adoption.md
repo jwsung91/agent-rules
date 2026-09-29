@@ -1,8 +1,36 @@
-# Scripted Repository Adoption
+# Deploying agent-rules
 
-Use `scripts/adopt.py` when applying `agent-rules` to multiple repositories or when you want repeatable checking and update behavior.
+The deployment tools distribute rules and skills from this checkout into target
+repositories. They are local commands, not an automatic post-merge deployment.
+Run the examples from the `agent-rules` checkout with Python 3.10 or later;
+TOML batch lists require Python 3.11 or later.
 
-The script creates root-level agent entrypoints and does not copy root-level `rules/` or `templates/` into the target repository. Full local copies, when requested, are written only under `.agents/agent-rules/`.
+## Workflow and Responsibilities
+
+| Stage | Command or component | Result |
+| --- | --- | --- |
+| Discover | `scripts/generate_batch_list.py` | Candidate repository list; no target changes |
+| Select | Review the generated `.toml` or `.txt` | Intended targets and agent profiles |
+| Preview | `scripts/adopt.py ... --dry-run` | Planned file and ignore-rule changes |
+| Install | `scripts/adopt.py ... --profile codex --skills` | Entrypoint, skills, and merge baselines |
+| Update | `scripts/adopt.py ... --sync` | Merge updated shared content into an installation |
+| Inspect | `scripts/adopt.py ... --check` | Health and currency report |
+| Remove | `scripts/adopt.py /path/to/repo --remove` | Back up and remove owned adoption files |
+
+Use a target path for one repository, or `--batch /path/to/repos.toml` for
+installation, sync, and checking across a reviewed list. Review discovered
+paths before applying: exclude this shared-source repository, third-party
+checkouts, and any projects you do not intend to manage.
+
+- [Install](#install): profiles and shared skills
+- [Batch deployment](#batch-deployment): discovery, selection, and batch lists
+- [Update](#update): source refresh and local-edit preservation
+- [Check](#check): health reports and exit codes
+- [Remove](#remove): ownership checks and backups
+- [Visibility](#visibility), [offline copy](#offline-copy), and
+  [validation commands](#validation-commands): installation options
+- [Legacy Codex paths](#legacy-codex-paths): explicit migration
+- [Implementation map](#implementation-map): code responsibilities
 
 ## Recommended Workflow
 
@@ -14,7 +42,7 @@ The script creates root-level agent entrypoints and does not copy root-level `ru
 6. Edit repository-specific boundaries and validation commands.
 7. Run the suggested validation, starting with `git diff --check`.
 
-## Profiles
+## Install
 
 ```text
 codex  -> AGENTS.md
@@ -27,28 +55,28 @@ Each profile creates only the files its agent needs. Apply the `codex` and
 `claude` profiles separately when both tools are used without Gemini. Keep
 `--profile all` for repositories that also use Gemini.
 
-## 1. New Repository: Codex
+### Codex
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile codex --dry-run
 python scripts/adopt.py /path/to/repo --profile codex
 ```
 
-## 2. New Repository: Claude
+### Claude
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile claude --dry-run
 python scripts/adopt.py /path/to/repo --profile claude
 ```
 
-## 3. New Repository: Gemini
+### Gemini
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile gemini --dry-run
 python scripts/adopt.py /path/to/repo --profile gemini
 ```
 
-## 4. Multi-Agent Repository
+### Multiple agents and shared skills
 
 ```bash
 python scripts/adopt.py /path/to/repo --profile codex --dry-run
@@ -97,126 +125,7 @@ repository creates the `.claude/skills/` directory itself; if a Claude Code
 session was already running in that repository before the install, restart the
 session so it starts watching the new directory.
 
-## 5. Existing File: Sync
-
-Default apply refuses to overwrite an existing file.
-
-Use `--sync` when the target repository already has an agent file. The helper automatically selects the right strategy:
-
-- **sync baseline present** → performs a 3-way merge between the previous generated baseline, the locally edited file, and the new shared source. Non-conflicting edits are preserved anywhere in generated entrypoints and installed skills.
-- **merge conflict** → stops before writing any file. Use `--dry-run` to inspect the conflict, reconcile the local edit, or use `--force` intentionally.
-- **metadata present, baseline absent** → uses the legacy managed-block refresh once and records a baseline for future 3-way merges.
-- **metadata present, no managed markers** → refused. The markers are what separates shared content from yours; without them a sync would either discard local edits or leave the old shared sections behind as duplicates. Re-run with `--force` to regenerate from the templates. The previous file is copied under `.agent-rules/backups/<timestamp>/` first.
-- **no metadata** → merges shared sections into the existing file without overwriting it (AGENTS.md only).
-
-```bash
-python scripts/adopt.py /path/to/repo --sync --dry-run
-python scripts/adopt.py /path/to/repo --sync
-```
-
-`--profile` is optional with `--sync`; the helper infers it from the existing file's metadata. Pass `--profile` explicitly to change the profile.
-
-Re-running the original adoption command on a repository this helper already
-adopted switches to `--sync` and says so, rather than refusing to overwrite.
-Use `--force` to regenerate from the templates instead. A file without an
-agent-rules metadata block is still refused: it was written by someone else.
-
-`--sync` is idempotent: when the shared source has not moved, it reports every
-file under `Skipped:` and leaves them byte-identical. The `generated_at`
-timestamp in the metadata block is only refreshed when something else in the
-file actually changes, so repeated syncs do not produce empty diffs (or, under
-`--visibility tracked`, no-content commits). Missing `.gitignore` entries are
-still repaired on a sync that writes nothing.
-
-### What --sync will and will not rewrite
-
-Generated entrypoints mark the regions that belong to the adopting repository:
-
-```markdown
-## Repository-specific Boundaries
-
-<!-- agent-rules-local:boundaries:start -->
-- no vendored dependencies
-<!-- agent-rules-local:boundaries:end -->
-```
-
-`--sync` refreshes everything outside those markers from the shared source and
-never rewrites what is inside them. Edit freely between the markers; keep the
-marker lines themselves.
-
-Ownership is marked per region rather than by regenerating only the managed
-block, because shared content lives outside that block as well -- the
-`## Validation` guidance and the whole `## Final Report` section -- and it has
-been revised since repositories started adopting. Freezing everything outside
-the managed block would strand them on an old copy.
-
-Adoptions created before the markers existed pick them up on their first
-`--sync`, which recovers the configured values from the template text around
-them. Nothing needs to be re-entered.
-
-### Backups
-
-`--force` replaces a file wholesale. Before it does, the existing file is
-copied to `.agent-rules/backups/<timestamp>/<path>` — one directory per run,
-so a `--profile all --force` keeps its three files together. Backups are
-local-only, like the baselines and generated entrypoints.
-
-Nothing else in this helper keeps a copy, which matters because `--force` is
-the documented answer to several refusals.
-
-Baselines are stored under `.agent-rules/bases/`. Local visibility ignores
-them together with generated files; tracked visibility keeps them trackable so
-other team members can reproduce later merges. A previously installed,
-locally modified skill without a baseline cannot be merged safely: restore it
-or use `--force` once to establish a new baseline.
-
-If `--check` finds a shared source URL but no metadata block, it reports:
-
-```text
-[WARN] legacy adoption detected; run --sync to add metadata
-```
-
-## 6. Sync From Updated Source
-
-After pulling a new version of `agent-rules`, sync target repositories:
-
-```bash
-python scripts/adopt.py /path/to/repo --sync --dry-run
-python scripts/adopt.py /path/to/repo --sync
-```
-
-If the local `agent-rules` source differs from remote `main`, `--sync` is blocked with an error. Pull from remote first, then re-run.
-
-## 7. Local Copy
-
-```bash
-python scripts/adopt.py /path/to/repo --profile claude --local-copy --dry-run
-python scripts/adopt.py /path/to/repo --profile claude --local-copy
-```
-
-Local copy mode writes:
-
-```text
-.agents/agent-rules/
-  SOURCE_COMMIT
-  AGENTS.md / CLAUDE.md / GEMINI.md (selected by profile)
-  rules/
-  templates/
-  docs/lightweight-adoption.md
-  docs/scripted-adoption.md
-```
-
-Do not copy `rules/` or `templates/` to the target repository root.
-
-If `.agents/agent-rules/` already exists, a new `--local-copy` apply fails by default. Use `--sync` or `--force` to refresh:
-
-```bash
-python scripts/adopt.py /path/to/repo --profile claude --local-copy --sync --dry-run
-python scripts/adopt.py /path/to/repo --profile claude --local-copy --sync
-python scripts/adopt.py /path/to/repo --profile claude --local-copy --force
-```
-
-## 8. Multiple Repositories: Batch
+## Batch Deployment
 
 Use `--batch` to apply an operation to many repositories at once. The batch file can be TOML (`.toml`) or plain text (`.txt`).
 
@@ -338,107 +247,96 @@ Exit code is 1 if any repository failed, 2 if none failed but at least one repor
 
   Or track it if the paths are stable and shared (e.g. CI server paths).
 
-## 9. Generated File Visibility
+## Update
 
-The default, `--visibility local`, adds generated entrypoints and installed
-skill files to the target repository's `.gitignore`.
-
-Use `--visibility tracked` to make the generated files team-visible:
+After pulling a new version of `agent-rules`, sync target repositories:
 
 ```bash
-python scripts/adopt.py /path/to/repo --profile codex --skills --visibility tracked
+python scripts/adopt.py /path/to/repo --sync --dry-run
+python scripts/adopt.py /path/to/repo --sync
 ```
 
-Tracked mode refuses to proceed when a generated output is ignored and
-untracked. Remove or narrow the matching ignore rule first.
+If the local `agent-rules` source differs from remote `main`, `--sync` is blocked with an error. Pull from remote first, then re-run.
 
-### Local-only files
+### Merge behavior
 
-Local visibility ignores only the entrypoints and skills selected by the active
-profile. It does not add unused agent entrypoint names.
+Default apply refuses to overwrite an existing file.
 
-Entries are written as one line per entrypoint plus one directory pattern per
-installed skill, with a single pattern covering the sync baselines:
+Use `--sync` when the target repository already has an agent file. The helper automatically selects the right strategy:
 
-```gitignore
-# agent-rules (local only)
-/AGENTS.md
-/CLAUDE.md
-/.agent-rules/bases/
-/.agents/skills/investigate-bug/
-/.claude/skills/investigate-bug/
-```
-
-Directory patterns keep the list proportional to the number of skills rather
-than the number of files inside them, so adding a file to a skill upstream
-does not grow every adopted repository's `.gitignore`. Each skill is named
-individually instead of ignoring `.agents/skills/` or `.claude/skills/`
-wholesale, so skills the repository wrote itself are untouched.
-
-A `.gitignore` written by an earlier version listed every generated file
-separately (30 entries for `--profile all --skills`). The next `--sync`
-replaces those entries with the equivalent directory patterns, in place and
-without disturbing unrelated rules, and reports how many it replaced. Nothing
-changes about which files end up ignored.
-
-After adoption, commit only `.gitignore`:
+- **sync baseline present** → performs a 3-way merge between the previous generated baseline, the locally edited file, and the new shared source. Non-conflicting edits are preserved anywhere in generated entrypoints and installed skills.
+- **merge conflict** → stops before writing any file. Use `--dry-run` to inspect the conflict, reconcile the local edit, or use `--force` intentionally.
+- **metadata present, baseline absent** → uses the legacy managed-block refresh once and records a baseline for future 3-way merges.
+- **metadata present, no managed markers** → refused. The markers are what separates shared content from yours; without them a sync would either discard local edits or leave the old shared sections behind as duplicates. Re-run with `--force` to regenerate from the templates. The previous file is copied under `.agent-rules/backups/<timestamp>/` first.
+- **no metadata** → merges shared sections into the existing file without overwriting it (AGENTS.md only).
 
 ```bash
-git add .gitignore
-git commit -m "chore: ignore local agent entrypoint files"
+python scripts/adopt.py /path/to/repo --sync --dry-run
+python scripts/adopt.py /path/to/repo --sync
 ```
 
-If an agent file is already in `.gitignore`, the helper skips the `.gitignore` update (no duplicate entry is added) and proceeds normally.
+`--profile` is optional with `--sync`; the helper infers it from the existing file's metadata. Pass `--profile` explicitly to change the profile.
 
-Local copy files (`.agents/agent-rules/`) are different: they are meant to be committed if you want them shared with the team. If `.agents/` is blocked by `.gitignore`, the helper will fail with a message to remove or narrow the ignore rule.
+Re-running the original adoption command on a repository this helper already
+adopted switches to `--sync` and says so, rather than refusing to overwrite.
+Use `--force` to regenerate from the templates instead. A file without an
+agent-rules metadata block is still refused: it was written by someone else.
 
-## 10. Removing an Adoption
+`--sync` is idempotent: when the shared source has not moved, it reports every
+file under `Skipped:` and leaves them byte-identical. The `generated_at`
+timestamp in the metadata block is only refreshed when something else in the
+file actually changes, so repeated syncs do not produce empty diffs (or, under
+`--visibility tracked`, no-content commits). Missing `.gitignore` entries are
+still repaired on a sync that writes nothing.
 
-```bash
-python scripts/adopt.py /path/to/repo --remove --dry-run
-python scripts/adopt.py /path/to/repo --remove
+### What --sync will and will not rewrite
+
+Generated entrypoints mark the regions that belong to the adopting repository:
+
+```markdown
+## Repository-specific Boundaries
+
+<!-- agent-rules-local:boundaries:start -->
+- no vendored dependencies
+<!-- agent-rules-local:boundaries:end -->
 ```
 
-`--remove` deletes the files this helper generated for the active profile:
-the entrypoints, the installed shared skills, and the sync baselines. The
-profile is inferred from the existing metadata when `--profile` is omitted.
+With a baseline present, `--sync` uses a three-way merge to preserve
+non-conflicting edits throughout the file. The marked regions identify the
+repository-specific boundaries and validation settings, including during legacy
+refreshes without a baseline. Keep the marker lines themselves.
 
-Everything it deletes is copied to `.agent-rules/backups/<timestamp>/` first.
-That matters more than it sounds: an entrypoint holds the repository's own
-boundaries and validation commands, and a local-only adoption is not in Git,
-so the backup is the only copy.
+Ownership is marked per region rather than by regenerating only the managed
+block, because shared content lives outside that block as well -- the
+`## Validation` guidance and the whole `## Final Report` section -- and it has
+been revised since repositories started adopting. Freezing everything outside
+the managed block would strand them on an old copy.
 
-It refuses rather than guessing in two cases:
+Adoptions created before the markers existed pick them up on their first
+`--sync`, which recovers the configured values from the template text around
+them. Nothing needs to be re-entered.
 
-- **A file with no agent-rules metadata block** — it was written by someone
-  else. Delete it yourself if that is what you want.
-- **A tracked file** — removing it changes the repository for everyone.
-  `--force` overrides; Git still has the committed copies either way.
+### Backups
 
-Left alone deliberately:
+`--force` replaces a file wholesale. Before it does, the existing file is
+copied to `.agent-rules/backups/<timestamp>/<path>` — one directory per run,
+so a `--profile all --force` keeps its three files together. Backups are
+local-only, like the baselines and generated entrypoints.
 
-- `.agents/agent-rules/` — a local copy is meant to be committed and shared,
-  so dropping it is a separate decision from undoing the adoption.
-- Anything under `.agent-rules/backups/`.
-- `.gitignore` rules the repository wrote itself. Only the
-  `# agent-rules (local only)` block is removed.
+Removal also backs up owned files before deleting them. Baselines record the
+previous generated content for merging; they are not backups of local edits.
 
-The backup survives with no ignore rule left to hide it, so it shows up in
-`git status` until you delete it — deliberately, since it is the only copy of
-what was removed.
+Baselines are stored under `.agent-rules/bases/`. Local visibility ignores
+them together with generated files; tracked visibility keeps them trackable so
+other team members can reproduce later merges. A previously installed,
+locally modified skill without a baseline cannot be merged safely: restore it
+or use `--force` once to establish a new baseline.
 
-## 11. Validation Command Detection
+If `--check` finds a shared source URL but no metadata block, it reports:
 
-The helper always inspects the target repository for known build files and suggests matching commands. Detected commands are written into the generated file automatically.
-
-Supported files: `CMakeLists.txt`, `pyproject.toml`, `setup.py`, `requirements.txt`, `package.json`, `Cargo.toml`, `go.mod`, `package.xml`, `colcon.meta`, `.github/workflows/`.
-
-The generated `## Validation` section separates the two sources by confidence:
-
-- **Confirmed for this repository** — `git diff --check` plus any command passed via `--validation`. These are treated as verified.
-- **Auto-detected candidates** — commands guessed from the presence of a build file (e.g. `cargo test` just because `Cargo.toml` exists). These are unverified guesses and are labeled accordingly; confirm they actually work before relying on them.
-
-When `--validation` is also provided, explicit commands are always confirmed; detected commands never duplicate an explicit or confirmed command.
+```text
+[WARN] legacy adoption detected; run --sync to add metadata
+```
 
 ## Check
 
@@ -500,6 +398,142 @@ Exit codes distinguish severity: `0` (clean), `1` (at least one `[FAIL]`), `2` (
 with nothing to fix -- for example `--profile all --skills`, where `GEMINI.md`
 has no shared-skill path because Gemini has no shared-skill convention yet.
 
+## Remove
+
+```bash
+python scripts/adopt.py /path/to/repo --remove --dry-run
+python scripts/adopt.py /path/to/repo --remove
+```
+
+`--remove` deletes the files this helper generated for the active profile:
+the entrypoints, the installed shared skills, and the sync baselines. The
+profile is inferred from the existing metadata when `--profile` is omitted.
+
+Everything it deletes is copied to `.agent-rules/backups/<timestamp>/` first.
+That matters more than it sounds: an entrypoint holds the repository's own
+boundaries and validation commands, and a local-only adoption is not in Git,
+so the backup is the only copy.
+
+Removal refuses the entire plan when ownership cannot be established:
+
+- Entrypoints require agent-rules metadata.
+- Skill files require their per-file sync baselines. A known skill name is
+  insufficient; missing or untrustworthy baselines block removal even with
+  `--force`.
+- Symlink files and paths resolving outside the target repository are refused.
+
+Tracked files also block removal unless `--force` is explicitly selected.
+That override permits removing tracked, owned files; it does not bypass the
+ownership checks above.
+
+Left alone deliberately:
+
+- `.agents/agent-rules/` — a local copy is meant to be committed and shared,
+  so dropping it is a separate decision from undoing the adoption.
+- Anything under `.agent-rules/backups/`.
+- `.gitignore` rules the repository wrote itself. Only the
+  `# agent-rules (local only)` block is removed.
+
+The backup survives with no ignore rule left to hide it, so it shows up in
+`git status` until you delete it — deliberately, since it is the only copy of
+what was removed.
+
+## Visibility
+
+The default, `--visibility local`, adds generated entrypoints and installed
+skill files to the target repository's `.gitignore`.
+
+Use `--visibility tracked` to make the generated files team-visible:
+
+```bash
+python scripts/adopt.py /path/to/repo --profile codex --skills --visibility tracked
+```
+
+Tracked mode refuses to proceed when a generated output is ignored and
+untracked. Remove or narrow the matching ignore rule first.
+
+### Local-only files
+
+Local visibility ignores only the entrypoints and skills selected by the active
+profile. It does not add unused agent entrypoint names.
+
+Entries are written as one line per entrypoint plus one directory pattern per
+installed skill, with a single pattern covering the sync baselines:
+
+```gitignore
+# agent-rules (local only)
+/AGENTS.md
+/CLAUDE.md
+/.agent-rules/bases/
+/.agents/skills/investigate-bug/
+/.claude/skills/investigate-bug/
+```
+
+Directory patterns keep the list proportional to the number of skills rather
+than the number of files inside them, so adding a file to a skill upstream
+does not grow every adopted repository's `.gitignore`. Each skill is named
+individually instead of ignoring `.agents/skills/` or `.claude/skills/`
+wholesale, so skills the repository wrote itself are untouched.
+
+A `.gitignore` written by an earlier version listed every generated file
+separately (30 entries for `--profile all --skills`). The next `--sync`
+replaces those entries with the equivalent directory patterns, in place and
+without disturbing unrelated rules, and reports how many it replaced. Nothing
+changes about which files end up ignored.
+
+After adoption, commit only `.gitignore`:
+
+```bash
+git add .gitignore
+git commit -m "chore: ignore local agent entrypoint files"
+```
+
+If an agent file is already in `.gitignore`, the helper skips the `.gitignore` update (no duplicate entry is added) and proceeds normally.
+
+Local copy files (`.agents/agent-rules/`) are different: they are meant to be committed if you want them shared with the team. If `.agents/` is blocked by `.gitignore`, the helper will fail with a message to remove or narrow the ignore rule.
+
+## Offline Copy
+
+```bash
+python scripts/adopt.py /path/to/repo --profile claude --local-copy --dry-run
+python scripts/adopt.py /path/to/repo --profile claude --local-copy
+```
+
+Local copy mode writes:
+
+```text
+.agents/agent-rules/
+  SOURCE_COMMIT
+  AGENTS.md / CLAUDE.md / GEMINI.md (selected by profile)
+  rules/
+  templates/
+  docs/lightweight-adoption.md
+  docs/scripted-adoption.md
+```
+
+Do not copy `rules/` or `templates/` to the target repository root.
+
+If `.agents/agent-rules/` already exists, a new `--local-copy` apply fails by default. Use `--sync` or `--force` to refresh:
+
+```bash
+python scripts/adopt.py /path/to/repo --profile claude --local-copy --sync --dry-run
+python scripts/adopt.py /path/to/repo --profile claude --local-copy --sync
+python scripts/adopt.py /path/to/repo --profile claude --local-copy --force
+```
+
+## Validation Commands
+
+The helper always inspects the target repository for known build files and suggests matching commands. Detected commands are written into the generated file automatically.
+
+Supported files: `CMakeLists.txt`, `pyproject.toml`, `setup.py`, `requirements.txt`, `package.json`, `Cargo.toml`, `go.mod`, `package.xml`, `colcon.meta`, `.github/workflows/`.
+
+The generated `## Validation` section separates the two sources by confidence:
+
+- **Confirmed for this repository** — `git diff --check` plus any command passed via `--validation`. These are treated as verified.
+- **Auto-detected candidates** — commands guessed from the presence of a build file (e.g. `cargo test` just because `Cargo.toml` exists). These are unverified guesses and are labeled accordingly; confirm they actually work before relying on them.
+
+When `--validation` is also provided, explicit commands are always confirmed; detected commands never duplicate an explicit or confirmed command.
+
 ## Subdirectory Targets
 
 The helper expects `target_repo` to be the Git repository root. If the path is a subdirectory inside a Git repository, write operations fail with an error. Run the helper from the repository root instead.
@@ -509,10 +543,11 @@ The helper expects `target_repo` to be the Git repository root. If the path is a
 - The helper never commits in the target repository.
 - The helper never pushes to GitHub.
 - The helper never runs `git pull`.
-- Existing files are not overwritten unless `--force` is passed.
+- Default installation refuses unmanaged existing files. `--sync` can merge
+  existing content; `--force` replaces it with a backup.
 - Use `--dry-run` to preview all planned changes before applying.
 
-## Codex skill discovery and legacy installations
+## Legacy Codex Paths
 
 New Codex installations use `.agents/skills/`, the current documented local
 skill-discovery root. Claude continues to use `.claude/skills/`.
@@ -543,3 +578,22 @@ To migrate an existing installation deliberately:
 Migration is explicit; ordinary sync does not move directories or discard user
 changes. Fresh installation, legacy sync/removal, duplicate detection, and an
 explicit path move followed by sync are covered by deterministic tests.
+
+## Implementation Map
+
+The public entrypoints remain stable; implementation modules live under
+`scripts/agent_rules/`.
+
+| Layer | Files | Responsibility |
+| --- | --- | --- |
+| Public commands | `scripts/adopt.py`, `scripts/generate_batch_list.py` | Adoption API/CLI and repository discovery |
+| Dispatch | `cli.py`, `batch.py` | Arguments, operation selection, per-repository batch execution |
+| Plan | `source.py`, `metadata.py`, `render.py`, `planning.py` | Source/profile detection, content rendering, merge planning |
+| Apply | `applying.py`, `gitignore.py` | Write planned files, backups, visibility rules |
+| Inspect and remove | `checking.py`, `removal.py` | Health reports and ownership-aware removal |
+| Shared support | `models.py`, `constants.py`, `gitio.py` | Data structures, policy constants, Git helpers |
+
+`rules/` and `skills/` define behavior; `templates/` defines generated
+entrypoints. `tests/test_adopt.py` and `tests/test_generate_batch_list.py` cover
+installation and discovery. `scripts/forward_test.py` evaluates agent execution
+separately; it is not part of deployment.
