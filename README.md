@@ -275,7 +275,16 @@ that works when requests compete for attention.
 The adoption helper records generated baselines under `.agent-rules/bases/`.
 Later `--sync` runs use them for 3-way merges, preserving non-conflicting edits
 to generated entrypoints and skills and stopping before unresolved conflicts
-are written.
+are written. Baseline records also retain the installed skill selection when
+all skill files have been deleted, so `--check` detects the loss and `--sync`
+restores the files without requiring `--skills` again.
+
+Skill removal requires a per-file baseline as installation evidence. A known
+skill name alone does not establish ownership; missing or untrustworthy
+baselines block the entire removal plan, including with `--force`. Entrypoints
+still require their generated metadata. Removal backs up owned files, including
+local edits, before deleting them. Keep the baseline records until removal is
+complete; installations without these records require manual ownership review.
 
 See `docs/cross-agent-validation.md` for the cross-agent behavioral evaluations
 of `investigate-bug` and `review-change` and their remaining
