@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .applying import backup_path
-from .constants import BACKUP_ROOT
+from .constants import BACKUP_ROOT, SYNC_BASE_ROOT
 from .gitignore import remove_agent_rules_block
 from .gitio import find_repo_root, is_tracked
 from .metadata import parse_metadata
@@ -42,7 +42,7 @@ def adoption_paths(target_repo: Path, profile: str, *, skills: bool) -> list[str
         paths.append(name)
         paths.append(sync_base_path(name))
     if skills:
-        for _source, relative_path in shared_skill_file_specs(profile):
+        for _source, relative_path in shared_skill_file_specs(profile, target_repo):
             paths.append(relative_path)
             paths.append(sync_base_path(relative_path))
     return paths
@@ -59,10 +59,23 @@ def build_removal_plan(
         if not path.exists():
             continue
 
-        # An entrypoint without the metadata block was written by someone
-        # else; the same rule the write path uses before touching a file.
-        # Baselines and skill files carry no metadata, so they are only ever
-        # reached through a path this helper generated.
+        # A matching skill name is not evidence that this helper installed it.
+        # Existing baselines provide the per-file installation inventory.
+        if not path.resolve().is_relative_to(target_repo.resolve()) or path.is_symlink():
+            plan.foreign.append(relative_path)
+            continue
+        if (
+            relative_path not in required_files_for_profile(profile)
+            and not relative_path.startswith(f"{SYNC_BASE_ROOT}/")
+        ):
+            baseline = target_repo / sync_base_path(relative_path)
+            if (
+                not baseline.is_file()
+                or baseline.is_symlink()
+                or not baseline.resolve().is_relative_to(target_repo.resolve())
+            ):
+                plan.foreign.append(relative_path)
+                continue
         if relative_path in required_files_for_profile(profile):
             content = path.read_text(encoding="utf-8", errors="replace")
             if not parse_metadata(content):
@@ -86,7 +99,7 @@ def report_removal_blockers(plan: RemovalPlan) -> int:
     if plan.foreign:
         print(
             "Refusing to remove a file this helper did not generate "
-            "(no agent-rules metadata block):\n"
+            "(no trustworthy metadata or per-file baseline):\n"
         )
         for relative_path in plan.foreign:
             print(f"- {relative_path}")

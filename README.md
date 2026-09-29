@@ -175,6 +175,39 @@ For most repositories:
 
 Use `.agents/` namespacing only when local rule or template files are needed. Avoid adding root-level `rules/`, `skills/`, scripts, or automation unless the target repository explicitly needs them.
 
+## Task Continuity and Completion
+
+For long-running work, use `templates/task-checkpoint-template.md` or an existing
+project task record to retain scope, environment, decisions, evidence, and the
+next step. Short follow-ups continue the agreed work; status questions do not
+cancel it. Explicitly requested additional work stays in separate stages rather
+than being silently deferred.
+
+Implementation choices follow a bounded reuse-first sequence: existing code,
+standard library, native platform features, installed dependencies, then new
+code that meets the agreed requirements. See
+[`rules/engineering-principles.md`](rules/engineering-principles.md).
+This guidance is informed by [Ponytail](https://github.com/DietrichGebert/ponytail)
+and expressed in this repository's own rules; it does not install Ponytail or
+activate a persistent mode. Requirements, compatibility, safety, and appropriate
+validation take precedence over line-count reduction.
+
+Ask `review-change` to check a scoped change for over-engineering when needed.
+It reports evidence-backed simplification suggestions separately from defects
+and does not replace correctness review or modify code.
+
+Performance investigations should set a baseline, acceptance criteria, and a
+bounded experiment budget before measuring. PR and release work must follow the
+destination's submission procedure and preserve signing, hooks, and checks.
+See `rules/task-scope-control.md`, `rules/test-and-validation.md`, and
+`rules/pr-discipline.md` for details. Generated entrypoints carry the essential
+rules even without `--skills` or access to the shared repository.
+
+Simple answers and progress updates need no fixed headings. Completed
+implementation/review reports retain the structured report; PR descriptions use
+the destination template. These instruction changes require fresh behavioral
+evaluation; structural tests alone do not establish model compliance.
+
 ## Effectiveness Review
 
 This repository is useful as a **soft-control layer** for agent behavior. It can improve consistency, but it is not a substitute for CI, tests, code review, or repository permissions.
@@ -255,7 +288,16 @@ that works when requests compete for attention.
 The adoption helper records generated baselines under `.agent-rules/bases/`.
 Later `--sync` runs use them for 3-way merges, preserving non-conflicting edits
 to generated entrypoints and skills and stopping before unresolved conflicts
-are written.
+are written. Baseline records also retain the installed skill selection when
+all skill files have been deleted, so `--check` detects the loss and `--sync`
+restores the files without requiring `--skills` again.
+
+Skill removal requires a per-file baseline as installation evidence. A known
+skill name alone does not establish ownership; missing or untrustworthy
+baselines block the entire removal plan, including with `--force`. Entrypoints
+still require their generated metadata. Removal backs up owned files, including
+local edits, before deleting them. Keep the baseline records until removal is
+complete; installations without these records require manual ownership review.
 
 See `docs/cross-agent-validation.md` for the cross-agent behavioral evaluations
 of `investigate-bug` and `review-change` and their remaining

@@ -202,8 +202,8 @@ def with_preserved_sections(
     return replace(context, **replacements) if replacements else context
 
 
-def shared_skills_section(relative_path: str) -> str:
-    root = ENTRYPOINT_SKILL_ROOTS.get(relative_path)
+def shared_skills_section(relative_path: str, codex_root: str | None = None) -> str:
+    root = codex_root if relative_path == "AGENTS.md" and codex_root else ENTRYPOINT_SKILL_ROOTS.get(relative_path)
     if not root:
         return ""
     names = ", ".join(f"`{name}`" for name in SHARED_SKILLS)
@@ -225,7 +225,7 @@ def render_file_for_profile(relative_path: str, context: RenderContext) -> str:
     if relative_path not in ENTRYPOINT_FILES:
         raise SystemExit(f"Unsupported generated file: {relative_path}")
     rendered = render_template(read_template(f"target-{relative_path}"), context)
-    section = shared_skills_section(relative_path) if context.install_skills else ""
+    section = shared_skills_section(relative_path, context.codex_skill_root) if context.install_skills else ""
     if section:
         rendered = rendered.replace("{{SHARED_SKILLS_SECTION}}", section)
     else:

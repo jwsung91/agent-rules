@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .constants import (
+    LEGACY_CODEX_SKILL_ROOT,
     ENTRYPOINT_FILES,
     ENTRYPOINT_SKILL_ROOTS,
     PROFILE_FILES,
@@ -204,8 +205,39 @@ def adoption_is_current(target_repo: Path, profile: str | None) -> bool:
 
 
 def skills_installed(target_repo: Path, profile: str) -> bool:
-    for root in PROFILE_SKILL_ROOTS.get(profile, ()):
+    for root in profile_skill_roots(profile, target_repo):
         for skill_name in SHARED_SKILLS:
-            if (target_repo / root / skill_name / "SKILL.md").exists():
+            if (
+                (target_repo / root / skill_name / "SKILL.md").is_file()
+                or (target_repo / sync_base_path(f"{root}/{skill_name}")).is_dir()
+            ):
                 return True
     return False
+
+
+def codex_skill_root(target_repo: Path) -> str:
+    """Keep legacy installations in place; never create duplicate named skills."""
+    current = PROFILE_SKILL_ROOTS["codex"][0]
+
+    def present(root: str) -> bool:
+        return any(
+            (target_repo / root / name).exists()
+            or (target_repo / sync_base_path(f"{root}/{name}")).exists()
+            for name in SHARED_SKILLS
+        )
+
+    legacy = present(LEGACY_CODEX_SKILL_ROOT)
+    if legacy and present(current):
+        raise SystemExit(
+            "Both legacy and current Codex shared-skill roots exist. "
+            "Reconcile the duplicate installations before adopting, syncing, or removing."
+        )
+    return LEGACY_CODEX_SKILL_ROOT if legacy else current
+
+
+def profile_skill_roots(profile: str, target_repo: Path | None = None) -> tuple[str, ...]:
+    roots = PROFILE_SKILL_ROOTS.get(profile, ())
+    if target_repo is None or profile not in {"codex", "all"}:
+        return roots
+    codex_root = codex_skill_root(target_repo)
+    return tuple(codex_root if r == PROFILE_SKILL_ROOTS["codex"][0] else r for r in roots)

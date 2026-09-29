@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -10,7 +11,6 @@ from .constants import (
     CODEX_ONLY_SKILL_PATHS,
     ENTRYPOINT_FILES,
     MANAGED_START,
-    PROFILE_SKILL_ROOTS,
     SHARED_SKILLS,
     TOOL_ENTRYPOINTS,
 )
@@ -34,6 +34,8 @@ from .render import (
     with_preserved_sections,
 )
 from .source import (
+    codex_skill_root,
+    profile_skill_roots,
     get_source_status,
     profile_skill_support,
     required_files_for_profile,
@@ -314,12 +316,12 @@ def local_copy_file_specs(profile: str) -> list[tuple[Path, str]]:
     return specs
 
 
-def shared_skill_file_specs(profile: str) -> list[tuple[Path, str]]:
+def shared_skill_file_specs(profile: str, target_repo: Path | None = None) -> list[tuple[Path, str]]:
     root = source_repo_root()
     specs: list[tuple[Path, str]] = []
     for skill_name in SHARED_SKILLS:
         skill_root = root / "skills" / skill_name
-        for destination_root in PROFILE_SKILL_ROOTS[profile]:
+        for destination_root in profile_skill_roots(profile, target_repo):
             for source in sorted(skill_root.rglob("*")):
                 if source.is_file():
                     relative = source.relative_to(skill_root).as_posix()
@@ -342,7 +344,7 @@ def build_shared_skill_plans(
     force: bool,
 ) -> list[FilePlan]:
     plans: list[FilePlan] = []
-    for source, relative_path in shared_skill_file_specs(profile):
+    for source, relative_path in shared_skill_file_specs(profile, target_repo):
         target = target_repo / relative_path
         upstream = source.read_text(encoding="utf-8")
         if target.exists():
@@ -456,6 +458,14 @@ def build_plan(
 
     if profile:
         context = build_render_context(args, profile, source_status, detected)
+        if profile in {"codex", "all"}:
+            selected_root = codex_skill_root(target_repo)
+            context = replace(context, codex_skill_root=selected_root)
+            if selected_root == ".codex/skills":
+                warnings.append(
+                    "Legacy Codex skills retained at .codex/skills; current discovery "
+                    "uses .agents/skills. See docs/scripted-adoption.md before migration."
+                )
         if args.sync:
             context = with_preserved_sections(context, target_repo, profile, args)
         files.extend(

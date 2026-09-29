@@ -75,7 +75,7 @@ python scripts/adopt.py /path/to/repo --profile claude --skills
 ```
 
 The same `SKILL.md` behavioral contracts are installed under each skill name
-in `.codex/skills/` and `.claude/skills/`. Agent-specific metadata may coexist
+in `.agents/skills/` and `.claude/skills/`. Agent-specific metadata may coexist
 with those shared contracts.
 
 `--skills` also injects a `## Shared Skills` section into the generated
@@ -365,14 +365,14 @@ installed skill, with a single pattern covering the sync baselines:
 /AGENTS.md
 /CLAUDE.md
 /.agent-rules/bases/
-/.codex/skills/investigate-bug/
+/.agents/skills/investigate-bug/
 /.claude/skills/investigate-bug/
 ```
 
 Directory patterns keep the list proportional to the number of skills rather
 than the number of files inside them, so adding a file to a skill upstream
 does not grow every adopted repository's `.gitignore`. Each skill is named
-individually instead of ignoring `.codex/skills/` or `.claude/skills/`
+individually instead of ignoring `.agents/skills/` or `.claude/skills/`
 wholesale, so skills the repository wrote itself are untouched.
 
 A `.gitignore` written by an earlier version listed every generated file
@@ -511,3 +511,35 @@ The helper expects `target_repo` to be the Git repository root. If the path is a
 - The helper never runs `git pull`.
 - Existing files are not overwritten unless `--force` is passed.
 - Use `--dry-run` to preview all planned changes before applying.
+
+## Codex skill discovery and legacy installations
+
+New Codex installations use `.agents/skills/`, the current documented local
+skill-discovery root. Claude continues to use `.claude/skills/`.
+
+Existing shared skills under `.codex/skills/` are deliberately retained during
+sync, check, and removal. Their local edits and sync baselines remain usable;
+commands warn that legacy-path retention does not verify current Codex discovery.
+The helper refuses to proceed when its shared skill names occur in both roots,
+rather than silently picking one copy. Other repository-owned skill names are
+not moved or removed.
+
+To migrate an existing installation deliberately:
+
+1. Back up the affected files, including local edits, and stop agents using them.
+2. Verify that the destination shared-skill directories do not exist. Reconcile
+   any duplicates manually; do not overwrite them with `--force`.
+3. Move each adopted shared-skill directory from `.codex/skills/<name>` to
+   `.agents/skills/<name>`, preserving its entire contents. Move its matching
+   baseline directory from `.agent-rules/bases/.codex/skills/<name>` to
+   `.agent-rules/bases/.agents/skills/<name>` as well. Preserve any unrelated
+   skills in either root. If an installed skill file was deleted locally, move
+   its baseline too so sync can still recognize the installation.
+4. Run the normal `--sync --dry-run`, then `--sync`. These update entrypoint
+   references and managed ignore patterns and merge against the moved baselines.
+5. Run `--check` and verify skill discovery in the target Codex runtime. File
+   presence and adoption checks alone do not prove a live model selected a skill.
+
+Migration is explicit; ordinary sync does not move directories or discard user
+changes. Fresh installation, legacy sync/removal, duplicate detection, and an
+explicit path move followed by sync are covered by deterministic tests.

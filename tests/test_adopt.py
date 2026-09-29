@@ -88,11 +88,6 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         self.assertIn("cannot be inspected", rule)
         self.assertIn("never substitute", rule)
 
-    def test_investigate_trigger_excludes_unrelated_work_from_fix_plan(self) -> None:
-        rule = adopt.SKILL_TRIGGER_RULES["investigate-bug"]
-        self.assertIn("Do not include unrelated work in the bug-fix plan", rule)
-        self.assertIn("only under Not Included or Follow-up", rule)
-
     def test_validate_trigger_preserves_worktree_and_reports_evidence(self) -> None:
         rule = adopt.SKILL_TRIGGER_RULES["validate-change"]
         self.assertIn("record the initial worktree state", rule)
@@ -280,7 +275,7 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             run(["git", "init"], repo)
-            second_codex = repo / ".codex" / "skills" / "second-skill"
+            second_codex = repo / ".agents" / "skills" / "second-skill"
             second_claude = repo / ".claude" / "skills" / "second-skill"
             (second_codex).mkdir(parents=True)
             (second_claude / "agents").mkdir(parents=True)
@@ -336,9 +331,9 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
                     for _, destination in adopt.shared_skill_file_specs("all")
                 }
 
-        self.assertIn(".codex/skills/second-skill/SKILL.md", destinations)
+        self.assertIn(".agents/skills/second-skill/SKILL.md", destinations)
         self.assertIn(
-            ".codex/skills/second-skill/agents/openai.yaml", destinations
+            ".agents/skills/second-skill/agents/openai.yaml", destinations
         )
         self.assertIn(".claude/skills/second-skill/SKILL.md", destinations)
         self.assertNotIn(
@@ -471,12 +466,65 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("ignored by target repository ignore rules", result.stdout)
 
+    def make_legacy_skill_installation(self) -> None:
+        result = self.cli("--profile", "codex", "--skills")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        for parent in (self.repo, self.repo / ".agent-rules/bases"):
+            (parent / ".codex").mkdir(exist_ok=True)
+            (parent / ".agents/skills").rename(parent / ".codex/skills")
+        for relative in ("AGENTS.md", ".agent-rules/bases/AGENTS.md", ".gitignore"):
+            path = self.repo / relative
+            path.write_text(path.read_text(encoding="utf-8").replace(".agents/skills", ".codex/skills"), encoding="utf-8")
+
+    def test_legacy_skill_sync_preserves_edits_without_duplicate_installation(self) -> None:
+        self.make_legacy_skill_installation()
+        skill = self.repo / ".codex/skills/investigate-bug/SKILL.md"
+        content = skill.read_text(encoding="utf-8") + "\nLocal legacy note.\n"
+        skill.write_text(content, encoding="utf-8")
+        result = self.cli("--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(skill.read_text(encoding="utf-8"), content)
+        self.assertFalse((self.repo / ".agents/skills/investigate-bug").exists())
+        self.assertIn(".codex/skills", (self.repo / "AGENTS.md").read_text())
+        self.assertIn("Legacy Codex", result.stdout)
+        checked = self.cli("--check")
+        self.assertIn("Legacy Codex", checked.stdout)
+        removed = self.cli("--remove")
+        self.assertEqual(removed.returncode, 0, removed.stderr + removed.stdout)
+        self.assertFalse(skill.exists())
+
+    def test_explicit_legacy_path_move_preserves_local_edits_on_sync(self) -> None:
+        self.make_legacy_skill_installation()
+        skill = self.repo / ".codex/skills/investigate-bug/SKILL.md"
+        content = skill.read_text(encoding="utf-8") + "\nPreserve during path migration.\n"
+        skill.write_text(content, encoding="utf-8")
+        for parent in (self.repo, self.repo / ".agent-rules/bases"):
+            (parent / ".agents").mkdir(exist_ok=True)
+            (parent / ".codex/skills").rename(parent / ".agents/skills")
+        result = self.cli("--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual((self.repo / ".agents/skills/investigate-bug/SKILL.md").read_text(encoding="utf-8"), content)
+        self.assertIn(".agents/skills", (self.repo / "AGENTS.md").read_text())
+        self.assertNotIn(".codex/skills", (self.repo / "AGENTS.md").read_text())
+
+    def test_duplicate_codex_skill_roots_block_sync_before_writes(self) -> None:
+        self.make_legacy_skill_installation()
+        duplicate = self.repo / ".agents/skills/investigate-bug/SKILL.md"
+        duplicate.parent.mkdir(parents=True)
+        duplicate.write_text("user-owned duplicate\n")
+        entry = (self.repo / "AGENTS.md").read_bytes()
+        result = self.cli("--sync")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Both legacy and current", result.stderr + result.stdout)
+        self.assertEqual((self.repo / "AGENTS.md").read_bytes(), entry)
+        self.assertEqual(duplicate.read_text(), "user-owned duplicate\n")
+
     def test_all_profile_installs_shared_skills_for_codex_and_claude(self) -> None:
         result = self.cli("--profile", "all", "--skills", "--visibility", "tracked")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         for skill_name in adopt.SHARED_SKILLS:
             with self.subTest(skill=skill_name):
-                codex_skill = self.repo / ".codex" / "skills" / skill_name / "SKILL.md"
+                codex_skill = self.repo / ".agents" / "skills" / skill_name / "SKILL.md"
                 claude_skill = self.repo / ".claude" / "skills" / skill_name / "SKILL.md"
                 self.assertTrue(codex_skill.exists())
                 self.assertTrue(claude_skill.exists())
@@ -503,7 +551,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         claude = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
         gemini = (self.repo / "GEMINI.md").read_text(encoding="utf-8")
         self.assertIn("## Shared Skills", agents)
-        self.assertIn(".codex/skills", agents)
+        self.assertIn(".agents/skills", agents)
         self.assertIn("invoke the `investigate-bug` skill", agents)
         self.assertIn("invoke the `review-change` skill", agents)
         self.assertIn("invoke the `validate-change` skill", agents)
@@ -581,20 +629,20 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         gitignore = (self.repo / ".gitignore").read_text(encoding="utf-8")
         # One directory pattern per installed skill, not one line per file.
-        self.assertIn("/.codex/skills/investigate-bug/\n", gitignore)
-        self.assertNotIn(".codex/skills/investigate-bug/SKILL.md", gitignore)
+        self.assertIn("/.agents/skills/investigate-bug/\n", gitignore)
+        self.assertNotIn(".agents/skills/investigate-bug/SKILL.md", gitignore)
         # What actually matters is that the installed files are ignored.
         for relative_path in (
-            ".codex/skills/investigate-bug/SKILL.md",
-            ".codex/skills/investigate-bug/agents/openai.yaml",
-            ".agent-rules/bases/.codex/skills/investigate-bug/SKILL.md",
+            ".agents/skills/investigate-bug/SKILL.md",
+            ".agents/skills/investigate-bug/agents/openai.yaml",
+            ".agent-rules/bases/.agents/skills/investigate-bug/SKILL.md",
         ):
             with self.subTest(path=relative_path):
                 self.assertTrue(
                     adopt.check_ignore_status(self.repo, relative_path).ignored,
                     f"{relative_path} is not ignored",
                 )
-        self.assertNotIn("git add .codex/skills/", result.stdout)
+        self.assertNotIn("git add .agents/skills/", result.stdout)
 
     def test_gitignore_stays_small_and_stable_across_skills(self) -> None:
         result = self.cli("--profile", "all", "--skills")
@@ -678,7 +726,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertEqual(sync.returncode, 0, sync.stderr + sync.stdout)
         content = gitignore.read_text(encoding="utf-8")
         self.assertIn("build/", content, "unrelated user entry was dropped")
-        self.assertIn("/.codex/skills/investigate-bug/\n", content)
+        self.assertIn("/.agents/skills/investigate-bug/\n", content)
         self.assertNotIn("SKILL.md", content)
         self.assertNotIn("openai.yaml", content)
         # Exactly one agent-rules block survives the migration.
@@ -698,25 +746,25 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
 
     def test_gitignore_migration_leaves_foreign_skill_entries_alone(self) -> None:
         # A skill this helper does not install is the repository's own
-        # business, even under the same .codex/skills/ root.
+        # business, even under the same .agents/skills/ root.
         self.assertEqual(self.cli("--profile", "codex", "--skills").returncode, 0)
         gitignore = self.repo / ".gitignore"
         gitignore.write_text(
             gitignore.read_text(encoding="utf-8")
-            + "\n/.codex/skills/team-only-skill/SKILL.md\n",
+            + "\n/.agents/skills/team-only-skill/SKILL.md\n",
             encoding="utf-8",
         )
 
         self.assert_cli_ok(self.cli("--sync"))
         self.assertIn(
-            "/.codex/skills/team-only-skill/SKILL.md",
+            "/.agents/skills/team-only-skill/SKILL.md",
             gitignore.read_text(encoding="utf-8"),
         )
 
     def test_skill_sync_preserves_local_edits_with_baseline(self) -> None:
         result = self.cli("--profile", "codex", "--skills", "--visibility", "tracked")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        skill = self.repo / ".codex" / "skills" / "investigate-bug" / "SKILL.md"
+        skill = self.repo / ".agents" / "skills" / "investigate-bug" / "SKILL.md"
         skill.write_text(
             skill.read_text(encoding="utf-8") + "\nLocal repository note.\n",
             encoding="utf-8",
@@ -764,7 +812,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(apply.returncode, 0, apply.stderr + apply.stdout)
 
-            skill = self.repo / ".codex/skills/investigate-bug/SKILL.md"
+            skill = self.repo / ".agents/skills/investigate-bug/SKILL.md"
             skill.write_text(
                 skill.read_text(encoding="utf-8").replace(
                     "# Investigate Bug", "# Investigate Repository Bug"
@@ -806,7 +854,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             run(["git", "add", "."], source)
             git_commit(source, "conflict skill title")
             baseline = self.repo / adopt.sync_base_path(
-                ".codex/skills/investigate-bug/SKILL.md"
+                ".agents/skills/investigate-bug/SKILL.md"
             )
             baseline_before = baseline.read_text(encoding="utf-8")
 
@@ -918,7 +966,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
                 "--check", "--profile", "codex", "--skills", "--visibility", "tracked"
             )
             self.assertIn(
-                ".codex/skills/investigate-bug/SKILL.md is behind the local shared "
+                ".agents/skills/investigate-bug/SKILL.md is behind the local shared "
                 "source; run --sync to update",
                 check_after.stdout,
             )
@@ -941,14 +989,14 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         # agents/openai.yaml) went undetected with exit code 0.
         result = self.cli("--profile", "codex", "--skills", "--visibility", "tracked")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        leaked = self.repo / ".codex/skills/investigate-bug/agents/openai.yaml"
+        leaked = self.repo / ".agents/skills/investigate-bug/agents/openai.yaml"
         self.assertTrue(leaked.exists())
         leaked.unlink()
 
         check = self.cli("--check", "--skills", "--profile", "codex")
         self.assertEqual(check.returncode, 1, check.stderr + check.stdout)
         self.assertIn(
-            ".codex/skills/investigate-bug/agents/openai.yaml is required by "
+            ".agents/skills/investigate-bug/agents/openai.yaml is required by "
             "the installed shared skills but missing",
             check.stdout,
         )
@@ -1108,7 +1156,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         )
         self.assertTrue((self.repo / "GEMINI.md").exists())
         self.assertTrue(
-            (self.repo / ".codex/skills/investigate-bug/SKILL.md").exists()
+            (self.repo / ".agents/skills/investigate-bug/SKILL.md").exists()
         )
 
         check = self.cli("--check", "--skills", "--profile", "all")
@@ -1399,6 +1447,38 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
             adopt.recover_placeholder("nothing familiar", template, "{{X}}")
         )
         self.assertIsNone(adopt.recover_placeholder("anything", template, "{{ABSENT}}"))
+
+    def test_remove_preserves_unowned_skill_even_with_force(self) -> None:
+        skill = self.repo / ".agents/skills/investigate-bug/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("User-owned skill\n", encoding="utf-8")
+        for extra in ([], ["--force"]):
+            with self.subTest(extra=extra):
+                result = self.cli("--profile", "codex", "--skills", "--remove", *extra)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(skill.read_text(), "User-owned skill\n")
+
+    def test_remove_refuses_whole_plan_when_skill_baseline_is_missing(self) -> None:
+        self.assert_cli_ok(self.cli("--profile", "codex", "--skills"))
+        relative = ".agents/skills/investigate-bug/SKILL.md"
+        (self.repo / ".agent-rules/bases" / relative).unlink()
+        entrypoint = (self.repo / "AGENTS.md").read_bytes()
+        result = self.cli("--profile", "codex", "--remove", "--force")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue((self.repo / relative).is_file())
+        self.assertEqual((self.repo / "AGENTS.md").read_bytes(), entrypoint)
+
+    def test_check_and_sync_remember_completely_deleted_skills(self) -> None:
+        self.assert_cli_ok(self.cli("--profile", "codex", "--skills"))
+        skill_root = self.repo / ".agents/skills"
+        expected = [p.relative_to(self.repo) for p in skill_root.rglob("*") if p.is_file()]
+        shutil.rmtree(skill_root)
+        check = self.cli("--profile", "codex", "--check")
+        self.assertEqual(check.returncode, 1, check.stdout + check.stderr)
+        self.assertIn("but missing", check.stdout)
+        self.assert_cli_ok(self.cli("--profile", "codex", "--sync"))
+        for relative in expected:
+            self.assertTrue((self.repo / relative).is_file(), str(relative))
 
     def test_remove_deletes_generated_files_and_backs_them_up(self) -> None:
         (self.repo / ".gitignore").write_text("build/\n", encoding="utf-8")
@@ -1732,7 +1812,7 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("## Shared Skills", content)
         self.assertIn("investigate-bug", content)
         self.assertTrue(
-            (self.repo / ".codex/skills/investigate-bug/SKILL.md").exists()
+            (self.repo / ".agents/skills/investigate-bug/SKILL.md").exists()
         )
 
     def test_force_overwrites_existing(self) -> None:
@@ -1757,12 +1837,12 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         result = self.cli("--profile", "codex", "--skills")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn(
-            "OK: .codex/skills/investigate-bug/SKILL.md added to .gitignore "
+            "OK: .agents/skills/investigate-bug/SKILL.md added to .gitignore "
             "(local-only)",
             result.stdout,
         )
         self.assertNotIn(
-            "OK: .codex/skills/investigate-bug/SKILL.md is not ignored",
+            "OK: .agents/skills/investigate-bug/SKILL.md is not ignored",
             result.stdout,
         )
 

@@ -180,7 +180,7 @@ def print_summary(
             # only genuinely different categories (e.g. .agents/ local
             # copies, which must stay trackable) fall into the else branch.
             is_locally_ignorable = Path(status.path).name in ENTRYPOINT_FILES or status.path.startswith(
-                (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
+                (".agents/skills/", ".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
             )
             if is_locally_ignorable:
                 if gitignore_file:
@@ -219,7 +219,7 @@ def print_summary(
         for p in changed
         if Path(p).name in ENTRYPOINT_FILES
         or p.startswith(
-            (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
+            (".agents/skills/", ".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
         )
     ]
     committable_changed = [
@@ -249,10 +249,10 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
     if preflight_result:
         return preflight_result
 
-    # Local copy files (.agents/) must be committable; fail if they're ignored
+    # Local rule copies must be committable; skill copies can be local-only.
     local_copy_ignored = [
         s for s in plan.ignore_statuses
-        if s.path.startswith(".agents/") and s.ignored and not s.tracked
+        if s.path.startswith(".agents/agent-rules/") and s.ignored and not s.tracked
     ]
     if local_copy_ignored:
         return fail_on_ignored(local_copy_ignored)
@@ -287,7 +287,7 @@ def apply_plan(plan: AdoptionPlan, args: argparse.Namespace) -> int:
         for item in plan.files
         if item.path in ENTRYPOINT_FILES
         or item.path.startswith(
-            (".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
+            (".agents/skills/", ".codex/skills/", ".claude/skills/", f"{SYNC_BASE_ROOT}/")
         )
     ]
     if (

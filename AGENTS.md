@@ -16,8 +16,16 @@ Use the mode requested by the task. Follow `rules/agent-collaboration.md` when m
 
 - Investigate existing code, documentation, and behavior before editing.
 - Keep changes scoped to the requested task.
+- Preserve the agreed objective, authorized scope, and completion criteria across follow-ups. A status question does not cancel ongoing work; a short continuation resumes the agreed next step without expanding authorization.
+- Separate explicitly requested additional work into stages or commits and keep it in the task; do not silently discard it as scope creep. Unrequested work stays out.
+- For long-running work, retain a compact checkpoint of the repository, branch, execution environment, decisions, remaining steps, and latest evidence. Verify it against current state before resuming.
+- Before performance experiments, define the baseline, target, allowed regressions, and experiment budget; stop or reassess when the budget is spent or evidence rejects the hypothesis.
+- Before publishing a PR or release, inspect the destination repository's template and required submission procedure. Before merging, verify the intended head, required checks, and merge result.
+- Never bypass commit signing, hooks, or required checks merely to make progress. Use an authorized working path or report the blocker; bypass requires an explicit user request.
 - Do not refactor unrelated files, or rename public APIs, files, directories, or user-facing concepts, unless explicitly requested.
 - Prefer simple, explicit, maintainable changes.
+- After understanding the problem, prefer existing code, standard libraries, native platform features, and installed dependencies before new code, when they satisfy the required behavior and project conventions.
+- Simplify implementation without dropping agreed requirements, compatibility, safety controls, or risk-appropriate validation; readable code matters more than minimum line counts.
 - Preserve existing structure, naming, and documentation tone.
 - Avoid new dependencies unless they have a clear, task-specific justification.
 - Follow repository-local formatter, linter, test, PR template, and verification conventions.
@@ -58,7 +66,9 @@ Validation:
 
 ## Final Report
 
-Include in every final response or PR summary:
+For simple questions and progress updates, answer directly without mandatory headings.
+For completed implementation or review reports, use the structure below. For PRs,
+follow the destination repository template when one exists.
 
 Before sending the response, verify that these Markdown headings appear verbatim, exactly once, and in this order; do not rename, omit, or combine them. Additional sections may appear after `## Changes` and before `## Validation`.
 
