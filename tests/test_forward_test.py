@@ -326,6 +326,61 @@ class ForwardTestCliTests(unittest.TestCase):
         run_dir = batch_dirs[0] / "run-1"
         return json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
 
+    def invoke_main(self) -> int:
+        with mock.patch.object(sys, "argv", [str(SCRIPT), "--agent", "codex", "--out-dir", str(self.out_dir)]):
+            return forward_test.main()
+
+    def test_setup_failures_and_interruptions_leave_stage_evidence(self) -> None:
+        for function, phase, error, code in (
+            ("collect_provenance", "provenance", FileNotFoundError("missing CLI"), 1),
+            ("build_fixture", "fixture_setup", SystemExit("git failed"), 1),
+            ("adopt_skills", "adoption", RuntimeError("adoption failed"), 1),
+            ("run_codex", "agent_execution", KeyboardInterrupt(), 130),
+        ):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as tmp:
+                self.out_dir = Path(tmp)
+                with mock.patch.object(forward_test, "collect_provenance", return_value={"source_commit": "test"}), mock.patch.object(
+                    forward_test, "adopt_skills"
+                ), mock.patch.object(forward_test, function, side_effect=error):
+                    self.assertEqual(self.invoke_main(), code)
+                summary = self.latest_run_summary()
+                self.assertEqual(summary["phase"], phase)
+                self.assertEqual(summary["failure"]["type"], type(error).__name__)
+                self.assertIsNone(summary["returncode"])
+                self.assertIsNone(summary["clean_worktree"])
+                self.assertFalse(summary["postcheck_completed"])
+                self.assertEqual(summary["execution_status"], "interrupted" if code == 130 else "error")
+
+    def test_postcheck_failure_preserves_agent_result_and_provenance(self) -> None:
+        def agent(case, fixture, run_dir, command, timeout):
+            transcript = run_dir / "transcript.jsonl"
+            transcript.write_text("agent evidence\n")
+            return forward_test.RunResult(0, transcript, "report", None, True, [], 0)
+
+        with mock.patch.object(forward_test, "collect_provenance", return_value={"source_commit": "test"}), mock.patch.object(
+            forward_test, "adopt_skills"
+        ), mock.patch.object(forward_test, "run_codex", side_effect=agent), mock.patch.object(
+            forward_test, "git_status_lines", side_effect=[[], SystemExit("postcheck failed")]
+        ):
+            self.assertEqual(self.invoke_main(), 1)
+        summary = self.latest_run_summary()
+        self.assertEqual(summary["phase"], "postcheck")
+        self.assertEqual(summary["returncode"], 0)
+        self.assertEqual(summary["provenance"]["source_commit"], "test")
+        self.assertIsNone(summary["clean_worktree"])
+        self.assertTrue(summary["git_before"])
+        transcript = next(self.out_dir.glob("*/run-1/transcript.jsonl"))
+        self.assertEqual(transcript.read_text(), "agent evidence\n")
+
+    def test_batches_started_at_same_timestamp_do_not_overwrite(self) -> None:
+        with mock.patch.object(forward_test, "datetime") as clock, mock.patch.object(
+            forward_test, "collect_provenance", side_effect=RuntimeError("test stop")
+        ):
+            clock.now.return_value.strftime.return_value = "fixed-time"
+            self.assertEqual(self.invoke_main(), 1)
+            self.assertEqual(self.invoke_main(), 1)
+        self.assertEqual(len(list(self.out_dir.glob("*/run-1/summary.json"))), 2)
+
     def test_claude_run_records_transcript_final_report_and_skill_invocation(self) -> None:
         result = self.cli(
             "--agent", "claude",

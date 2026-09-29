@@ -207,7 +207,10 @@ def adoption_is_current(target_repo: Path, profile: str | None) -> bool:
 def skills_installed(target_repo: Path, profile: str) -> bool:
     for root in profile_skill_roots(profile, target_repo):
         for skill_name in SHARED_SKILLS:
-            if (target_repo / root / skill_name / "SKILL.md").exists():
+            if (
+                (target_repo / root / skill_name / "SKILL.md").is_file()
+                or (target_repo / sync_base_path(f"{root}/{skill_name}")).is_dir()
+            ):
                 return True
     return False
 

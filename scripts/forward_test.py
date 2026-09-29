@@ -29,6 +29,7 @@ import stat
 import subprocess
 import sys
 import time
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -160,7 +161,7 @@ AGENT_PROFILES = {"claude": "claude", "codex": "codex"}
 
 @dataclass
 class RunResult:
-    returncode: int
+    returncode: int | None
     transcript_path: Path
     final_report: str
     skill_invocations: list[dict[str, str]] | None
@@ -171,6 +172,24 @@ class RunResult:
     git_before: dict[str, str] = field(default_factory=dict)
     git_after: dict[str, str] = field(default_factory=dict)
     provenance: dict = field(default_factory=dict)
+
+
+
+@dataclass
+class RunProgress:
+    run_dir: Path
+    agent: str
+    case: ForwardTestCase
+    result: RunResult
+    phase: str = "provenance"
+    provenance: dict = field(default_factory=dict)
+
+    def checkpoint(self, phase: str, result: RunResult | None = None) -> None:
+        self.phase = phase
+        if result is not None:
+            self.result = result
+        self.result.provenance = self.provenance
+        write_summary(self.run_dir, self.agent, self.case, self.result, phase=phase)
 
 
 def positive_int(value: str) -> int:
@@ -504,13 +523,23 @@ def do_run(
     codex_cmd: list[str],
     timeout: int,
     model: str | None = None,
+    progress: RunProgress | None = None,
 ) -> RunResult:
+    if progress:
+        progress.checkpoint("fixture_setup")
     fixture_dir = run_dir / "fixture"
     build_fixture(case, fixture_dir)
+    if progress:
+        progress.checkpoint("adoption")
     adopt_skills(fixture_dir, profile, shared_url)
+    if progress:
+        progress.checkpoint("baseline")
     baseline = git_status_lines(fixture_dir)
     baseline_files = snapshot_worktree(fixture_dir)
     before_git = git_evidence(fixture_dir)
+    if progress:
+        progress.result.git_before = before_git
+        progress.checkpoint("agent_execution")
 
     if agent == "claude":
         result = run_claude(case, fixture_dir, run_dir, claude_cmd, timeout, **({"model": model} if model else {}))
@@ -519,6 +548,9 @@ def do_run(
     else:
         raise SystemExit(f"Unsupported agent: {agent}")
 
+    result.git_before = before_git
+    if progress:
+        progress.checkpoint("postcheck", result)
     after = git_status_lines(fixture_dir)
     new_paths = [line for line in after if line not in baseline]
     after_files = snapshot_worktree(fixture_dir)
@@ -533,30 +565,44 @@ def do_run(
     return result
 
 
-def write_summary(run_dir: Path, agent: str, case: ForwardTestCase, result: RunResult) -> None:
+def write_summary(
+    run_dir: Path, agent: str, case: ForwardTestCase, result: RunResult,
+    *, phase: str = "complete", failure: dict | None = None,
+) -> None:
     summary = {
-        "schema_version": 2,
-        "execution_status": "timeout" if result.returncode == 124 else "error" if result.returncode else "completed",
+        "schema_version": 3,
+        "phase": phase,
+        "failure": failure,
+        "execution_status": (
+            "interrupted" if failure and failure["type"] == "KeyboardInterrupt"
+            else "error" if failure else "running" if phase != "complete"
+            else "timeout" if result.returncode == 124
+            else "error" if result.returncode else "completed"
+        ),
         "behavioral_verdict": "not_evaluated",
         "provenance": result.provenance,
         "git_before": result.git_before,
         "git_after": result.git_after,
-        "head_changed": result.git_before.get("head") != result.git_after.get("head"),
-        "index_changed": result.git_before.get("index_sha256") != result.git_after.get("index_sha256"),
+        "head_changed": (result.git_before.get("head") != result.git_after.get("head")) if result.git_before and result.git_after else None,
+        "index_changed": (result.git_before.get("index_sha256") != result.git_after.get("index_sha256")) if result.git_before and result.git_after else None,
         "agent": agent,
         "case": case.name,
         "prompt": case.prompt,
         "returncode": result.returncode,
         "duration_seconds": result.duration_seconds,
-        "clean_worktree": result.clean,
+        "clean_worktree": result.clean if phase == "complete" else None,
+        "postcheck_completed": phase == "complete",
         "new_paths_since_adoption": result.new_paths,
         "changed_paths_since_adoption": result.changed_paths,
         "skill_invocations": result.skill_invocations,
         "transcript": str(result.transcript_path.relative_to(run_dir)),
     }
-    (run_dir / "summary.json").write_text(
+    destination = run_dir / "summary.json"
+    temporary = run_dir / "summary.json.tmp"
+    temporary.write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    temporary.replace(destination)
 
 
 def main() -> int:
@@ -565,8 +611,8 @@ def main() -> int:
     profile = args.profile or AGENT_PROFILES[args.agent]
     out_root = Path(args.out_dir).expanduser().resolve()
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    batch_dir = out_root / f"{args.case}_{args.agent}_{timestamp}"
-    batch_dir.mkdir(parents=True, exist_ok=True)
+    out_root.mkdir(parents=True, exist_ok=True)
+    batch_dir = Path(tempfile.mkdtemp(prefix=f"{args.case}_{args.agent}_{timestamp}_", dir=out_root))
     # posix=False: keeps backslashes literal, so a Windows path passed as an
     # override (e.g. in tests) isn't mangled the way POSIX-mode shlex would.
     claude_cmd = shlex.split(args.claude_bin, posix=False)
@@ -577,21 +623,29 @@ def main() -> int:
         run_dir = batch_dir / f"run-{index}"
         run_dir.mkdir(parents=True, exist_ok=True)
         print(f"[{index}/{args.runs}] running {args.agent} against case '{args.case}' ...")
-        provenance = collect_provenance(
-            args.agent, claude_cmd if args.agent == "claude" else codex_cmd, run_dir, args.model
+        progress = RunProgress(
+            run_dir, args.agent, case,
+            RunResult(None, run_dir / "transcript.jsonl", "", None, False, [], 0),
         )
-        result = do_run(
-            case,
-            args.agent,
-            profile,
-            args.shared_url,
-            run_dir,
-            claude_cmd,
-            codex_cmd,
-            args.timeout,
-            model=args.model,
-        )
-        result.provenance = provenance
+        progress.checkpoint("provenance")
+        try:
+            progress.provenance = collect_provenance(
+                args.agent, claude_cmd if args.agent == "claude" else codex_cmd, run_dir, args.model
+            )
+            result = do_run(
+                case, args.agent, profile, args.shared_url, run_dir,
+                claude_cmd, codex_cmd, args.timeout, model=args.model, progress=progress,
+            )
+            result.provenance = progress.provenance
+        except (Exception, SystemExit, KeyboardInterrupt) as exc:
+            # Persist partial evidence even when setup or post-run inspection fails.
+            # Do not label an unperformed cleanliness check as success or failure.
+            write_summary(
+                run_dir, args.agent, case, progress.result, phase=progress.phase,
+                failure={"type": type(exc).__name__, "message": str(exc)},
+            )
+            print(f"Run failed during {progress.phase}: {exc}", file=sys.stderr)
+            return 130 if isinstance(exc, KeyboardInterrupt) else 1
         write_summary(run_dir, args.agent, case, result)
         results.append(result)
         print(

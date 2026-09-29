@@ -448,19 +448,36 @@ CLI. Omit it to keep the CLI default. The summary records the requested value;
 `effective_model` remains null because a default or resolved model alias cannot
 be established from a request alone.
 
-Summary schema version 2 adds:
+Summary schema version 3 retains the evidence introduced in version 2:
 
 - `provenance`: OS, Python version, CLI version output, execution mode, source
   commit, dirty-source flag, and a hash of the rules, templates, skills, and
   scripts used for the run.
 - `git_before` / `git_after`: HEAD and index fingerprints, plus `head_changed`
   and `index_changed`. A commit with no file-content difference is observable.
-- `execution_status`: `completed`, `error`, or `timeout`, describing process
-  exit only. A completed process may have produced only a plan or a blocked
-  response; it is not evidence of task completion.
+- `execution_status`: `running`, `completed`, `error`, `timeout`, or
+  `interrupted`, describing harness/process execution. A completed process may
+  have produced only a plan or a blocked response; it is not evidence of task
+  completion.
 - `behavioral_verdict`: `not_evaluated`. Skill selection, successful task
   completion, justified scope, and plan-only responses still need transcript
   review. Permission mode is recorded, not treated as proof of behavior.
+
+Version 3 also records `phase`, `failure` (exception type and message), and
+`postcheck_completed`. The harness atomically replaces `summary.json` before
+provenance collection, fixture setup, adoption, baseline capture, agent
+execution, and postcheck. Setup failures and postcheck failures preserve the
+last available evidence; Ctrl+C records an interruption and exits with 130.
+An unstarted agent has a null `returncode`; unfinished checks have null
+`clean_worktree`, and HEAD/index comparisons are null without both snapshots.
+A postcheck failure can therefore have agent return code 0 while the overall
+execution status is `error`.
+
+Each batch uses a unique directory even when started in the same second.
+Caught harness failures stop the batch and exit nonzero regardless of
+`--strict`; completed earlier runs remain available. Forced termination may
+leave only the last `running` checkpoint, and filesystem failures can prevent
+new records from being saved. These records do not grade model behavior.
 
 `--strict` exits nonzero for process failures/timeouts and repository mutations
 in non-commit cases. Commit cases permit changes but still need manual review

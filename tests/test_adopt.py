@@ -1448,6 +1448,38 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         )
         self.assertIsNone(adopt.recover_placeholder("anything", template, "{{ABSENT}}"))
 
+    def test_remove_preserves_unowned_skill_even_with_force(self) -> None:
+        skill = self.repo / ".agents/skills/investigate-bug/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("User-owned skill\n", encoding="utf-8")
+        for extra in ([], ["--force"]):
+            with self.subTest(extra=extra):
+                result = self.cli("--profile", "codex", "--skills", "--remove", *extra)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(skill.read_text(), "User-owned skill\n")
+
+    def test_remove_refuses_whole_plan_when_skill_baseline_is_missing(self) -> None:
+        self.assert_cli_ok(self.cli("--profile", "codex", "--skills"))
+        relative = ".agents/skills/investigate-bug/SKILL.md"
+        (self.repo / ".agent-rules/bases" / relative).unlink()
+        entrypoint = (self.repo / "AGENTS.md").read_bytes()
+        result = self.cli("--profile", "codex", "--remove", "--force")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertTrue((self.repo / relative).is_file())
+        self.assertEqual((self.repo / "AGENTS.md").read_bytes(), entrypoint)
+
+    def test_check_and_sync_remember_completely_deleted_skills(self) -> None:
+        self.assert_cli_ok(self.cli("--profile", "codex", "--skills"))
+        skill_root = self.repo / ".agents/skills"
+        expected = [p.relative_to(self.repo) for p in skill_root.rglob("*") if p.is_file()]
+        shutil.rmtree(skill_root)
+        check = self.cli("--profile", "codex", "--check")
+        self.assertEqual(check.returncode, 1, check.stdout + check.stderr)
+        self.assertIn("but missing", check.stdout)
+        self.assert_cli_ok(self.cli("--profile", "codex", "--sync"))
+        for relative in expected:
+            self.assertTrue((self.repo / relative).is_file(), str(relative))
+
     def test_remove_deletes_generated_files_and_backs_them_up(self) -> None:
         (self.repo / ".gitignore").write_text("build/\n", encoding="utf-8")
         self.assertEqual(
