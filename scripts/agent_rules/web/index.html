@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>agent-rules · 배포 관리</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="mark">&gt;_</span><strong>agent-rules</strong
+        ><span class="divider"></span>배포 관리
+      </div>
+      <span class="badge">로컬 실행</span>
+    </header>
+    <main>
+      <div class="workspace">
+        <label for="workspace">작업 경로</label
+        ><input id="workspace" readonly /><button id="discover">
+          저장소 탐색
+        </button>
+      </div>
+      <p class="hint">
+        선택한 저장소만 처리합니다. 탐색 깊이 3 · 작업 경로는 서버 시작 시
+        지정합니다.
+      </p>
+      <div class="layout">
+        <section class="panel">
+          <div class="heading">
+            <h1>저장소</h1>
+            <span id="count">0개</span>
+          </div>
+          <input
+            id="search"
+            placeholder="저장소 이름으로 검색…"
+            aria-label="저장소 검색"
+          />
+          <div id="repositories" class="repositories"></div>
+          <p id="empty" class="empty">저장소 탐색을 눌러 시작하세요.</p>
+        </section>
+        <section class="panel">
+          <div class="heading">
+            <h2 id="detail-title">배포 설정</h2>
+            <span id="selected">0개 선택</span>
+          </div>
+          <div class="settings">
+            <label
+              >에이전트<select id="profile">
+                <option value="auto">저장소별 자동 (신규: Codex)</option>
+                <option value="codex">Codex</option>
+                <option value="claude">Claude</option>
+                <option value="gemini">Gemini</option>
+                <option value="all">전체</option>
+              </select></label
+            ><label
+              >작업<select id="operation">
+                <option value="auto">자동 (신규 설치 / 기존 동기화)</option>
+                <option value="install">설치</option>
+                <option value="sync">동기화</option>
+              </select></label
+            ><label
+              >공개 범위<select id="visibility">
+                <option value="local">로컬 전용</option>
+                <option value="tracked">Git 추적 가능</option>
+              </select></label
+            ><label class="checkbox"
+              ><input id="skills" type="checkbox" checked />공유 스킬
+              설치</label
+            >
+          </div>
+          <p class="hint">
+            설정은 선택한 저장소에 공통 적용됩니다. 기존 스킬은 동기화 시
+            유지됩니다. Gemini에는 공유 스킬이 없습니다.
+          </p>
+          <h2 class="preview-heading">변경 미리보기</h2>
+          <div id="preview" class="preview">
+            <p class="empty">대상을 선택하고 미리보기를 실행하세요.</p>
+          </div>
+        </section>
+      </div>
+      <div class="actions">
+        <span id="message" role="status" aria-live="polite">준비됨</span
+        ><button id="check">상태 확인</button
+        ><button id="preview-button">변경 미리보기</button
+        ><button id="apply" class="primary" disabled>선택한 변경 적용</button>
+      </div>
+      <section class="panel logs">
+        <h2>실행 로그</h2>
+        <pre id="log" tabindex="0">아직 실행한 작업이 없습니다.</pre>
+      </section>
+      <footer>
+        agent-rules · 파일 적용 후 커밋과 푸시는 별도로 진행합니다.
+      </footer>
+    </main>
+  </body>
+</html>
