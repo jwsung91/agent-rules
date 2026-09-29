@@ -42,7 +42,7 @@ def adoption_paths(target_repo: Path, profile: str, *, skills: bool) -> list[str
         paths.append(name)
         paths.append(sync_base_path(name))
     if skills:
-        for _source, relative_path in shared_skill_file_specs(profile):
+        for _source, relative_path in shared_skill_file_specs(profile, target_repo):
             paths.append(relative_path)
             paths.append(sync_base_path(relative_path))
     return paths

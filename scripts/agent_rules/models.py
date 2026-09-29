@@ -15,6 +15,7 @@ class RenderContext:
     source_commit: str
     generated_at: str
     install_skills: bool = False
+    codex_skill_root: str = ".agents/skills"
 
 
 @dataclass
