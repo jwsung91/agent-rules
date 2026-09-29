@@ -41,81 +41,68 @@ Any supported agent may be used in either:
 
 Actual agent assignment should be decided per task. This repository intentionally avoids environment-specific assumptions.
 
-## Quick Start: Use These Rules in a Target Repository
+## Deploy Rules and Skills
 
-The recommended adoption model is **lightweight local adoption**:
+Run these commands from your `agent-rules` checkout. The deployment tools do
+not commit or push target repositories.
 
-1. Keep this repository as the shared source of truth.
-2. Add a root-level agent entrypoint to each target repository using the adoption script. The script automatically adds the entrypoint to `.gitignore` — agent files are local-only and not committed.
-3. Add repository-specific boundaries and validation commands.
-4. Explicitly tell the coding agent to follow the entrypoint file when starting a task.
+| Tool | Responsibility |
+| --- | --- |
+| [`scripts/generate_batch_list.py`](scripts/generate_batch_list.py) | Discover repositories and write a candidate batch list |
+| [`scripts/adopt.py`](scripts/adopt.py) | Install, sync, check, or remove an adoption; supports batch install, sync, and check |
+| [`scripts/agent_rules/`](scripts/agent_rules/) | Internal implementation; keep using the public scripts above |
 
-This works better than linking to this repository only, because some agent environments may not automatically open external links or may lose remote context during a task.
-
-### Scripted adoption
-
-Use `scripts/adopt.py` to create or manage agent entrypoints. Choose the profile for the agent used in that repository:
+### One repository
 
 ```bash
-python scripts/adopt.py /path/to/repo --profile codex   # AGENTS.md only
-python scripts/adopt.py /path/to/repo --profile claude  # CLAUDE.md only
-python scripts/adopt.py /path/to/repo --profile gemini  # GEMINI.md only
-python scripts/adopt.py /path/to/repo --profile all     # all three files
+# Preview the Codex entrypoint and four shared skills.
+python scripts/adopt.py /path/to/repo --profile codex --skills --dry-run
+# Apply after reviewing the preview.
+python scripts/adopt.py /path/to/repo --profile codex --skills
+# Check the installation.
+python scripts/adopt.py /path/to/repo --check --problems-only
 ```
 
-Preview before applying:
+Use `claude` for Claude, `gemini` for Gemini, or `all` when all three are used.
+Shared skills are available for Codex and Claude. Generated files default to
+local visibility; the tool updates the target's `.gitignore`. Add the target's
+own boundaries and confirmed validation commands after installation.
+
+### Multiple repositories
 
 ```bash
-python scripts/adopt.py /path/to/repo --profile claude --dry-run
+python scripts/generate_batch_list.py /path/to/workspace --output /path/to/repos.toml
+# Edit the list: keep intended targets, exclude agent-rules itself and unrelated repositories.
+python scripts/adopt.py --batch /path/to/repos.toml --profile codex --skills --dry-run
+python scripts/adopt.py --batch /path/to/repos.toml --profile codex --skills
+python scripts/adopt.py --batch /path/to/repos.toml --check --problems-only
 ```
 
-Remove an adoption (everything it deletes is backed up first):
+Discovery writes a list; it does not install anything. Per-repository profiles
+in the list override the command-line profile. TOML lists require Python 3.11+;
+use a `.txt` list on Python 3.10. Keep machine-specific lists outside the shared
+source checkout.
+
+### Update installed repositories
+
+After updating the `agent-rules` source, preview and sync the reviewed list:
 
 ```bash
-python scripts/adopt.py /path/to/repo --remove --dry-run
-python scripts/adopt.py /path/to/repo --remove
+python scripts/adopt.py --batch /path/to/repos.toml --sync --dry-run
+python scripts/adopt.py --batch /path/to/repos.toml --sync
+python scripts/adopt.py --batch /path/to/repos.toml --check --problems-only
 ```
 
-Check and update an existing adoption:
+Sync detects existing profiles and skills and preserves non-conflicting local
+edits. To add skills to an entrypoint-only installation, use `--sync --skills`.
+Merging changes into this repository does not automatically deploy them elsewhere.
 
-```bash
-# Health check (exit 0 clean, 1 on FAIL, 2 on WARN-only)
-python scripts/adopt.py /path/to/repo --check
+See the [deployment guide](docs/scripted-adoption.md) for tracked visibility,
+offline copies, conflicts, backups, removal, and legacy skill paths. Use the
+[manual adoption guide](docs/lightweight-adoption.md) when editing entrypoints
+without the tool.
 
-# Sync after updating agent-rules (update or merge automatically)
-python scripts/adopt.py /path/to/repo --sync
-python scripts/adopt.py /path/to/repo --sync --dry-run
-```
-
-Apply to multiple repositories at once using a batch file. Build one by scanning a parent folder for Git repos with `scripts/generate_batch_list.py`:
-
-```bash
-python scripts/generate_batch_list.py /path/to/workspace --output repos.toml
-```
-
-Or write it by hand:
-
-```toml
-# repos.toml
-[[repos]]
-path = "/path/to/api"
-profile = "claude"
-
-[[repos]]
-path = "/path/to/worker"
-profile = "codex"
-```
-
-```bash
-python scripts/adopt.py --batch repos.toml --dry-run
-python scripts/adopt.py --batch repos.toml
-python scripts/adopt.py --batch repos.toml --sync
-python scripts/adopt.py --batch repos.toml --check
-```
-
-See `docs/scripted-adoption.md` for `--sync`, `--force`, `--local-copy`, `.gitignore` collision handling, custom `--boundary`, custom `--validation`, and `generate_batch_list.py` details.
-
-### 1. Start tasks with an explicit mode and instruction source
+## Start Tasks with the Installed Rules
 
 Primary implementation task:
 
@@ -150,30 +137,6 @@ Follow AGENTS.md and use Conventional Commits.
 Before committing, check the diff and run lightweight validation that is relevant to the changed files.
 Do not include unrelated changes.
 ```
-
-### 2. Keep target repositories updated
-
-After pulling a new version of `agent-rules`, sync adopted repositories:
-
-```bash
-# Single repository
-python scripts/adopt.py /path/to/repo --sync
-
-# All repositories at once
-python scripts/adopt.py --batch repos.toml --sync
-```
-
-## Recommended Usage
-
-For most repositories:
-
-1. Add a root-level `AGENTS.md` using the lightweight template or the adoption script.
-2. Add repository-specific validation commands and boundaries.
-3. Explicitly mention `AGENTS.md` and the desired mode when assigning agent tasks.
-4. Use the templates in `templates/` when preparing task instructions or pull request review requests.
-5. Use `rules/commit-guidelines.md` when preparing commits or instructing agents to commit changes.
-
-Use `.agents/` namespacing only when local rule or template files are needed. Avoid adding root-level `rules/`, `skills/`, scripts, or automation unless the target repository explicitly needs them.
 
 ## Task Continuity and Completion
 
