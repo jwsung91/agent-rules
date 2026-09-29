@@ -183,6 +183,19 @@ next step. Short follow-ups continue the agreed work; status questions do not
 cancel it. Explicitly requested additional work stays in separate stages rather
 than being silently deferred.
 
+Implementation choices follow a bounded reuse-first sequence: existing code,
+standard library, native platform features, installed dependencies, then new
+code that meets the agreed requirements. See
+[`rules/engineering-principles.md`](rules/engineering-principles.md).
+This guidance is informed by [Ponytail](https://github.com/DietrichGebert/ponytail)
+and expressed in this repository's own rules; it does not install Ponytail or
+activate a persistent mode. Requirements, compatibility, safety, and appropriate
+validation take precedence over line-count reduction.
+
+Ask `review-change` to check a scoped change for over-engineering when needed.
+It reports evidence-backed simplification suggestions separately from defects
+and does not replace correctness review or modify code.
+
 Performance investigations should set a baseline, acceptance criteria, and a
 bounded experiment budget before measuring. PR and release work must follow the
 destination's submission procedure and preserve signing, hooks, and checks.

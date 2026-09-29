@@ -1,6 +1,6 @@
 ---
 name: review-change
-description: Review code and documentation changes for actionable defects, regressions, security or compatibility risks, and validation gaps without modifying files. Use when asked to review a working tree, diff, commit, branch, pull request, patch, or completed implementation; verify claims against repository instructions and relevant code, prioritize findings by severity, and report file-and-line evidence. Do not use for requests to implement or fix changes unless review is the requested first phase.
+description: Review code and documentation changes for actionable defects, regressions, security or compatibility risks, and validation gaps without modifying files. Use when asked to review a working tree, diff, commit, branch, pull request, patch, or completed implementation; verify claims against repository instructions and relevant code, prioritize findings by severity, and report file-and-line evidence. Also use when asked to review a change for over-engineering or unnecessary complexity. Do not use for requests to implement or fix changes unless review is the requested first phase.
 ---
 
 # Review Change
@@ -16,6 +16,27 @@ Review the requested change as an evidence-backed reviewer. Focus on problems in
 5. Verify each candidate finding against concrete code or test evidence. Exclude speculation, unchanged pre-existing problems, and purely stylistic preferences unless they create a material maintenance or correctness risk.
 6. Run the narrowest useful read-only checks when practical. Do not modify files, dependencies, remote state, or the pull request unless the user separately authorizes changes.
 7. Within the repository-required report structure, place actionable findings at the earliest permitted position and order them by severity. If no actionable findings remain, say so explicitly and describe any validation gaps or residual risks.
+
+## Optional Complexity Review
+
+When the user asks whether the scoped change is over-engineered or could be
+simpler, also inspect duplicate implementations, unnecessary dependencies,
+speculative extension points, and abstractions without a demonstrated purpose.
+Keep ordinary reviews focused on actionable defects; do not add a complexity
+pass to every review or expand a diff review into a repository-wide audit.
+
+For each simplification suggestion, cite the code and an existing alternative,
+explain the maintenance benefit, and check that required behavior, compatibility,
+and validation survive. A single caller or implementation alone does not prove
+an abstraction is unnecessary. Preserve purposeful boundaries, security checks,
+error handling, and tests; fewer lines alone are not a benefit.
+
+Separate optional suggestions from severity-ranked defects and leave them
+unrated unless a concrete defect is demonstrated. Complexity review complements
+correctness and security review; it never establishes that a change is safe to
+merge. If the user requests only complexity review, state that coverage limit.
+Propose changes without applying them, and do not invent suggestions when the
+scoped code has no supported simplification opportunity.
 
 ## Severity
 

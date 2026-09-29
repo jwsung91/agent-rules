@@ -24,6 +24,8 @@ Use the mode requested by the task. Follow `rules/agent-collaboration.md` when m
 - Never bypass commit signing, hooks, or required checks merely to make progress. Use an authorized working path or report the blocker; bypass requires an explicit user request.
 - Do not refactor unrelated files, or rename public APIs, files, directories, or user-facing concepts, unless explicitly requested.
 - Prefer simple, explicit, maintainable changes.
+- After understanding the problem, prefer existing code, standard libraries, native platform features, and installed dependencies before new code, when they satisfy the required behavior and project conventions.
+- Simplify implementation without dropping agreed requirements, compatibility, safety controls, or risk-appropriate validation; readable code matters more than minimum line counts.
 - Preserve existing structure, naming, and documentation tone.
 - Avoid new dependencies unless they have a clear, task-specific justification.
 - Follow repository-local formatter, linter, test, PR template, and verification conventions.
