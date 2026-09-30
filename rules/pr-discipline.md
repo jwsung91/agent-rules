@@ -29,6 +29,22 @@ Completed implementation and review reports should include the items below. Simp
 - Not Included
 - Follow-up
 
+## Reporting Plan Progress
+
+Start a multi-step result report with a concise status against the agreed plan,
+inside Summary when the required format includes that heading. Include completed
+stages out of the total, current work, remaining requested work, and blockers.
+Use the same stage definitions throughout the task; explain scope changes.
+Do not equate a completed implementation or opened PR with a completed request
+that also includes merge or deployment. Small tasks need only one sentence.
+Follow the destination PR template; do not add conversational progress tracking
+to PR descriptions unless relevant to reviewer-visible readiness or limitations.
+
+Example for a task that includes merging:
+
+> Plan progress: 3 of 5 stages complete (implementation, local validation, PR).
+> Current: CI checks. Remaining: merge after checks pass. Blockers: none.
+
 ## Merge and Release Completion
 
 - Confirm that publication or merge is authorized for the intended target.

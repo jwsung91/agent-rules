@@ -77,8 +77,19 @@ Before sending the response, verify that these Markdown headings appear verbatim
 4. `## Not Included`
 5. `## Follow-up`
 
-- **Summary**: what changed and why
+- **Summary**: what changed and why; begin with progress against the agreed plan
 - **Changes**: files and behaviors affected
 - **Validation**: what was run and results
 - **Not Included**: what was intentionally left out
 - **Follow-up**: known gaps or deferred work
+
+For multi-step work, report completed stages out of the agreed total, the current
+stage, remaining requested work, and blockers (or none) near the start of the
+report, within Summary when that heading is required. Use meaningful stages and
+completion evidence; do not invent percentages or split stages to inflate progress.
+Stage counts describe scope completion, not elapsed time or effort. Include
+requested PR, merge, or deployment steps before calling the whole task complete.
+When additional requests change the plan, state the change and update the total;
+do not silently drop unfinished work or count optional suggestions as requested work.
+For small tasks, one sentence stating completion and remaining work is enough.
+Progress reporting does not create a new approval gate or authorize extra actions.

@@ -10,6 +10,9 @@ record when possible; keep credentials and unrelated personal data out.
 - Confirmed constraints and decisions:
 - Hypotheses still unverified:
 - Latest evidence (command, result, commit or artifact):
+- Agreed stages / completion criteria / status per stage:
+- Progress against plan (completed / total; current stage; blockers):
+- Plan changes since the last checkpoint and reason:
 - Remaining requested work and next step:
 - Experiment budget / stop conditions, if applicable:
 
