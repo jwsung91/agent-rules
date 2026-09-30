@@ -29,6 +29,12 @@ Primary Mode / Review Mode
 
 -
 
+## Plan (multi-step work only)
+
+- Meaningful stages and completion criteria within the requested scope:
+- Include PR, merge, or deployment only when requested.
+- Update the plan explicitly when the user changes scope.
+
 ## Test Expectations
 
 -
@@ -45,6 +51,7 @@ Primary Mode / Review Mode
 
 ## Expected Output
 
+- Progress against the agreed plan: completed / total stages, current stage, remaining requested work, and blockers; one sentence for small tasks
 - Summary of changes
 - Files changed
 - Validation result

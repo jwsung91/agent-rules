@@ -44,3 +44,22 @@ When pausing, report:
   corrections. Do not store credentials or unrelated personal information.
 - On resumption, verify the checkpoint against the live worktree and remote
   state where relevant. A checkpoint is context, not new authorization.
+
+## Progress Against the Plan
+
+- For multi-step work, retain a short list of meaningful stages and their
+  completion criteria within the agreed scope. Do not require a separate plan
+  file or an approval round for routine work.
+- Track stages as completed, in progress, pending, or blocked. Completion needs
+  evidence appropriate to the stage; starting a command is not passing a check.
+- At meaningful milestones and in result reports, state completed stages out of
+  the agreed total, the current stage, remaining requested work, and blockers.
+  Counts measure completed scope, not time or effort; avoid unsupported percentages.
+- Preserve the original objective across follow-ups. When the user adds, removes,
+  or defers requested work, explain the plan change and update the denominator.
+  Do not mark deferred or blocked work complete or subdivide stages to inflate progress.
+- Distinguish implementation completion from the requested outcome. Track PR,
+  CI, merge, or deployment stages when requested; optional recommendations are
+  not unfinished requested work and must not inflate the plan.
+- Keep small-task reporting to one sentence. A progress report is not a pause or
+  a request for permission; continue already-authorized work.
