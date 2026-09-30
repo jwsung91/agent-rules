@@ -184,7 +184,13 @@ class DeploymentService:
             raise GuiError("지원하지 않는 에이전트 또는 공개 범위입니다.")
 
     def preview(
-        self, path: str, profile: str, visibility: str, skills: bool, operation: str
+        self,
+        path: str,
+        profile: str,
+        visibility: str,
+        skills: bool,
+        operation: str,
+        boundaries: list[str] | None = None,
     ) -> dict:
         self.options(profile, visibility)
         if operation not in {"install", "sync"}:
@@ -194,7 +200,7 @@ class DeploymentService:
         args = argparse.Namespace(
             shared_url=self.shared_url,
             profile=profile,
-            boundary=[],
+            boundary=boundaries or [],
             validation=[],
             sync=operation == "sync",
             force=False,

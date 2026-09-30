@@ -148,3 +148,138 @@ def test_write_failure_reports_partial_progress(gui):
     assert response.json()["code"] == 1
     assert "disk full" in response.json()["log"]
     assert client.post("/api/apply", json={"token": plan["token"]}).status_code == 400
+
+
+def test_reviewed_boundaries_preview_apply_and_stale_guard(gui):
+    client, _, repo = gui
+    proposal = "Keep public interfaces backward compatible."
+    data = {**selection(repo), "boundaries": [proposal]}
+    plan = client.post("/api/preview", json=data).json()
+    assert plan["code"] == 0
+    assert any(proposal in f["diff"] for f in plan["files"])
+    assert not (repo / "AGENTS.md").exists()
+    assert client.post("/api/apply", json={"token": plan["token"]}).json()["code"] == 0
+    assert proposal in (repo / "AGENTS.md").read_text()
+    data.update(operation="sync", boundaries=["Preserve migration history."])
+    updated = client.post("/api/preview", json=data).json()
+    assert updated["code"] == 0
+    (repo / "AGENTS.md").write_text("user edit")
+    assert (
+        client.post("/api/apply", json={"token": updated["token"]}).status_code == 400
+    )
+
+
+def test_ai_context_and_mocked_proposal_do_not_write(gui, tmp_path):
+    client, _, repo = gui
+    memory = repo / "MEMORY.md"
+    memory.write_text("Previous decision: retain API compatibility.")
+    context = client.post("/api/ai/context", json={"path": str(repo)})
+    assert str(memory) in context.json()["files"]
+    with mock.patch(
+        "agent_rules.gui_ai.analyze",
+        return_value={
+            "rules": [],
+            "questions": [],
+            "memories_used": [],
+            "memory_files": [],
+        },
+    ):
+        response = client.post("/api/ai/analyze", json={"path": str(repo)})
+    assert response.status_code == 200
+    assert not (repo / "AGENTS.md").exists()
+    bad = client.post(
+        "/api/ai/context", json={"path": str(repo), "memories": ["relative.md"]}
+    )
+    assert bad.status_code == 400
+    assert client.post("/api/ai/analyze", json={"path": str(ROOT)}).status_code == 400
+
+
+def test_ai_output_validation_and_read_only_invocation(gui):
+    from agent_rules.gui_ai import analyze
+
+    _, _, repo = gui
+    response = {
+        "rules": [{"text": "Keep API stable.", "evidence": "README.md"}],
+        "questions": [],
+        "memories_used": [],
+    }
+
+    def run(command, **kwargs):
+        assert command[:5] == ["codex", "-a", "never", "exec", "--sandbox"]
+        assert command[5] == "read-only"
+        assert kwargs["cwd"] == repo
+        Path(command[command.index("-o") + 1]).write_text(
+            __import__("json").dumps(response)
+        )
+        process = mock.Mock(returncode=0)
+        process.communicate.return_value = (None, None)
+        return process
+
+    with (
+        mock.patch(
+            "agent_rules.gui_ai.connection",
+            return_value={"ready": True, "path": "codex"},
+        ),
+        mock.patch("agent_rules.gui_ai.subprocess.Popen", side_effect=run),
+    ):
+        assert analyze(repo, "", [])["rules"][0]["text"] == "Keep API stable."
+        response["memories_used"] = ["unknown.md"]
+        with pytest.raises(ValueError, match="메모리"):
+            analyze(repo, "", [])
+
+
+def test_ai_timeout_stops_process_group(gui):
+    import os
+    from agent_rules.gui_ai import analyze
+
+    _, _, repo = gui
+    process = mock.Mock(pid=12345)
+    process.communicate.side_effect = [
+        subprocess.TimeoutExpired("codex", 300),
+        (None, None),
+    ]
+    with (
+        mock.patch(
+            "agent_rules.gui_ai.connection",
+            return_value={"ready": True, "path": "codex"},
+        ),
+        mock.patch("agent_rules.gui_ai.subprocess.Popen", return_value=process),
+        mock.patch("agent_rules.gui_ai.subprocess.run") as run,
+        mock.patch("agent_rules.gui_ai.os.killpg", create=True) as killpg,
+    ):
+        with pytest.raises(ValueError, match="5분"):
+            analyze(repo, "", [])
+        process.kill.assert_called_once()
+        if os.name == "nt":
+            run.assert_called_once()
+        else:
+            killpg.assert_called_once()
+
+
+def test_home_memories_respect_custom_home_and_project(gui, tmp_path, monkeypatch):
+    from agent_rules.gui_ai import home_memories
+
+    _, _, repo = gui
+    home = tmp_path / "codex-home"
+    memories = home / "memories"
+    memories.mkdir(parents=True)
+    (memories / "sample-decisions.md").write_text("project memory")
+    (memories / "other-project.md").write_text("unrelated")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    result = home_memories(repo)
+    assert result["roots"][0] == str(memories)
+    assert {p["name"]: p["recommended"] for p in result["files"]} == {
+        "other-project.md": False,
+        "sample-decisions.md": True,
+    }
+
+
+def test_ai_models_endpoint(gui):
+    client, _, _ = gui
+    with mock.patch(
+        "agent_rules.gui_ai.models",
+        return_value={"models": [{"model": "test", "name": "Test", "default": True}]},
+    ):
+        response = client.post("/api/ai/models", json={})
+    assert response.status_code == 200
+    assert response.json()["models"][0]["model"] == "test"

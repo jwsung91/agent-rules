@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from .gui_service import DeploymentService, GuiError
@@ -21,6 +21,17 @@ class Selection(BaseModel):
     visibility: Literal["local", "tracked"] = "local"
     skills: bool = True
     operation: Literal["install", "sync"] = "install"
+
+
+class PreviewSelection(Selection):
+    boundaries: list[str] = Field(default_factory=list, max_length=20)
+
+
+class Analysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    model: str = Field(default="", max_length=100)
+    memories: list[str] = Field(default_factory=list, max_length=20)
 
 
 class Approval(BaseModel):
@@ -124,7 +135,7 @@ def create_app(
         )
 
     @app.post("/api/preview")
-    async def preview(selection: Selection):
+    async def preview(selection: PreviewSelection):
         return await execute(
             service.preview,
             selection.path,
@@ -132,7 +143,49 @@ def create_app(
             selection.visibility,
             selection.skills,
             selection.operation,
+            selection.boundaries,
         )
+
+    @app.post("/api/ai/models")
+    async def ai_models():
+        from .gui_ai import models
+
+        try:
+            return await execute(models)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/ai/memories")
+    async def ai_memories(selection: Analysis):
+        from .gui_ai import home_memories
+
+        return await execute(home_memories, service.target(selection.path))
+
+    @app.post("/api/ai/connection")
+    async def ai_connection():
+        from .gui_ai import connection
+
+        return await execute(connection)
+
+    def ai_request(selection: Analysis, inspect_only: bool):
+        from .gui_ai import analyze, context
+
+        repo = service.target(selection.path)
+        service.guard(repo)
+        try:
+            if inspect_only:
+                return {"files": context(repo, selection.memories)["files"]}
+            return analyze(repo, selection.model, selection.memories)
+        except (ValueError, TimeoutError) as exc:
+            raise GuiError(str(exc)) from exc
+
+    @app.post("/api/ai/context")
+    async def ai_context(selection: Analysis):
+        return await execute(ai_request, selection, True)
+
+    @app.post("/api/ai/analyze")
+    async def ai_analyze(selection: Analysis):
+        return await execute(ai_request, selection, False)
 
     @app.post("/api/apply")
     async def apply(approval: Approval):
