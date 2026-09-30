@@ -63,7 +63,10 @@ for one trusted local user, not a public or multi-user service.
 5. Run **변경 미리보기** to inspect files, baselines, `.gitignore` changes, and
    conflicts. Baseline files are included because they will also be written.
 6. **선택한 변경 적용** becomes available only when every selected repository has
-   a valid preview. Results and failures are logged per repository.
+   a valid preview. Successful applies automatically run a health check and show
+   its actual status (including warnings). A failed follow-up check is shown
+   separately from an apply failure; use **상태 확인** to retry. Results and
+   failures are logged per repository.
 
 A preview expires after 15 minutes and can be applied once. Changing the UI
 selection or options discards its preview. The server also rejects a preview
@@ -103,3 +106,46 @@ processes running as the same OS user.
   restrictions, conflicting files, and failure reporting.
 
 Install `requirements-dev.txt` to run the full suite including GUI tests.
+
+## Codex rule proposals
+
+Select one repository and open **AI로 작성**. The dialog initially shows
+the model and proposal action. Connection and memory controls are in a collapsed
+settings section; the editable rules and evidence appear after a proposal.
+Use **변경 미리보기로** to return to the deployment preview. Closing the dialog
+keeps its draft, but changing the repository selection clears it. Closing a
+running analysis does not cancel it.
+The server invokes the local Codex CLI using its saved authentication with
+`--sandbox read-only` and no interactive approvals. Analysis can take up to
+five minutes; other GUI operations wait until it completes. The selected
+repository and supplied memory context are processed by the CLI's configured
+AI service and consume its usage allowance. Closing the tab does not cancel it.
+
+Install and log in to Codex in the server's environment (Linux CLI for WSL).
+Set `--codex /absolute/path/to/codex` or `AGENT_RULES_CODEX` to choose the
+executable. The model dropdown queries the official Codex app-server `model/list` interface
+and retains a CLI-default option. The list is refreshed on page load and can
+be refreshed manually. No fixed model catalog is embedded.
+The GUI never asks for or stores an API key.
+
+Project AGENTS.md, CLAUDE.md, MEMORY.md, `.codex/memories/*.md`,
+`.claude/memory/*.md`, and the matching Claude project auto-memory directory
+are candidates. Additional Markdown absolute paths can be supplied explicitly
+for relevant Codex or Claude memories outside the repository. The home-memory picker automatically scans `$CODEX_HOME/memories` (default
+`~/.codex/memories`) and the matching Claude project memory directory when one
+repository is selected. It preselects Codex filenames matching the repository
+name and Claude project matches; other home files remain optional. This filename
+heuristic is not proof of relevance: review the selected files before analysis.
+Global Codex conversation history is not automatically collected. Missing project memory is normal.
+Paths resolve on the server; Windows memories require WSL-accessible paths
+when the server runs in WSL. The list is limited to 40 files and 200KB total.
+Memory is historical evidence, not authority: proposals must compare it with
+current code and identify unresolved questions and supporting files.
+
+Review the proposal and edit the complete list of project boundaries (one per
+line). Existing boundaries should be retained when still valid. A nonempty
+list replaces that local section through the existing preview/apply workflow;
+a blank list preserves existing rules. AI output is never applied automatically.
+The preview expires and rejects intervening managed-file changes as usual.
+
+Frontend regression tests: `node --test tests/gui_frontend.test.cjs`.

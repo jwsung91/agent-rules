@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import socket
 import threading
@@ -19,6 +20,9 @@ def main() -> int:
         required=True,
         type=Path,
         help="Allowed repository parent folder; discovery depth is three.",
+    )
+    parser.add_argument(
+        "--codex", help="Codex CLI executable path (or AGENT_RULES_CODEX)."
     )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
@@ -40,6 +44,8 @@ def main() -> int:
             1,
             f"Missing GUI dependency: {exc.name}. Run: python -m pip install -r requirements-gui.txt\n",
         )
+    if args.codex:
+        os.environ["AGENT_RULES_CODEX"] = args.codex
     app = create_app(DeploymentService(args.workspace.expanduser()), args.port)
     url = f"http://127.0.0.1:{args.port}"
     # Bind before opening the browser, so an occupied port never opens a
