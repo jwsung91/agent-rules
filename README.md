@@ -23,6 +23,7 @@ Supported agents:
 - `scripts/adopt.py`: Helper script for creating or checking lightweight target-repository adoption files. This path is the stable entry point; it re-exports the implementation.
 - `scripts/agent_rules/`: Implementation modules behind `adopt.py`, split by concern (constants, models, metadata, gitio, source, render, gitignore, planning, checking, applying, batch, cli).
 - `scripts/generate_batch_list.py`: Builds a `repos.toml`/`repos.txt` batch file by scanning a root folder for Git repositories.
+- `docker/`: Start and stop scripts for the Docker GUI and host AI bridge on Linux/WSL.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
