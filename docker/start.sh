@@ -40,6 +40,9 @@ if [[ ! -f "$AGENT_RULES_BRIDGE_TOKEN" ]]; then
   "$PY" scripts/ai_bridge.py --token-file "$AGENT_RULES_BRIDGE_TOKEN" --init-token
 fi
 
+# Deployment works without AI, so a missing CLI only warns.
+AGENT_RULES_VENV="$VENV" docker/check.sh || echo "warning: no host AI CLI is ready; AI requests will fail" >&2
+
 URL="http://127.0.0.1:$AGENT_RULES_PORT"
 docker compose up --build -d
 

@@ -49,7 +49,8 @@ around ownership errors by globally trusting all Git repositories.
 ### Start and stop scripts
 
 `docker/start.sh` performs the steps above: it creates the venv and token on
-first use, starts the GUI, then runs the bridge in the foreground.
+first use, runs `check.sh` (warning only), starts the GUI, then runs the bridge
+in the foreground.
 
 ```bash
 docker/start.sh [--port PORT] /absolute/path/to/repository-parent
