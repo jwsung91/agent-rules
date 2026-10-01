@@ -23,7 +23,12 @@ from .gitignore import add_to_gitignore
 from .gitio import find_repo_root
 from .models import AdoptionPlan
 from .planning import build_plan
-from .source import infer_profile_from_existing, skills_installed, source_repo_root
+from .source import (
+    infer_profile_from_existing,
+    skills_installed,
+    source_repo_root,
+    local_source_head,
+)
 
 
 class GuiError(ValueError):
@@ -62,20 +67,34 @@ class DeploymentService:
             raise GuiError("디렉터리를 선택하세요.")
         return resolved
 
-    def browse(self, path: str) -> dict:
+    def browse(self, path: str, inspect_repositories: bool = True) -> dict:
         directory = self.directory(path or str(self.workspace))
         children = []
         with os.scandir(directory) as entries:
             for entry in entries:
-                if entry.is_dir(follow_symlinks=False):
+                if entry.name != ".git" and entry.is_dir(follow_symlinks=False):
                     children.append(
-                        {"name": entry.name, "path": str(directory / entry.name)}
+                        {
+                            "name": entry.name,
+                            "path": str(directory / entry.name),
+                            "is_repository": (Path(entry.path) / ".git").exists()
+                            and find_repo_root(Path(entry.path)) == Path(entry.path),
+                        }
                     )
                     if len(children) > 1000:
                         raise GuiError(
                             "하위 폴더가 너무 많습니다. 원하는 경로를 직접 입력하세요."
                         )
+        count = None
+        if inspect_repositories:
+            count = sum(
+                "error" not in row
+                for row in DeploymentService(directory, self.shared_url).discover()[
+                    "repositories"
+                ]
+            )
         return {
+            "repository_count": count,
             "path": str(directory),
             "parent": str(directory.parent),
             "home": str(Path.home()),
@@ -96,7 +115,7 @@ class DeploymentService:
         parent = candidate if trailing else candidate.parent
         prefix = "" if trailing else candidate.name.casefold()
         try:
-            listing = self.browse(str(parent))
+            listing = self.browse(str(parent), inspect_repositories=False)
         except (GuiError, OSError):
             return {"paths": []}
         return {
@@ -111,8 +130,12 @@ class DeploymentService:
         candidate = self.directory(path)
         # Discover before committing the switch: failed navigation keeps the
         # active workspace and its preview approvals intact.
-        self.browse(str(candidate))
+        self.browse(str(candidate), inspect_repositories=False)
         result = DeploymentService(candidate, self.shared_url).discover()
+        if not any("error" not in row for row in result["repositories"]):
+            raise GuiError(
+                "선택 가능한 Git 저장소가 없습니다. .git이 있는 저장소 또는 그 상위 폴더를 선택하세요. 하위 탐색 깊이는 3입니다."
+            )
         self.workspace = candidate
         self.previews.clear()
         return result
@@ -194,7 +217,6 @@ class DeploymentService:
         for directory, command in (
             (repo, ["ls-files", "--stage", "-z"]),
             (repo, ["config", "--list", "--show-origin"]),
-            (source, ["rev-parse", "HEAD"]),
         ):
             result = subprocess.run(
                 ["git", "-C", str(directory), *command],
@@ -203,6 +225,10 @@ class DeploymentService:
                 timeout=15,
             )
             digest.update(result.stdout)
+        source_head, warning = local_source_head(source)
+        if not source_head:
+            raise GuiError(f"배포 소스 버전을 확인하지 못했습니다: {warning}")
+        digest.update(source_head.encode())
         return digest.hexdigest()
 
     def discover(self) -> dict:

@@ -362,3 +362,178 @@ def test_workspace_path_suggestions_are_read_only(gui, tmp_path):
         ).json()["paths"]
         == []
     )
+
+
+def test_claude_proposal_restricts_tools_and_parses_envelope(gui):
+    import json
+    from agent_rules.gui_ai import analyze
+
+    _, _, repo = gui
+    payload = {
+        "is_error": False,
+        "structured_output": {"rules": [], "questions": [], "memories_used": []},
+    }
+
+    def run(command, **kwargs):
+        assert command[0] == "claude"
+        for option in (
+            "--restricted",
+            "--safe-mode",
+            "--strict-mcp-config",
+            "--no-session-persistence",
+        ):
+            assert option in command
+        assert command[command.index("--tools") + 1] == "Read,Glob,Grep"
+        assert command[command.index("--permission-mode") + 1] == "dontAsk"
+        assert command[command.index("--model") + 1] == "sonnet"
+        assert kwargs["cwd"] == repo
+        kwargs["stdout"].write(json.dumps(payload))
+        kwargs["stdout"].flush()
+        return mock.Mock(returncode=0)
+
+    with (
+        mock.patch(
+            "agent_rules.gui_ai.connection",
+            return_value={"ready": True, "path": "claude"},
+        ),
+        mock.patch("agent_rules.gui_ai.subprocess.Popen", side_effect=run),
+    ):
+        assert analyze(repo, "sonnet", [], "claude")["rules"] == []
+        payload["is_error"] = True
+        with pytest.raises(ValueError, match="반환하지"):
+            analyze(repo, "sonnet", [], "claude")
+
+
+def test_ai_provider_routing_and_validation(gui):
+    client, _, repo = gui
+    with mock.patch(
+        "agent_rules.gui_ai.analyze", return_value={"rules": []}
+    ) as analyze:
+        response = client.post(
+            "/api/ai/analyze",
+            json={"path": str(repo), "provider": "claude", "model": "sonnet"},
+        )
+        assert response.status_code == 200
+        analyze.assert_called_once_with(repo, "sonnet", [], "claude")
+    for endpoint in ("models", "connection", "analyze"):
+        assert (
+            client.post(f"/api/ai/{endpoint}", json={"provider": "unknown"}).status_code
+            == 422
+        )
+    response = client.post("/api/ai/models", json={"provider": "claude"})
+    assert {m["model"] for m in response.json()["models"]} == {
+        "sonnet",
+        "opus",
+        "haiku",
+    }
+    assert "message" in response.json()
+
+
+def test_claude_auth_requires_logged_in_state(monkeypatch):
+    from agent_rules.gui_ai import connection
+
+    monkeypatch.setattr("agent_rules.gui_ai.executable", lambda provider: "claude")
+    with mock.patch(
+        "agent_rules.gui_ai.subprocess.run",
+        side_effect=[
+            mock.Mock(returncode=0, stdout="Claude Code"),
+            mock.Mock(returncode=0, stdout='{"loggedIn": false}'),
+        ],
+    ):
+        assert not connection("claude")["ready"]
+
+
+def test_claude_memory_respects_config_directory(gui, tmp_path, monkeypatch):
+    import re
+    from agent_rules.gui_ai import memory_files, home_memories
+
+    _, _, repo = gui
+    home = tmp_path / "claude-home"
+    memory = (
+        home
+        / "projects"
+        / re.sub(r"[^a-zA-Z0-9-]", "-", str(repo))
+        / "memory"
+        / "MEMORY.md"
+    )
+    memory.parent.mkdir(parents=True)
+    memory.write_text("Project decision")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    assert memory in memory_files(repo)
+    assert any(
+        row["path"] == str(memory) and row["recommended"]
+        for row in home_memories(repo)["files"]
+    )
+
+
+def test_distribution_commit_used_without_git(tmp_path):
+    from agent_rules.source import local_source_head
+
+    commit = "a" * 40
+    (tmp_path / ".source-commit").write_text(commit)
+    assert local_source_head(tmp_path) == (commit, None)
+    (tmp_path / ".source-commit").write_text("HEAD")
+    assert local_source_head(tmp_path)[0] is None
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    # A checkout must never mask an invalid HEAD with distribution metadata.
+    assert local_source_head(tmp_path)[0] is None
+
+
+def test_folder_selection_requires_selectable_git_repository(gui, tmp_path):
+    client, service, repo = gui
+    plain = tmp_path / "documents"
+    plain.mkdir()
+    (repo / "src").mkdir()
+    listing = client.post("/api/workspace/browse", json={"path": str(tmp_path)}).json()
+    assert listing["repository_count"] == 1
+    assert {d["name"]: d["is_repository"] for d in listing["directories"]} == {
+        "documents": False,
+        "sample": True,
+    }
+    for folder in (plain, repo / "src"):
+        assert (
+            client.post("/api/workspace/browse", json={"path": str(folder)}).json()[
+                "repository_count"
+            ]
+            == 0
+        )
+        response = client.post("/api/workspace/change", json={"path": str(folder)})
+        assert response.status_code == 400
+        assert service.workspace == tmp_path
+    assert (
+        client.post("/api/workspace/change", json={"path": str(repo)}).status_code
+        == 200
+    )
+    assert ".git" not in [
+        d["name"]
+        for d in client.post("/api/workspace/browse", json={"path": str(repo)}).json()[
+            "directories"
+        ]
+    ]
+
+
+def test_folder_selection_accepts_git_file_and_rejects_fake_marker(gui, tmp_path):
+    client, _, _ = gui
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "init", "--separate-git-dir", str(tmp_path / "metadata"), str(linked)],
+        check=True,
+        capture_output=True,
+    )
+    assert (linked / ".git").is_file()
+    assert (
+        client.post("/api/workspace/browse", json={"path": str(linked)}).json()[
+            "repository_count"
+        ]
+        == 1
+    )
+    assert (
+        client.post("/api/workspace/change", json={"path": str(linked)}).status_code
+        == 200
+    )
+    fake = tmp_path / "fake"
+    (fake / ".git").mkdir(parents=True)
+    assert (
+        client.post("/api/workspace/change", json={"path": str(fake)}).status_code
+        == 400
+    )

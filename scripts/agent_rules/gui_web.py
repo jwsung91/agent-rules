@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import secrets
 from typing import Literal
@@ -12,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from .gui_service import DeploymentService, GuiError
+from .gui_bridge import HostBridge, Reply
 
 
 class Selection(BaseModel):
@@ -27,8 +29,12 @@ class PreviewSelection(Selection):
     boundaries: list[str] = Field(default_factory=list, max_length=20)
 
 
-class Analysis(BaseModel):
+class ProviderSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    provider: Literal["codex", "claude"] = "codex"
+
+
+class Analysis(ProviderSelection):
     path: str
     model: str = Field(default="", max_length=100)
     memories: list[str] = Field(default_factory=list, max_length=20)
@@ -48,6 +54,15 @@ def create_app(
     service: DeploymentService, port: int, session_token: str | None = None
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    bridge_file = os.environ.get("AGENT_RULES_BRIDGE_FILE")
+    bridge = (
+        HostBridge(
+            Path(bridge_file).read_text(encoding="utf-8").strip(), service.workspace
+        )
+        if bridge_file
+        else None
+    )
+    app.state.host_bridge = bridge
     token = session_token or secrets.token_urlsafe(32)
     origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
@@ -68,7 +83,17 @@ def create_app(
             return JSONResponse(
                 {"detail": "다른 사이트의 요청은 허용하지 않습니다."}, status_code=403
             )
-        if request.url.path.startswith("/api/") and request.url.path != "/api/session":
+        bridge_request = request.url.path.startswith("/api/bridge/")
+        if bridge_request:
+            if not bridge or not secrets.compare_digest(
+                request.headers.get("x-bridge-token", ""), bridge.token
+            ):
+                return JSONResponse(
+                    {"detail": "Host bridge authentication failed"}, status_code=403
+                )
+        elif (
+            request.url.path.startswith("/api/") and request.url.path != "/api/session"
+        ):
             if not secrets.compare_digest(
                 request.headers.get("x-session-token", ""), token
             ):
@@ -83,7 +108,7 @@ def create_app(
                     {"detail": "JSON 요청만 허용됩니다."}, status_code=415
                 )
             body = await request.body()
-            if len(body) > 16384:
+            if len(body) > (1_000_000 if bridge_request else 16384):
                 return JSONResponse({"detail": "요청이 너무 큽니다."}, status_code=413)
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
@@ -109,6 +134,17 @@ def create_app(
         finally:
             service.lock.release()
 
+    @app.post("/api/bridge/poll")
+    def bridge_poll():
+        return bridge.poll()
+
+    @app.post("/api/bridge/result")
+    def bridge_result(reply: Reply):
+        try:
+            return bridge.complete(reply)
+        except GuiError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     @app.get("/")
     def index():
         return FileResponse(assets / "index.html")
@@ -123,7 +159,11 @@ def create_app(
 
     @app.get("/api/session")
     def session():
-        return {"token": token, "workspace": str(service.workspace)}
+        return {
+            "token": token,
+            "workspace": str(service.workspace),
+            "ai_execution": "host" if bridge else "local",
+        }
 
     @app.post("/api/workspace/suggest")
     async def suggest_workspace(selection: DirectorySelection):
@@ -164,11 +204,13 @@ def create_app(
         )
 
     @app.post("/api/ai/models")
-    async def ai_models():
+    async def ai_models(selection: ProviderSelection):
         from .gui_ai import models
 
         try:
-            return await execute(models)
+            if bridge:
+                return await execute(bridge.call, "models", selection.provider)
+            return await execute(models, selection.provider)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -176,13 +218,22 @@ def create_app(
     async def ai_memories(selection: Analysis):
         from .gui_ai import home_memories
 
+        if bridge:
+            return await execute(
+                bridge.call,
+                "memories",
+                selection.provider,
+                service.target(selection.path),
+            )
         return await execute(home_memories, service.target(selection.path))
 
     @app.post("/api/ai/connection")
-    async def ai_connection():
+    async def ai_connection(selection: ProviderSelection):
         from .gui_ai import connection
 
-        return await execute(connection)
+        if bridge:
+            return await execute(bridge.call, "connection", selection.provider)
+        return await execute(connection, selection.provider)
 
     def ai_request(selection: Analysis, inspect_only: bool):
         from .gui_ai import analyze, context
@@ -190,9 +241,19 @@ def create_app(
         repo = service.target(selection.path)
         service.guard(repo)
         try:
+            if bridge:
+                return bridge.call(
+                    "context" if inspect_only else "analyze",
+                    selection.provider,
+                    repo,
+                    selection.model,
+                    selection.memories,
+                )
             if inspect_only:
                 return {"files": context(repo, selection.memories)["files"]}
-            return analyze(repo, selection.model, selection.memories)
+            return analyze(
+                repo, selection.model, selection.memories, selection.provider
+            )
         except (ValueError, TimeoutError) as exc:
             raise GuiError(str(exc)) from exc
 

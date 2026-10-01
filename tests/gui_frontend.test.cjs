@@ -148,3 +148,96 @@ test("editing workspace invalidates selections and reviewed changes", async () =
   assert.equal(vm.runInContext("aiTarget", ui.context), null);
   assert.equal(ui.get("apply").disabled, true);
 });
+
+test("changing AI provider resets model, proposal and previews", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  const requests = [];
+  ui.context.fetch = async (url, request) => {
+    requests.push([url, JSON.parse(request.body)]);
+    return {
+      ok: true,
+      json: async () =>
+        url.endsWith("models")
+          ? {
+              models: [{ model: "sonnet", name: "Sonnet" }],
+              message: "aliases",
+            }
+          : { roots: [], files: [] },
+    };
+  };
+  vm.runInContext(
+    'aiTarget = "/work/demo"; previews.set("/work/demo", {token: "old"})',
+    ui.context,
+  );
+  ui.get("ai-rules").value = "old proposal";
+  ui.get("ai-model").value = "codex-model";
+  ui.get("ai-provider").value = "claude";
+  await ui.get("ai-provider").onchange();
+  assert.equal(ui.get("ai-model").value, "");
+  assert.equal(ui.get("ai-rules").value, "");
+  assert.equal(ui.get("apply").disabled, true);
+  assert.equal(vm.runInContext("aiTarget", ui.context), null);
+  assert.ok(requests.every(([, body]) => body.provider === "claude"));
+});
+
+async function workspaceUI() {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  const changes = [];
+  ui.context.fetch = async (url, request) => {
+    const data = JSON.parse(request.body);
+    if (url === "/api/workspace/change") changes.push(data.path);
+    return {
+      ok: true,
+      json: async () => ({ workspace: data.path, repositories: [] }),
+    };
+  };
+  ui.get("workspace-dialog").close = () => {};
+  return { ...ui, changes };
+}
+
+test("Enter and leaving edited workspace automatically discover once", async () => {
+  const ui = await workspaceUI();
+  ui.get("workspace").value = "/new";
+  let prevented = false;
+  await ui.get("workspace").onkeydown({
+    key: "Enter",
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  await ui.get("workspace").onblur({ relatedTarget: null });
+  assert.ok(prevented);
+  assert.deepEqual(ui.changes, ["/new"]);
+  ui.get("workspace").value = "/next";
+  await ui
+    .get("workspace")
+    .onblur({ relatedTarget: { id: "workspace-browse" } });
+  assert.deepEqual(ui.changes, ["/new", "/next"]);
+});
+
+test("folder picker confirmation immediately discovers only eligible locations", async () => {
+  const ui = await workspaceUI();
+  vm.runInContext(
+    'folderInfo = {path: "/plain", repository_count: 0}',
+    ui.context,
+  );
+  await ui.get("folder-select").onclick();
+  assert.equal(ui.changes.length, 0);
+  vm.runInContext(
+    'folderInfo = {path: "/repos", repository_count: 2}',
+    ui.context,
+  );
+  await ui.get("folder-select").onclick();
+  assert.deepEqual(ui.changes, ["/repos"]);
+});
+
+test("opening folder picker and IME composition do not prematurely apply text", async () => {
+  const ui = await workspaceUI();
+  ui.get("workspace").value = "/typing";
+  ui.get("workspace-browse").onpointerdown();
+  await ui
+    .get("workspace")
+    .onblur({ relatedTarget: { id: "workspace-browse" } });
+  await ui.get("workspace").onkeydown({ key: "Enter", isComposing: true });
+  assert.equal(ui.changes.length, 0);
+});

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from .constants import (
     LEGACY_CODEX_SKILL_ROOT,
@@ -78,6 +79,12 @@ def profile_skill_support(profile: str) -> tuple[list[str], list[str]]:
 
 def local_source_head(root: Path | None = None) -> tuple[str | None, str | None]:
     root = root or source_repo_root()
+    # Distribution images omit .git and contain explicit build provenance.
+    if not (root / ".git").exists() and (root / ".source-commit").is_file():
+        commit = (root / ".source-commit").read_text(encoding="ascii").strip()
+        if re.fullmatch(r"[0-9a-f]{40}", commit):
+            return commit, None
+        return None, "invalid distribution source commit"
     code, stdout, stderr = run_command(["git", "-C", str(root), "rev-parse", "HEAD"])
     if code != 0 or not stdout:
         return None, stderr or "git rev-parse failed"

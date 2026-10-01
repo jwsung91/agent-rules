@@ -1,8 +1,9 @@
 # Local Deployment GUI
 
 The GUI runs directly as a Python process. It uses the existing deployment
-planner, checks, and writer; no Docker, database, Node.js runtime, or frontend
-build is needed. Dependencies are separate from the standard-library CLI.
+planner, checks, and writer; no Docker, database, or frontend build is needed.
+AI proposals additionally need the chosen CLI. Optional [Docker packaging](docker-gui.md)
+runs only the GUI; a host bridge invokes your existing AI CLIs. Dependencies are separate from the standard-library CLI.
 
 ## Linux and WSL
 
@@ -50,8 +51,14 @@ for one trusted local user, not a public or multi-user service.
 ## Workflow
 
 1. Start with an explicit `--workspace` as the initial folder. Change it by
-   typing an absolute server path (or `~`) or using **폴더 선택**, then
-   **경로 적용·탐색**. While typing, native browser autocomplete suggests up to
+   typing an absolute server path (or `~`) and pressing Enter or leaving the
+   input, or by confirming **이 위치로 탐색** in **폴더 선택**. Discovery
+   runs automatically; **다시 탐색** refreshes the current location. General
+   folders remain navigable, but only a Git repository or a parent containing
+   selectable repositories within depth three can be confirmed. The picker
+   labels Git roots and navigation folders and hides `.git` internals. Valid
+   `.git` files (worktrees/separate Git directories) are supported; a fake
+   `.git` marker and ordinary source subdirectories cannot be selected. While typing, native browser autocomplete suggests up to
    30 matching server directories; a trailing slash lists child folders.
    Suggestions never change the active workspace. The picker browses server directories, not the browser
    computer; WSL uses Linux paths. Switching clears selected repositories, AI
@@ -99,9 +106,9 @@ validation arguments, and persistent batch lists. Existing local settings are
 preserved by the same merge engine as the CLI. Suggested validation commands are
 not executed by the GUI. The GUI does not commit, push, or need signing keys.
 
-The server binds only to `127.0.0.1`, validates Host and Origin, requires a
+Direct execution binds to `127.0.0.1`, validates Host and Origin, requires a
 session token for API operations, and serves no external scripts. Do not expose
-it through a public proxy. Paths must stay within the startup workspace; the GUI
+it through a public proxy. Paths must stay within the currently selected workspace; the GUI
 refuses symlinks in managed output paths. This is not protection against other
 processes running as the same OS user.
 
@@ -117,38 +124,53 @@ processes running as the same OS user.
 
 Install `requirements-dev.txt` to run the full suite including GUI tests.
 
-## Codex rule proposals
+## Codex and Claude Code rule proposals
 
 Select one repository and open **AI로 작성**. The dialog initially shows
-the model and proposal action. Connection and memory controls are in a collapsed
+the analysis tool (Codex or Claude Code), model, and proposal action. Connection and memory controls are in a collapsed
 settings section; the editable rules and evidence appear after a proposal.
 Use **변경 미리보기로** to return to the deployment preview. Closing the dialog
-keeps its draft, but changing the repository selection clears it. Closing a
+keeps its draft, but changing the repository selection or analysis tool clears it.
+The analysis tool is independent of the deployment profile: either tool can
+propose rules for Codex, Claude, or a combined installation. Closing a
 running analysis does not cancel it.
-The server invokes the local Codex CLI using its saved authentication with
-`--sandbox read-only` and no interactive approvals. Analysis can take up to
+The server invokes the selected local CLI using its saved authentication.
+Codex uses `--sandbox read-only` and no interactive approvals. Claude Code uses
+`--restricted --safe-mode --strict-mcp-config`, only `Read,Glob,Grep`, and
+`--permission-mode dontAsk`. Custom hooks, MCP, plugins and automatic instruction
+loading are disabled for Claude; selected memory contents are supplied explicitly.
+Its account/environment default model applies when no model is selected; user
+settings files are ignored in this restricted run. Sessions are not persisted.
+The Claude integration requires a CLI supporting these flags (tested 2.1.286). Analysis can take up to
 five minutes; other GUI operations wait until it completes. The selected
 repository and supplied memory context are processed by the CLI's configured
 AI service and consume its usage allowance. Closing the tab does not cancel it.
 
-Install and log in to Codex in the server's environment (Linux CLI for WSL).
+Install and log in to the chosen CLI in the server's environment (Linux CLI for WSL).
 Set `--codex /absolute/path/to/codex` or `AGENT_RULES_CODEX` to choose the
-executable. The model dropdown queries the official Codex app-server `model/list` interface
+executable. Use `--claude /absolute/path/to/claude` or `AGENT_RULES_CLAUDE`
+for Claude Code. The Codex model dropdown queries the official Codex app-server `model/list` interface
 and retains a CLI-default option. The list is refreshed on page load and can
-be refreshed manually. No fixed model catalog is embedded.
+be refreshed manually. Claude offers the documented `sonnet`, `opus`, and `haiku`
+aliases; this is explicitly labeled as an alias list, not a live account model
+catalog. Availability depends on the account and organization. See the official
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference) and
+[model configuration](https://code.claude.com/docs/en/model-config).
 The GUI never asks for or stores an API key.
 
 Project AGENTS.md, CLAUDE.md, MEMORY.md, `.codex/memories/*.md`,
 `.claude/memory/*.md`, and the matching Claude project auto-memory directory
 are candidates. Additional Markdown absolute paths can be supplied explicitly
 for relevant Codex or Claude memories outside the repository. The home-memory picker automatically scans `$CODEX_HOME/memories` (default
-`~/.codex/memories`) and the matching Claude project memory directory when one
+`~/.codex/memories`) and `$CLAUDE_CONFIG_DIR/projects/<project-key>/memory`
+(default `~/.claude/projects/<project-key>/memory`) when one
 repository is selected. It preselects Codex filenames matching the repository
 name and Claude project matches; other home files remain optional. This filename
 heuristic is not proof of relevance: review the selected files before analysis.
 Global Codex conversation history is not automatically collected. Missing project memory is normal.
-Paths resolve on the server; Windows memories require WSL-accessible paths
-when the server runs in WSL. The list is limited to 40 files and 200KB total.
+In direct mode paths resolve on the server; Windows memories require WSL-accessible
+paths when the server runs in WSL. In Docker mode the host bridge resolves memory
+paths on the host PC; see [Docker setup](docker-gui.md). The list is limited to 40 files and 200KB total.
 Memory is historical evidence, not authority: proposals must compare it with
 current code and identify unresolved questions and supporting files.
 
