@@ -28,6 +28,8 @@ async function app(checkResult, applyCode = 0) {
   get("visibility").value = "local";
   const calls = [];
   const context = vm.createContext({
+    setTimeout: () => 0,
+    clearTimeout: () => {},
     document: {
       getElementById: get,
       querySelectorAll: () => [],
@@ -130,5 +132,19 @@ test("AI proposal stays editable and only enters the reviewed preview", async ()
   assert.equal(ui.get("apply").disabled, false);
   vm.runInContext("clearAI(); invalidate()", ui.context);
   assert.equal(ui.get("ai-rules").value, "");
+  assert.equal(ui.get("apply").disabled, true);
+});
+
+test("editing workspace invalidates selections and reviewed changes", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  vm.runInContext(
+    'previews.set("/work/demo", {token: "old"}); aiTarget = "/work/demo";',
+    ui.context,
+  );
+  ui.get("workspace").value = "/new/workspace";
+  ui.get("workspace").oninput();
+  assert.equal(vm.runInContext("selected.size", ui.context), 0);
+  assert.equal(vm.runInContext("previews.size", ui.context), 0);
+  assert.equal(vm.runInContext("aiTarget", ui.context), null);
   assert.equal(ui.get("apply").disabled, true);
 });

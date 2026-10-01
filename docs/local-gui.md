@@ -49,7 +49,17 @@ for one trusted local user, not a public or multi-user service.
 
 ## Workflow
 
-1. Start with an explicit `--workspace`. Discovery searches to depth three,
+1. Start with an explicit `--workspace` as the initial folder. Change it by
+   typing an absolute server path (or `~`) or using **폴더 선택**, then
+   **경로 적용·탐색**. While typing, native browser autocomplete suggests up to
+   30 matching server directories; a trailing slash lists child folders.
+   Suggestions never change the active workspace. The picker browses server directories, not the browser
+   computer; WSL uses Linux paths. Switching clears selected repositories, AI
+   drafts and all server preview tokens, including previews from other tabs.
+   Other tabs should refresh after a switch. Invalid paths keep the active
+   server workspace unchanged. The local user can select directories outside
+   the initial folder; it is no longer a fixed server-lifetime boundary.
+   Discovery searches to depth three,
    stops at Git repositories, skips symlink directories, and excludes the
    agent-rules source checkout. No repository is selected automatically.
 2. Select intended repositories. The search field filters the list; selections

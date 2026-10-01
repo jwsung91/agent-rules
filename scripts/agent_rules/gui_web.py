@@ -34,6 +34,11 @@ class Analysis(BaseModel):
     memories: list[str] = Field(default_factory=list, max_length=20)
 
 
+class DirectorySelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(default="", max_length=4096)
+
+
 class Approval(BaseModel):
     model_config = ConfigDict(extra="forbid")
     token: str
@@ -119,6 +124,18 @@ def create_app(
     @app.get("/api/session")
     def session():
         return {"token": token, "workspace": str(service.workspace)}
+
+    @app.post("/api/workspace/suggest")
+    async def suggest_workspace(selection: DirectorySelection):
+        return await execute(service.suggest_directories, selection.path)
+
+    @app.post("/api/workspace/browse")
+    async def browse_workspace(selection: DirectorySelection):
+        return await execute(service.browse, selection.path)
+
+    @app.post("/api/workspace/change")
+    async def change_workspace(selection: DirectorySelection):
+        return await execute(service.change_workspace, selection.path)
 
     @app.post("/api/discover")
     async def discover():

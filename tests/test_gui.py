@@ -283,3 +283,82 @@ def test_ai_models_endpoint(gui):
         response = client.post("/api/ai/models", json={})
     assert response.status_code == 200
     assert response.json()["models"][0]["model"] == "test"
+
+
+def test_workspace_browse_switch_and_preview_invalidation(gui, tmp_path):
+    client, service, repo = gui
+    plan = preview(client, repo)
+    sibling = tmp_path.parent / (tmp_path.name + "-alternate")
+    sibling.mkdir()
+    other = sibling / "other"
+    other.mkdir()
+    subprocess.run(["git", "init", str(other)], check=True, capture_output=True)
+    (sibling / "not-a-directory.txt").write_text("file")
+    listing = client.post("/api/workspace/browse", json={"path": str(sibling)})
+    assert listing.status_code == 200
+    assert [x["name"] for x in listing.json()["directories"]] == ["other"]
+    assert service.workspace == tmp_path
+    invalid = client.post(
+        "/api/workspace/change", json={"path": str(sibling / "missing")}
+    )
+    assert invalid.status_code == 400
+    assert service.workspace == tmp_path
+    assert plan["token"] in service.previews
+    changed = client.post("/api/workspace/change", json={"path": str(sibling)})
+    assert changed.status_code == 200
+    assert service.workspace == sibling
+    assert [x["path"] for x in changed.json()["repositories"]] == [str(other)]
+    assert client.post("/api/apply", json={"token": plan["token"]}).status_code == 400
+    assert client.post("/api/check", json=selection(repo)).status_code == 400
+    assert client.get("/api/session").json()["workspace"] == str(sibling)
+
+
+def test_workspace_paths_and_session_guards(gui):
+    client, service, repo = gui
+    for endpoint in ["browse", "change"]:
+        assert (
+            client.post(
+                f"/api/workspace/{endpoint}", json={"path": "relative"}
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                f"/api/workspace/{endpoint}",
+                json={"path": str(repo)},
+                headers={"X-Session-Token": "wrong"},
+            ).status_code
+            == 403
+        )
+    with service.lock:
+        assert (
+            client.post("/api/workspace/change", json={"path": str(repo)}).status_code
+            == 409
+        )
+
+
+def test_workspace_path_suggestions_are_read_only(gui, tmp_path):
+    import os
+
+    client, service, _ = gui
+    (tmp_path / "example one").mkdir()
+    (tmp_path / "example two").mkdir()
+    (tmp_path / "example.txt").write_text("not a directory")
+    response = client.post(
+        "/api/workspace/suggest", json={"path": str(tmp_path / "exam")}
+    )
+    assert response.status_code == 200
+    assert response.json()["paths"] == [
+        str(tmp_path / name) + os.sep for name in ("example one", "example two")
+    ]
+    assert service.workspace == tmp_path
+    assert (
+        client.post("/api/workspace/suggest", json={"path": "relative"}).json()["paths"]
+        == []
+    )
+    assert (
+        client.post(
+            "/api/workspace/suggest", json={"path": str(tmp_path / "missing") + os.sep}
+        ).json()["paths"]
+        == []
+    )

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import difflib
 import hashlib
 import io
+import os
 from pathlib import Path
 import secrets
 import subprocess
@@ -47,6 +48,74 @@ class DeploymentService:
         self.shared_url = shared_url
         self.lock = threading.Lock()
         self.previews: dict[str, Preview] = {}
+
+    def directory(self, value: str) -> Path:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            raise GuiError(
+                "서버 기준 절대 경로를 입력하세요. 홈은 ~로 지정할 수 있습니다."
+            )
+        if any(p.is_symlink() for p in [candidate, *candidate.parents]):
+            raise GuiError("심볼릭 링크 폴더는 지원하지 않습니다.")
+        resolved = candidate.resolve(strict=True)
+        if not resolved.is_dir():
+            raise GuiError("디렉터리를 선택하세요.")
+        return resolved
+
+    def browse(self, path: str) -> dict:
+        directory = self.directory(path or str(self.workspace))
+        children = []
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    children.append(
+                        {"name": entry.name, "path": str(directory / entry.name)}
+                    )
+                    if len(children) > 1000:
+                        raise GuiError(
+                            "하위 폴더가 너무 많습니다. 원하는 경로를 직접 입력하세요."
+                        )
+        return {
+            "path": str(directory),
+            "parent": str(directory.parent),
+            "home": str(Path.home()),
+            "directories": sorted(children, key=lambda x: x["name"].casefold()),
+        }
+
+    def suggest_directories(self, value: str) -> dict:
+        if not value.strip():
+            return {
+                "paths": list(dict.fromkeys([str(self.workspace), str(Path.home())]))
+            }
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            return {"paths": []}
+        # A trailing separator means the user wants children; otherwise match
+        # the last component among siblings, even if it is already a directory.
+        trailing = value.endswith(("/", "\\"))
+        parent = candidate if trailing else candidate.parent
+        prefix = "" if trailing else candidate.name.casefold()
+        try:
+            listing = self.browse(str(parent))
+        except (GuiError, OSError):
+            return {"paths": []}
+        return {
+            "paths": [
+                entry["path"] + os.sep
+                for entry in listing["directories"]
+                if entry["name"].casefold().startswith(prefix)
+            ][:30]
+        }
+
+    def change_workspace(self, path: str) -> dict:
+        candidate = self.directory(path)
+        # Discover before committing the switch: failed navigation keeps the
+        # active workspace and its preview approvals intact.
+        self.browse(str(candidate))
+        result = DeploymentService(candidate, self.shared_url).discover()
+        self.workspace = candidate
+        self.previews.clear()
+        return result
 
     def target(self, value: str) -> Path:
         candidate = Path(value).expanduser()
