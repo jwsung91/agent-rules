@@ -60,14 +60,15 @@ def detect_repository_type(target_repo: Path) -> DetectionResult:
     package_json = target_repo / "package.json"
     if package_json.exists():
         repo_types.append("node")
-        commands.append("npm test")
         try:
             package_data = json.loads(package_json.read_text(encoding="utf-8", errors="replace"))
         except json.JSONDecodeError:
             package_data = {}
         scripts = package_data.get("scripts", {}) if isinstance(package_data, dict) else {}
-        if isinstance(scripts, dict) and "lint" in scripts:
-            commands.append("npm run lint")
+        if isinstance(scripts, dict):
+            for name, command in (("test", "npm test"), ("lint", "npm run lint")):
+                if isinstance(scripts.get(name), str) and scripts[name].strip():
+                    commands.append(command)
     if (target_repo / "Cargo.toml").exists():
         repo_types.append("rust")
         commands.append("cargo test")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import argparse
+import json
 import io
 import re
 import shutil
@@ -212,6 +213,19 @@ class AdoptAgentRulesUnitTests(unittest.TestCase):
             self.assertIn("python", detected.repo_types)
             self.assertIn("npm run lint", detected.validation_commands)
             self.assertIn("python -m pytest", detected.validation_commands)
+
+    def test_node_commands_require_nonempty_scripts(self) -> None:
+        for scripts in ({}, {"lint": "eslint ."}, {"test": ""}, {"test": None}, []):
+            with self.subTest(scripts=scripts), tempfile.TemporaryDirectory() as tmp:
+                repo = Path(tmp)
+                (repo / "package.json").write_text(json.dumps({"scripts": scripts}))
+                detected = adopt.detect_repository_type(repo)
+                self.assertIn("node", detected.repo_types)
+                self.assertNotIn("npm test", detected.validation_commands)
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "package.json").write_text('{"scripts":{"test":"node --test"}}')
+            self.assertIn("npm test", adopt.detect_repository_type(repo).validation_commands)
 
     def test_check_ignore_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
