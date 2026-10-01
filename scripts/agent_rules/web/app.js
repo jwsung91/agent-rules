@@ -232,7 +232,10 @@ $("discover").onclick = async () => {
   controls(true);
   message("저장소 탐색 중…");
   try {
-    const data = await api("discover", {});
+    const data = await api("workspace/change", {
+      path: $("workspace").value.trim(),
+    });
+    $("workspace").value = data.workspace;
     repositories = data.repositories;
     render();
     message(
@@ -384,4 +387,80 @@ $("ai-preview").onclick = async () => {
   if (busy || !aiTarget || !selected.has(aiTarget)) return;
   $("ai-dialog").close();
   await run("preview");
+};
+
+let folderInfo = null;
+async function browseFolder(path) {
+  $("folder-status").textContent = "폴더 확인 중…";
+  $("folder-select").disabled = true;
+  $("folder-parent").disabled = true;
+  $("folder-home").disabled = true;
+  $("folder-list").replaceChildren();
+  folderInfo = null;
+  try {
+    folderInfo = await api("workspace/browse", { path });
+    $("folder-path").textContent = folderInfo.path;
+    for (const directory of folderInfo.directories) {
+      const button = document.createElement("button");
+      button.textContent = directory.name;
+      button.onclick = () => browseFolder(directory.path);
+      $("folder-list").append(button);
+    }
+    $("folder-status").textContent = folderInfo.directories.length
+      ? ""
+      : "하위 폴더가 없습니다.";
+    $("folder-select").disabled = false;
+    $("folder-parent").disabled = folderInfo.parent === folderInfo.path;
+    $("folder-home").disabled = false;
+  } catch (error) {
+    $("folder-status").textContent = error.message;
+  }
+}
+$("workspace-browse").onclick = () => {
+  if (busy) return;
+  $("workspace-dialog").showModal();
+  browseFolder($("workspace").value.trim());
+};
+$("workspace-close").onclick = () => $("workspace-dialog").close();
+$("folder-parent").onclick = () =>
+  folderInfo && browseFolder(folderInfo.parent);
+$("folder-home").onclick = () => folderInfo && browseFolder(folderInfo.home);
+$("folder-select").onclick = () => {
+  if (!folderInfo) return;
+  $("workspace").value = folderInfo.path;
+  $("workspace").oninput();
+  $("workspace-dialog").close();
+  message("폴더 선택됨 · 경로 적용·탐색을 눌러 변경하세요.");
+};
+
+let suggestionTimer = null;
+let suggestionVersion = 0;
+async function suggestWorkspace() {
+  const version = ++suggestionVersion;
+  const value = $("workspace").value;
+  try {
+    const result = await api("workspace/suggest", { path: value });
+    if (version !== suggestionVersion || value !== $("workspace").value) return;
+    $("workspace-suggestions").replaceChildren();
+    for (const path of result.paths) {
+      const option = document.createElement("option");
+      option.value = path;
+      $("workspace-suggestions").append(option);
+    }
+  } catch (_) {
+    // Suggestions are optional: manual input remains available during a busy server.
+  }
+}
+$("workspace").onfocus = suggestWorkspace;
+$("workspace").oninput = () => {
+  clearTimeout(suggestionTimer);
+  suggestionVersion++;
+  $("workspace-suggestions").replaceChildren();
+  suggestionTimer = setTimeout(suggestWorkspace, 250);
+  invalidate();
+  selected.clear();
+  clearAI();
+  $("selected").textContent = "0개 선택";
+  render();
+  message("입력한 경로는 아직 적용되지 않았습니다. 경로 적용·탐색을 누르세요.");
 };

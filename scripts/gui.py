@@ -19,7 +19,7 @@ def main() -> int:
         "--workspace",
         required=True,
         type=Path,
-        help="Allowed repository parent folder; discovery depth is three.",
+        help="Initial repository parent folder; editable in the GUI. Discovery depth is three.",
     )
     parser.add_argument(
         "--codex", help="Codex CLI executable path (or AGENT_RULES_CODEX)."

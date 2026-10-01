@@ -460,3 +460,33 @@ textarea {
     padding-right: 16px;
   }
 }
+
+#workspace-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  border: 1px solid #d9e2eb;
+  border-radius: 12px;
+  color: #223047;
+}
+#workspace-dialog::backdrop {
+  background: #16263877;
+}
+.folder-body {
+  padding: 0 24px 20px;
+}
+#folder-path {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+#folder-list {
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+#folder-list button {
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
