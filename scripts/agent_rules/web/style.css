@@ -490,3 +490,25 @@ textarea {
   overflow-wrap: anywhere;
   white-space: normal;
 }
+
+/* Text labels remain visible alongside color, including preparation progress. */
+.repo .agent-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.agent-badge { border-radius: 5px; padding: 3px 5px; }
+.state { text-align: center; flex-shrink: 0; }
+.repo .preparation { border-radius: 5px; padding: 3px; }
+.repo .tone-neutral { color: #4b5563; background: #edf1f6; }
+.repo .tone-success { color: #166534; background: #dcfce7; }
+.repo .tone-info { color: #1e40af; background: #dbeafe; }
+.repo .tone-warning { color: #92400e; background: #fef3c7; }
+.repo .tone-danger { color: #991b1b; background: #fee2e2; }
+
+.preparation.tone-info::before {
+  content: ""; display: inline-block; width: 8px; height: 8px;
+  margin-right: 5px; border: 2px solid currentColor;
+  border-right-color: transparent; border-radius: 50%;
+  animation: preparation-spin 0.8s linear infinite;
+}
+@keyframes preparation-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .preparation.tone-info::before { animation: none; }
+}

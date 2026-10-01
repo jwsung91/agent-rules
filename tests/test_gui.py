@@ -537,3 +537,16 @@ def test_folder_selection_accepts_git_file_and_rejects_fake_marker(gui, tmp_path
         client.post("/api/workspace/change", json={"path": str(fake)}).status_code
         == 400
     )
+
+
+def test_agent_status_uses_actual_files_and_refreshes_after_apply(gui):
+    client, service, repo = gui
+    assert service.agent_status(repo) == dict.fromkeys(("codex", "claude", "gemini"), "미설치")
+    plan = preview(client, repo, profile="all")
+    assert client.post("/api/apply", json={"token": plan["token"]}).json()["code"] == 0
+    statuses = dict.fromkeys(("codex", "claude", "gemini"), "설치됨")
+    assert client.post("/api/check", json=selection(repo, profile="all")).json()["agents"] == statuses
+    (repo / "CLAUDE.md").unlink()
+    (repo / "GEMINI.md").write_text("My own rules")
+    found = client.post("/api/discover", json={}).json()["repositories"][0]
+    assert found["agents"] == {"codex": "설치됨", "claude": "미설치", "gemini": "사용자 규칙"}
