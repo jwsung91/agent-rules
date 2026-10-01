@@ -49,12 +49,17 @@ around ownership errors by globally trusting all Git repositories.
 ### Start and stop scripts
 
 `docker/start.sh` performs the steps above: it creates the venv and token on
-first use, starts the GUI, then runs the bridge in the foreground.
+first use, runs `check.sh` (warning only), starts the GUI, then runs the bridge
+in the foreground.
 
 ```bash
 docker/start.sh [--port PORT] /absolute/path/to/repository-parent
 docker/stop.sh
+docker/check.sh [codex|claude]...
 ```
+
+`check.sh` reports whether each host CLI is installed and logged in, without
+consuming AI usage; it exits 1 when none of the checked CLIs is ready.
 
 `--port` defaults to `AGENT_RULES_PORT` or 8765 and is also passed to the
 bridge. `AGENT_RULES_VENV` and `AGENT_RULES_BRIDGE_TOKEN` override the default
