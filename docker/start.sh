@@ -40,10 +40,20 @@ if [[ ! -f "$AGENT_RULES_BRIDGE_TOKEN" ]]; then
   "$PY" scripts/ai_bridge.py --token-file "$AGENT_RULES_BRIDGE_TOKEN" --init-token
 fi
 
+URL="http://127.0.0.1:$AGENT_RULES_PORT"
 docker compose up --build -d
-echo "GUI: http://127.0.0.1:$AGENT_RULES_PORT  (stop bridge: Ctrl+C, stop GUI: docker/stop.sh)"
+
+for _ in $(seq 60); do
+  curl -fs -o /dev/null "$URL/" && break
+  sleep 1
+done
+if ! curl -fs -o /dev/null "$URL/"; then
+  echo "GUI did not respond at $URL; check: docker compose logs gui" >&2
+  exit 1
+fi
+echo "GUI: $URL  (stop bridge: Ctrl+C, stop GUI: docker/stop.sh)"
 
 exec "$PY" scripts/ai_bridge.py \
   --workspace "$AGENT_RULES_WORKSPACE" \
   --token-file "$AGENT_RULES_BRIDGE_TOKEN" \
-  --url "http://127.0.0.1:$AGENT_RULES_PORT"
+  --url "$URL"
