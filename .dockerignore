@@ -1,0 +1,13 @@
+*
+!Dockerfile
+!requirements-gui.txt
+!scripts/
+!scripts/**
+!templates/
+!templates/**
+!rules/
+!rules/**
+!skills/
+!skills/**
+**/__pycache__/
+**/*.pyc

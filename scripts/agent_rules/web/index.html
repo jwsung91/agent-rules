@@ -25,11 +25,12 @@
           placeholder="서버의 작업 폴더 절대 경로"
         /><datalist id="workspace-suggestions"></datalist
         ><button id="workspace-browse">폴더 선택</button
-        ><button id="discover">경로 적용·탐색</button>
+        ><button id="discover">다시 탐색</button>
       </div>
       <p class="hint">
-        서버의 폴더를 입력하거나 선택하세요. 경로 적용 시 기존
-        선택·제안·미리보기를 초기화합니다. 탐색 깊이 3.
+        경로 입력 후 Enter를 누르거나 입력창을 벗어나면 자동 탐색합니다. 폴더
+        선택도 즉시 적용됩니다. Git 저장소 또는 저장소를 포함한 상위 폴더를
+        선택하세요. 탐색 깊이 3 · 경로 변경 시 기존 선택·제안·미리보기 초기화.
       </p>
       <div class="layout">
         <section class="panel">
@@ -47,7 +48,9 @@
             확인을 실행하세요.
           </p>
           <div id="repositories" class="repositories"></div>
-          <p id="empty" class="empty">경로 적용·탐색을 눌러 시작하세요.</p>
+          <p id="empty" class="empty">
+            작업 경로를 확정하거나 폴더를 선택해 시작하세요.
+          </p>
         </section>
         <section class="panel">
           <div class="heading">
@@ -132,7 +135,8 @@
       </div>
       <div class="folder-body">
         <p class="hint">
-          서버 파일 시스템을 탐색합니다. WSL 서버에서는 Linux 경로를 사용하세요.
+          일반 폴더는 이동용입니다. Git 저장소 또는 저장소를 포함한 상위 폴더만
+          확정할 수 있습니다. WSL 서버에서는 Linux 경로를 사용하세요.
         </p>
         <p id="folder-path"></p>
         <div class="ai-tools">
@@ -143,28 +147,36 @@
         <div id="folder-list"></div>
       </div>
       <div class="ai-dialog-footer">
-        <span>선택 후 ‘경로 적용·탐색’을 눌러 변경합니다.</span
-        ><button id="folder-select" class="primary">이 폴더 선택</button>
+        <span>확정하면 Git 저장소를 자동으로 탐색합니다.</span
+        ><button id="folder-select" class="primary">이 위치로 탐색</button>
       </div>
     </dialog>
     <dialog id="ai-dialog" aria-labelledby="ai-title">
       <div class="ai-dialog-header">
         <div>
-          <p class="eyebrow">CODEX · 프로젝트 규칙</p>
+          <p class="eyebrow">AI · 프로젝트 규칙</p>
           <h2 id="ai-title">프로젝트에 맞는 규칙 작성</h2>
         </div>
         <button id="ai-close" aria-label="규칙 작성 창 닫기">닫기</button>
       </div>
       <div class="ai-panel">
         <p id="ai-project" class="hint"></p>
+        <p id="ai-execution" class="hint">AI 실행: 웹서버와 같은 환경</p>
         <p>기존 코드와 작업 메모리를 읽고, 지켜야 할 규칙을 제안합니다.</p>
         <div class="ai-model-row">
+          <label
+            >분석 도구<select id="ai-provider">
+              <option value="codex">Codex</option>
+              <option value="claude">Claude Code</option>
+            </select></label
+          >
           <label
             >사용할 모델<select id="ai-model">
               <option value="">CLI 기본 모델</option>
             </select></label
           ><button id="ai-analyze" class="primary">규칙 제안받기</button>
         </div>
+        <p id="ai-model-note" class="hint"></p>
         <p id="ai-status" class="hint" role="status" aria-live="polite">
           준비됨
         </p>
@@ -191,8 +203,10 @@
               ></textarea>
             </label>
             <p class="hint">
-              경로는 서버 기준입니다. Windows 파일은 WSL에서 접근 가능한 경로를
-              사용하세요. 전체 대화 기록은 수집하지 않습니다.
+              <span id="ai-memory-path-hint"
+                >경로는 AI 실행 환경 기준입니다.</span
+              >
+              전체 대화 기록은 수집하지 않습니다.
             </p>
           </details>
           <button id="ai-context">전체 참조 목록 확인</button>

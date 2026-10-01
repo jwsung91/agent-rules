@@ -223,7 +223,8 @@ async function run(action) {
     render();
   }
 }
-$("discover").onclick = async () => {
+let appliedWorkspace = "";
+async function discoverWorkspace() {
   if (busy) return;
   invalidate();
   selected.clear();
@@ -236,6 +237,7 @@ $("discover").onclick = async () => {
       path: $("workspace").value.trim(),
     });
     $("workspace").value = data.workspace;
+    appliedWorkspace = data.workspace;
     repositories = data.repositories;
     render();
     message(
@@ -248,7 +250,8 @@ $("discover").onclick = async () => {
   } finally {
     controls(false);
   }
-};
+}
+$("discover").onclick = discoverWorkspace;
 $("search").oninput = render;
 for (const id of ["profile", "operation", "visibility", "skills"])
   $(id).onchange = () => {
@@ -265,6 +268,14 @@ $("apply").onclick = () => run("apply");
     if (!response.ok) throw new Error("서버 연결 실패");
     const data = await response.json();
     session = data.token;
+    $("ai-execution").textContent =
+      data.ai_execution === "host"
+        ? "AI 실행: 호스트 PC의 Codex·Claude (기존 로그인·메모리 사용)"
+        : "AI 실행: 웹서버와 같은 환경";
+    $("ai-memory-path-hint").textContent =
+      data.ai_execution === "host"
+        ? "추가 메모리는 호스트 PC의 절대 경로를 입력하세요."
+        : "추가 메모리는 AI 실행 환경의 절대 경로를 입력하세요.";
     $("workspace").value = data.workspace;
     controls(false);
     await aiRun("models");
@@ -278,6 +289,7 @@ function aiSelection() {
     throw new Error("AI 분석은 저장소 하나를 선택하세요.");
   return {
     path: [...selected][0],
+    provider: $("ai-provider").value || "codex",
     model: $("ai-model").value.trim(),
     memories: [
       ...(homeMemoryTarget === [...selected][0] ? homeMemorySelected : []),
@@ -293,10 +305,12 @@ async function aiRun(action) {
   controls(true);
   $("ai-status").textContent =
     action === "analyze"
-      ? "Codex 분석 중… 최대 5분이 걸릴 수 있습니다."
+      ? "AI 분석 중… 최대 5분이 걸릴 수 있습니다."
       : "확인 중…";
   try {
-    const data = ["connection", "models"].includes(action) ? {} : aiSelection();
+    const data = ["connection", "models"].includes(action)
+      ? { provider: $("ai-provider").value || "codex" }
+      : aiSelection();
     const result = await api(`ai/${action}`, data);
     if (action === "models") {
       const previous = $("ai-model").value;
@@ -313,7 +327,10 @@ async function aiRun(action) {
       $("ai-model").value = result.models.some((m) => m.model === previous)
         ? previous
         : "";
-      $("ai-status").textContent = `${result.models.length}개 모델 조회 완료`;
+      $("ai-model-note").textContent =
+        result.message || "Codex에서 조회한 모델 목록입니다.";
+      $("ai-status").textContent =
+        result.message || `${result.models.length}개 모델 조회 완료`;
     } else if (action === "memories") {
       homeMemoryTarget = data.path;
       homeMemorySelected.clear();
@@ -369,6 +386,20 @@ async function aiRun(action) {
     controls(false);
   }
 }
+$("ai-provider").onchange = async () => {
+  if (busy) return;
+  invalidate();
+  clearAI();
+  $("ai-model-note").textContent = "";
+  $("ai-model").replaceChildren();
+  const option = document.createElement("option");
+  option.value = "";
+  option.textContent = "CLI 기본 모델";
+  $("ai-model").append(option);
+  $("ai-model").value = "";
+  await aiRun("models");
+  if (selected.size === 1) await aiRun("memories");
+};
 $("ai-connect").onclick = () => aiRun("connection");
 $("ai-context").onclick = () => aiRun("context");
 $("ai-analyze").onclick = () => aiRun("analyze");
@@ -402,14 +433,14 @@ async function browseFolder(path) {
     $("folder-path").textContent = folderInfo.path;
     for (const directory of folderInfo.directories) {
       const button = document.createElement("button");
-      button.textContent = directory.name;
+      button.textContent = `${directory.name} · ${directory.is_repository ? "Git 저장소" : "일반 폴더 (탐색용)"}`;
       button.onclick = () => browseFolder(directory.path);
       $("folder-list").append(button);
     }
-    $("folder-status").textContent = folderInfo.directories.length
-      ? ""
-      : "하위 폴더가 없습니다.";
-    $("folder-select").disabled = false;
+    $("folder-status").textContent = folderInfo.repository_count
+      ? `선택 가능한 Git 저장소 ${folderInfo.repository_count}개 · 이 위치 또는 하위 3단계`
+      : "선택 가능한 Git 저장소가 없습니다. 다른 폴더로 이동하세요. (하위 탐색 깊이 3)";
+    $("folder-select").disabled = !folderInfo.repository_count;
     $("folder-parent").disabled = folderInfo.parent === folderInfo.path;
     $("folder-home").disabled = false;
   } catch (error) {
@@ -425,12 +456,12 @@ $("workspace-close").onclick = () => $("workspace-dialog").close();
 $("folder-parent").onclick = () =>
   folderInfo && browseFolder(folderInfo.parent);
 $("folder-home").onclick = () => folderInfo && browseFolder(folderInfo.home);
-$("folder-select").onclick = () => {
-  if (!folderInfo) return;
+$("folder-select").onclick = async () => {
+  if (!folderInfo || !folderInfo.repository_count || busy) return;
   $("workspace").value = folderInfo.path;
   $("workspace").oninput();
   $("workspace-dialog").close();
-  message("폴더 선택됨 · 경로 적용·탐색을 눌러 변경하세요.");
+  await discoverWorkspace();
 };
 
 let suggestionTimer = null;
@@ -451,16 +482,47 @@ async function suggestWorkspace() {
     // Suggestions are optional: manual input remains available during a busy server.
   }
 }
-$("workspace").onfocus = suggestWorkspace;
+let workspaceActionPointer = false;
+for (const id of ["workspace-browse", "discover"])
+  $(id).onpointerdown = () => {
+    workspaceActionPointer = true;
+  };
+$("workspace").onfocus = () => {
+  workspaceActionPointer = false;
+  return suggestWorkspace();
+};
 $("workspace").oninput = () => {
   clearTimeout(suggestionTimer);
   suggestionVersion++;
   $("workspace-suggestions").replaceChildren();
+  repositories = [];
   suggestionTimer = setTimeout(suggestWorkspace, 250);
   invalidate();
   selected.clear();
   clearAI();
   $("selected").textContent = "0개 선택";
   render();
-  message("입력한 경로는 아직 적용되지 않았습니다. 경로 적용·탐색을 누르세요.");
+  message(
+    "경로 입력 후 Enter를 누르거나 입력창을 벗어나면 자동으로 탐색합니다.",
+  );
+};
+
+$("workspace").onkeydown = async (event) => {
+  if (event.key !== "Enter" || event.isComposing) return;
+  event.preventDefault();
+  await discoverWorkspace();
+};
+$("workspace").onblur = async (event) => {
+  const openingPicker =
+    workspaceActionPointer &&
+    ["workspace-browse", "discover"].includes(event.relatedTarget?.id);
+  workspaceActionPointer = false;
+  if (openingPicker) return;
+  if (
+    busy ||
+    !$("workspace").value.trim() ||
+    $("workspace").value.trim() === appliedWorkspace
+  )
+    return;
+  await discoverWorkspace();
 };

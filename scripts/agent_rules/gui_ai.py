@@ -1,8 +1,9 @@
-"""Read-only Codex proposals; reviewed rules use the existing deployment planner."""
+"""Read-only Codex and Claude Code proposals; reviewed rules use the existing deployment planner."""
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -28,34 +29,53 @@ class Proposal(BaseModel):
     memories_used: list[str] = Field(max_length=40)
 
 
-def executable() -> str:
-    configured = os.environ.get("AGENT_RULES_CODEX", "codex")
+def provider_name(provider: str) -> str:
+    if provider not in {"codex", "claude"}:
+        raise ValueError("지원하지 않는 AI 도구입니다.")
+    return "Codex" if provider == "codex" else "Claude Code"
+
+
+def executable(provider: str = "codex") -> str:
+    name = provider_name(provider)
+    configured = os.environ.get(f"AGENT_RULES_{provider.upper()}", provider)
     found = shutil.which(configured)
     if not found:
-        raise ValueError("서버 실행 환경에 Codex CLI가 없습니다. 설치 후 로그인하세요.")
+        raise ValueError(
+            f"서버 실행 환경에 {name} CLI가 없습니다. 설치 후 로그인하세요."
+        )
     return found
 
 
-def connection() -> dict:
+def connection(provider: str = "codex") -> dict:
+    name = provider_name(provider)
     try:
-        binary = executable()
+        binary = executable(provider)
         version = subprocess.run(
             [binary, "--version"], capture_output=True, text=True, timeout=15
         )
         if version.returncode:
             return {
                 "ready": False,
-                "message": "Codex 실행 실패. WSL에서는 Linux용 Codex가 필요합니다.",
+                "message": f"{name} 실행 실패. 서버 환경에 맞는 CLI가 필요합니다.",
                 "path": binary,
             }
         auth = subprocess.run(
-            [binary, "login", "status"], capture_output=True, text=True, timeout=15
+            [
+                binary,
+                *(["login", "status"] if provider == "codex" else ["auth", "status"]),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
+        ready = auth.returncode == 0
+        if provider == "claude":
+            ready = ready and json.loads(auth.stdout).get("loggedIn") is True
         return {
-            "ready": auth.returncode == 0,
+            "ready": ready,
             "path": binary,
             "message": version.stdout.strip()
-            + (" · 로그인 확인됨" if auth.returncode == 0 else " · codex login 필요"),
+            + (" · 로그인 확인됨" if ready else f" · {provider} 로그인 필요"),
         }
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return {"ready": False, "message": str(exc), "path": ""}
@@ -68,7 +88,12 @@ def memory_files(repo: Path) -> list[Path]:
             candidates.extend(sorted(folder.glob("*.md"))[:30])
     # Claude's project-specific auto-memory directory, not global history.
     key = re.sub(r"[^a-zA-Z0-9-]", "-", str(repo))
-    folder = Path.home() / ".claude/projects" / key / "memory"
+    folder = (
+        Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+        / "projects"
+        / key
+        / "memory"
+    )
     if folder.is_dir() and not folder.is_symlink():
         candidates.extend(sorted(folder.glob("*.md"))[:30])
     return [
@@ -100,8 +125,9 @@ def context(repo: Path, extra: list[str]) -> dict:
     }
 
 
-def analyze(repo: Path, model: str, extra: list[str]) -> dict:
-    status = connection()
+def analyze(repo: Path, model: str, extra: list[str], provider: str = "codex") -> dict:
+    name = provider_name(provider)
+    status = connection(provider)
     if not status["ready"]:
         raise ValueError(status["message"])
     memories = context(repo, extra)
@@ -132,16 +158,43 @@ def analyze(repo: Path, model: str, extra: list[str]) -> dict:
             "-o",
             str(output),
         ]
+        if provider == "claude":
+            command = [
+                status["path"],
+                "--print",
+                "--restricted",
+                "--safe-mode",
+                "--strict-mcp-config",
+                "--permission-mode",
+                "dontAsk",
+                "--tools",
+                "Read,Glob,Grep",
+                "--allowedTools",
+                "Read,Glob,Grep",
+                "--no-session-persistence",
+                "--output-format",
+                "json",
+                "--json-schema",
+                schema.read_text(encoding="utf-8"),
+            ]
         if model:
             command.extend(["--model", model])
-        command.append("-")
+        if provider == "codex":
+            command.append("-")
         # The CLI launcher can spawn a native child; stop the process group on
         # timeout so a timed-out request cannot keep using the account in WSL.
-        with tempfile.TemporaryFile() as logs:
+        with (
+            tempfile.TemporaryFile() as logs,
+            (
+                output.open("w", encoding="utf-8")
+                if provider == "claude"
+                else nullcontext()
+            ) as response,
+        ):
             process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,
-                stdout=logs,
+                stdout=response if provider == "claude" else logs,
                 stderr=logs,
                 cwd=repo,
                 text=True,
@@ -162,18 +215,25 @@ def analyze(repo: Path, model: str, extra: list[str]) -> dict:
                     os.killpg(process.pid, signal.SIGKILL)
                 process.kill()
                 process.communicate()
-                raise ValueError("Codex 분석이 5분을 초과해 중단됐습니다.") from exc
+                raise ValueError(f"{name} 분석이 5분을 초과해 중단됐습니다.") from exc
         result = process
         if result.returncode or not output.is_file():
             raise ValueError(
-                "Codex 분석에 실패했습니다. CLI 로그인·모델·사용 한도를 확인하세요."
+                f"{name} 분석에 실패했습니다. CLI 로그인·모델·사용 한도를 확인하세요."
             )
         if output.stat().st_size > 100_000:
-            raise ValueError("Codex 응답이 너무 큽니다.")
-        proposal = Proposal.model_validate_json(output.read_text(encoding="utf-8"))
+            raise ValueError(f"{name} 응답이 너무 큽니다.")
+        payload = json.loads(output.read_text(encoding="utf-8"))
+        if provider == "claude":
+            if payload.get("is_error") or "structured_output" not in payload:
+                raise ValueError(
+                    "Claude Code가 규칙 제안을 반환하지 않았습니다. 로그인·모델·사용 한도를 확인하세요."
+                )
+            payload = payload["structured_output"]
+        proposal = Proposal.model_validate(payload)
         if any(name not in memories["files"] for name in proposal.memories_used):
             raise ValueError(
-                "Codex가 제공 목록에 없는 메모리를 인용했습니다. 다시 분석하세요."
+                f"{name}가 제공 목록에 없는 메모리를 인용했습니다. 다시 분석하세요."
             )
         return {**proposal.model_dump(), "memory_files": memories["files"]}
 
@@ -254,14 +314,28 @@ async def _models() -> dict:
             await process.wait()
 
 
-def models() -> dict:
+def models(provider: str = "codex") -> dict:
+    provider_name(provider)
+    if provider == "claude":
+        return {
+            "models": [
+                {"model": m, "name": m.title(), "default": False}
+                for m in ("sonnet", "opus", "haiku")
+            ],
+            "message": "Claude CLI 별칭입니다. 계정별 사용 가능 모델 조회 결과가 아니며, 실제 제공 모델은 계정·조직 설정에 따릅니다.",
+        }
     return asyncio.run(_models())
 
 
 def home_memories(repo: Path) -> dict:
     codex = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "memories"
     key = re.sub(r"[^a-zA-Z0-9-]", "-", str(repo))
-    claude = Path.home() / ".claude/projects" / key / "memory"
+    claude = (
+        Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+        / "projects"
+        / key
+        / "memory"
+    )
     rows = []
     for root in (codex, claude):
         if not root.is_dir() or any(p.is_symlink() for p in [root, *root.parents]):

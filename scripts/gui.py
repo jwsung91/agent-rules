@@ -24,6 +24,14 @@ def main() -> int:
     parser.add_argument(
         "--codex", help="Codex CLI executable path (or AGENT_RULES_CODEX)."
     )
+    parser.add_argument(
+        "--claude", help="Claude Code CLI executable path (or AGENT_RULES_CLAUDE)."
+    )
+    parser.add_argument(
+        "--container",
+        action="store_true",
+        help="Bind all container interfaces; publish the port on host loopback only.",
+    )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
         "--open-browser",
@@ -46,13 +54,16 @@ def main() -> int:
         )
     if args.codex:
         os.environ["AGENT_RULES_CODEX"] = args.codex
+    if args.claude:
+        os.environ["AGENT_RULES_CLAUDE"] = args.claude
+    host = "0.0.0.0" if args.container else "127.0.0.1"
     app = create_app(DeploymentService(args.workspace.expanduser()), args.port)
     url = f"http://127.0.0.1:{args.port}"
     # Bind before opening the browser, so an occupied port never opens a
     # different application's page. No reload/workers: preview tokens are local.
     sock = socket.socket()
     try:
-        sock.bind(("127.0.0.1", args.port))
+        sock.bind((host, args.port))
         sock.listen(128)
     except OSError as exc:
         sock.close()
@@ -65,7 +76,7 @@ def main() -> int:
         threading.Timer(1, webbrowser.open, args=(url,)).start()
     try:
         uvicorn.Server(
-            uvicorn.Config(app, host="127.0.0.1", port=args.port, access_log=False)
+            uvicorn.Config(app, host=host, port=args.port, access_log=False)
         ).run(sockets=[sock])
     finally:
         sock.close()

@@ -52,6 +52,9 @@ python3 -m venv ~/.venvs/agent-rules
 ~/.venvs/agent-rules/bin/python scripts/gui.py --workspace /path/to/workspace
 ```
 
+Optional [Docker setup](docs/docker-gui.md) packages only the deployment GUI.
+A host bridge calls the PC's existing Codex or Claude Code, reusing its login and memories.
+
 Open `http://127.0.0.1:8765` in a browser. Select repositories, inspect their
 status, preview installation or sync changes, then apply the reviewed plan.
 See [GUI setup and operation](docs/local-gui.md) for Windows, SSH access, and
