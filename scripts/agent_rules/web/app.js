@@ -26,7 +26,11 @@ function clearAI() {
   $("ai-target").textContent = "아직 규칙 제안이 없습니다.";
   $("ai-files").textContent = "참조할 파일을 먼저 확인하세요.";
 }
+let preparationVersion = 0, preparationTimer = null, preparing = false;
 function invalidate() {
+  preparationVersion++;
+  clearTimeout(preparationTimer);
+  for (const repo of repositories) repo.preparation = "";
   previews.clear();
   $("apply").disabled = true;
   $("preview").replaceChildren();
@@ -39,13 +43,91 @@ function controls(value) {
   document
     .querySelectorAll("button,select,textarea,input:not([readonly])")
     .forEach((e) => (e.disabled = value));
-  $("apply").disabled =
-    value ||
-    !selected.size ||
-    [...selected].some((p) => !previews.get(p)?.token);
+  updateApply();
   $("ai-close").disabled = false;
   $("ai-preview").disabled = value || !aiTarget || !selected.has(aiTarget);
   render();
+}
+function updateApply() {
+  const plans = [...selected].map((path) => previews.get(path));
+  const changed = plans.filter((plan) => plan?.files?.length);
+  const count = changed.reduce((total, plan) => total + plan.files.length, 0);
+  $("apply").disabled = busy || preparing || !count ||
+    plans.some((plan) => !plan?.token || plan.code);
+  $("apply").textContent = count
+    ? `선택한 변경 적용 · ${changed.length}개 저장소 / ${count}개 파일`
+    : "선택한 변경 적용";
+}
+function statusTone(status) {
+  if (/오류|실패|불가/.test(status)) return "danger";
+  if (/중|대기|사용자 규칙/.test(status)) return "info";
+  if (/경고|확인 필요|재검사/.test(status)) return "warning";
+  if (/정상|설치됨|최신|준비 완료/.test(status)) return "success";
+  return "neutral";
+}
+function schedulePreparation() {
+  invalidate();
+  render();
+  if (!selected.size) {
+    message("저장소를 선택하면 검사와 미리보기가 자동으로 준비됩니다.");
+    return;
+  }
+  message("선택한 설정으로 검사와 미리보기를 준비합니다…");
+  const version = preparationVersion;
+  preparationTimer = setTimeout(() => prepareSelection(version), 350);
+}
+async function prepareSelection(version = preparationVersion) {
+  if (version !== preparationVersion || !selected.size) return;
+  if (busy || preparing) {
+    preparationTimer = setTimeout(() => prepareSelection(version), 350);
+    return;
+  }
+  preparing = true;
+  updateApply();
+  const chosen = repositories.filter((repo) => selected.has(repo.path));
+  try {
+    for (const repo of chosen) {
+      if (version !== preparationVersion) return;
+      const settings = options(repo);
+      const boundaries = aiTarget === repo.path
+        ? $("ai-rules").value.split("\n").map((s) => s.trim()).filter(Boolean) : [];
+      try {
+        repo.preparation = "검사 중…";
+        render();
+        const checked = await api("check", settings);
+        if (version !== preparationVersion) return;
+        repo.status = checked.status;
+        repo.agents = checked.agents;
+        log(`${repo.name} · 상태 확인\n${checked.log}`);
+        repo.preparation = "미리보기 생성 중…";
+        render();
+        const plan = await api("preview", { ...settings, boundaries });
+        if (version !== preparationVersion) return;
+        previews.set(repo.path, plan);
+        showPreview(repo, plan);
+        log(`${repo.name} · 미리보기\n${plan.log}`);
+        repo.preparation = plan.code || !plan.token ? "적용 불가"
+          : plan.files.length ? "준비 완료" : "이미 최신 상태";
+      } catch (error) {
+        if (version !== preparationVersion) return;
+        previews.delete(repo.path);
+        repo.preparation = "준비 실패";
+        log(`${repo.name}: ${error.message}`);
+      }
+      render();
+    }
+    if (version !== preparationVersion) return;
+    const blocked = chosen.some((repo) => !previews.get(repo.path)?.token || previews.get(repo.path).code);
+    const changed = chosen.some((repo) => previews.get(repo.path)?.files.length);
+    const warnings = chosen.some((repo) => /경고|확인 필요|오류/.test(repo.status));
+    message(blocked ? "준비하지 못한 저장소가 있습니다. 로그 확인 후 다시 확인하세요."
+      : !changed ? (warnings ? "변경 없음 · 검사 경고는 로그에서 확인하세요." : "이미 최신 상태입니다. 적용할 변경이 없습니다.")
+      : `${warnings ? "검사 경고가 있습니다. " : ""}미리보기 준비 완료 · 변경 내용을 검토한 뒤 적용하세요.`);
+  } finally {
+    preparing = false;
+    updateApply();
+    render();
+  }
 }
 async function api(path, data) {
   const response = await fetch(`/api/${path}`, {
@@ -81,7 +163,7 @@ function options(repo) {
   };
 }
 function render() {
-  $("ai-open").disabled = busy || selected.size !== 1;
+  $("ai-open").disabled = busy || preparing || selected.size !== 1;
   $("repositories").replaceChildren();
   const filter = $("search").value.toLowerCase();
   for (const repo of repositories.filter((r) =>
@@ -97,19 +179,35 @@ function render() {
     box.onchange = async () => {
       box.checked ? selected.add(repo.path) : selected.delete(repo.path);
       clearAI();
-      invalidate();
       $("selected").textContent = `${selected.size}개 선택`;
-      if (selected.size === 1) await aiRun("memories");
+      schedulePreparation();
     };
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = repo.name;
     const sub = document.createElement("small");
-    sub.textContent = `${repo.profile || "신규"} · ${repo.path}`;
+    sub.textContent = repo.path;
+    const agents = document.createElement("small");
+    agents.className = "agent-badges";
+    for (const agent of ["codex", "claude", "gemini"]) {
+      const badge = document.createElement("span");
+      const status = repo.agents?.[agent] || "확인 필요";
+      badge.className = `agent-badge tone-${statusTone(status)}`;
+      badge.textContent = `${{ codex: "Codex", claude: "Claude", gemini: "Gemini" }[agent]}: ${status}`;
+      agents.append(badge);
+    }
+    name.append(agents);
     name.append(sub);
     const state = document.createElement("span");
-    state.className = "state";
-    state.textContent = repo.error ? "오류" : repo.status;
+    const status = repo.error ? "오류" : repo.status;
+    state.className = `state tone-${statusTone(status)}`;
+    state.textContent = status;
+    if (repo.preparation) {
+      const preparation = document.createElement("small");
+      preparation.className = `preparation tone-${statusTone(repo.preparation)}`;
+      preparation.textContent = repo.preparation;
+      state.append(preparation);
+    }
     row.append(box, name, state);
     $("repositories").append(row);
   }
@@ -140,8 +238,14 @@ function showPreview(repo, data) {
   }
 }
 async function run(action) {
-  if (busy) return;
-  const chosen = repositories.filter((r) => selected.has(r.path));
+  if (busy || preparing) return;
+  if (action === "apply") {
+    updateApply();
+    if ($("apply").disabled) return;
+    clearTimeout(preparationTimer);
+  }
+  const chosen = repositories.filter((r) => selected.has(r.path) &&
+    (action !== "apply" || previews.get(r.path)?.files?.length));
   if (!chosen.length) {
     message("저장소를 먼저 선택하세요.");
     return;
@@ -177,9 +281,13 @@ async function run(action) {
           previews.set(repo.path, result);
           showPreview(repo, result);
         }
-        if (action === "check") repo.status = result.status;
+        if (action === "check") {
+          repo.status = result.status;
+          repo.agents = result.agents;
+        }
         if (action === "apply") {
           previews.delete(repo.path);
+          repo.preparation = "";
           repo.status = result.code ? "적용 오류" : "적용 완료 · 재검사 필요";
           if (!result.code) {
             repo.profile = options(repo).profile;
@@ -189,6 +297,7 @@ async function run(action) {
             try {
               const checked = await api("check", options(repo));
               repo.status = checked.status;
+              repo.agents = checked.agents;
               log(`${repo.name} · 적용 후 상태 확인\n${checked.log}`);
               if (checked.code) failed++;
             } catch (error) {
@@ -241,7 +350,7 @@ async function discoverWorkspace() {
     repositories = data.repositories;
     render();
     message(
-      `${repositories.length}개 저장소 발견 · 대상을 선택하고 1. 상태 확인을 누르세요.`,
+      `${repositories.length}개 저장소 발견 · 대상을 선택하면 검사와 미리보기를 준비합니다.`,
     );
     log("저장소 탐색 완료");
   } catch (e) {
@@ -254,12 +363,8 @@ async function discoverWorkspace() {
 $("discover").onclick = discoverWorkspace;
 $("search").oninput = render;
 for (const id of ["profile", "operation", "visibility", "skills"])
-  $(id).onchange = () => {
-    invalidate();
-    message("설정 변경됨 · 미리보기를 다시 실행하세요.");
-  };
-$("check").onclick = () => run("check");
-$("preview-button").onclick = () => run("preview");
+  $(id).onchange = schedulePreparation;
+$("refresh").onclick = schedulePreparation;
 $("apply").onclick = () => run("apply");
 (async () => {
   controls(true);
@@ -301,7 +406,7 @@ function aiSelection() {
   };
 }
 async function aiRun(action) {
-  if (busy) return;
+  if (busy || preparing) return;
   controls(true);
   $("ai-status").textContent =
     action === "analyze"
@@ -408,16 +513,17 @@ $("ai-rules").oninput = invalidate;
 $("ai-models").onclick = () => aiRun("models");
 $("ai-home").onclick = () => aiRun("memories");
 
-$("ai-open").onclick = () => {
-  if (busy || selected.size !== 1) return;
+$("ai-open").onclick = async () => {
+  if (busy || preparing || selected.size !== 1) return;
   $("ai-project").textContent = [...selected][0];
   $("ai-dialog").showModal();
+  if (homeMemoryTarget !== [...selected][0]) await aiRun("memories");
 };
 $("ai-close").onclick = () => $("ai-dialog").close();
 $("ai-preview").onclick = async () => {
   if (busy || !aiTarget || !selected.has(aiTarget)) return;
   $("ai-dialog").close();
-  await run("preview");
+  schedulePreparation();
 };
 
 let folderInfo = null;

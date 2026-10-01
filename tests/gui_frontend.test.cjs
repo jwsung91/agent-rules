@@ -11,8 +11,9 @@ function element() {
     textContent: "",
     checked: true,
     disabled: false,
-    append() {},
-    replaceChildren() {},
+    children: [],
+    append(...items) { this.children.push(...items); },
+    replaceChildren() { this.children = []; },
     setAttribute() {},
   };
 }
@@ -27,9 +28,11 @@ async function app(checkResult, applyCode = 0) {
   get("operation").value = "auto";
   get("visibility").value = "local";
   const calls = [];
+  const timers = new Map();
+  let timerId = 0;
   const context = vm.createContext({
-    setTimeout: () => 0,
-    clearTimeout: () => {},
+    setTimeout: (fn) => { timers.set(++timerId, fn); return timerId; },
+    clearTimeout: (id) => timers.delete(id),
     document: {
       getElementById: get,
       querySelectorAll: () => [],
@@ -60,12 +63,13 @@ async function app(checkResult, applyCode = 0) {
   );
   await new Promise(setImmediate);
   vm.runInContext(
-    `repositories = [{ path: "/work/demo", name: "demo", profile: null, status: "미설치" }]; selected.add("/work/demo"); previews.set("/work/demo", { token: "preview" });`,
+    `repositories = [{ path: "/work/demo", name: "demo", profile: null, status: "미설치" }]; selected.add("/work/demo"); previews.set("/work/demo", { token: "preview", files: [{path: "AGENTS.md"}] });`,
     context,
   );
   await vm.runInContext('run("apply")', context);
   return {
     context,
+    timers,
     calls,
     get,
     status: vm.runInContext("repositories[0].status", context),
@@ -116,7 +120,7 @@ test("AI proposal stays editable and only enters the reviewed preview", async ()
             memories_used: [],
             memory_files: [],
           }
-        : { code: 0, files: [], token: "reviewed", log: "preview" };
+        : { code: 0, files: [{path: "AGENTS.md", action: "update", diff: "+rule"}], token: "reviewed", log: "preview" };
     return { ok: true, json: async () => result };
   };
   await vm.runInContext('aiRun("analyze")', ui.context);
@@ -240,4 +244,115 @@ test("opening folder picker and IME composition do not prematurely apply text", 
     .onblur({ relatedTarget: { id: "workspace-browse" } });
   await ui.get("workspace").onkeydown({ key: "Enter", isComposing: true });
   assert.equal(ui.changes.length, 0);
+});
+
+
+test("installed agent statuses refresh after apply and check", async () => {
+  const agents = { codex: "설치됨", claude: "설치됨", gemini: "미설치" };
+  const result = await app({ code: 0, status: "정상", log: "healthy", agents });
+  assert.equal(JSON.stringify(vm.runInContext("repositories[0].agents", result.context)), JSON.stringify(agents));
+});
+
+
+async function autoUI() {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  ui.calls.length = 0;
+  ui.context.fetch = async (url, request) => {
+    ui.calls.push([url, JSON.parse(request.body)]);
+    return { ok: true, json: async () => url.endsWith("check")
+      ? { code: 0, status: "정상", log: "check", agents: {} }
+      : { code: 0, files: [{path: "AGENTS.md", action: "update", diff: "+rules"}], token: "fresh", log: "preview" } };
+  };
+  return ui;
+}
+async function flushTimers(ui) {
+  const pending = [...ui.timers.values()];
+  ui.timers.clear();
+  for (const fn of pending) await fn();
+}
+test("selection and rapid settings changes prepare once without applying", async () => {
+  const ui = await autoUI();
+  vm.runInContext("render()", ui.context);
+  const box = ui.get("repositories").children[0].children[0];
+  box.checked = true;
+  await box.onchange();
+  ui.get("profile").value = "claude";
+  ui.get("profile").onchange();
+  ui.get("visibility").value = "tracked";
+  ui.get("visibility").onchange();
+  assert.equal(ui.get("apply").disabled, true);
+  await flushTimers(ui);
+  assert.deepEqual(ui.calls.map(([url]) => url), ["/api/check", "/api/preview"]);
+  assert.ok(ui.calls.every(([, body]) => body.profile === "claude" && body.visibility === "tracked"));
+  assert.equal(ui.get("apply").disabled, false);
+  assert.match(ui.get("apply").textContent, /1개 저장소 \/ 1개 파일/);
+});
+test("stale preview cannot enable apply after settings change", async () => {
+  const ui = await autoUI();
+  let resolvePreview;
+  const normal = ui.context.fetch;
+  ui.context.fetch = async (url, req) => url.endsWith("preview")
+    ? new Promise((resolve) => { resolvePreview = resolve; }) : normal(url, req);
+  vm.runInContext("schedulePreparation()", ui.context);
+  const running = flushTimers(ui);
+  await new Promise(setImmediate);
+  ui.get("profile").value = "claude";
+  ui.get("profile").onchange();
+  resolvePreview({ok: true, json: async () => ({code: 0, token: "stale", files: [{path: "old"}]})});
+  await running;
+  assert.equal(vm.runInContext("previews.size", ui.context), 0);
+  assert.equal(ui.get("apply").disabled, true);
+  ui.context.fetch = normal;
+  await flushTimers(ui);
+  assert.equal(vm.runInContext('previews.get("/work/demo").token', ui.context), "fresh");
+});
+test("no changes, conflicts and request failures never enable apply", async () => {
+  for (const plan of [{code: 0, files: [], token: "noop"}, {code: 2, files: [], token: null}, new Error("offline")]) {
+    const ui = await autoUI();
+    const normal = ui.context.fetch;
+    ui.context.fetch = async (url, req) => {
+      if (url.endsWith("check")) return normal(url, req);
+      if (plan instanceof Error) throw plan;
+      return {ok: true, json: async () => plan};
+    };
+    vm.runInContext("schedulePreparation()", ui.context);
+    await flushTimers(ui);
+    assert.equal(ui.get("apply").disabled, true);
+    await vm.runInContext('run("apply")', ui.context);
+    assert.ok(!ui.calls.some(([url]) => url.endsWith("apply")));
+  }
+});
+test("deselecting while checking discards response and skips preview", async () => {
+  const ui = await autoUI();
+  let resolveCheck;
+  ui.context.fetch = () => new Promise((resolve) => { resolveCheck = resolve; });
+  vm.runInContext("schedulePreparation()", ui.context);
+  const running = flushTimers(ui);
+  vm.runInContext("selected.clear(); schedulePreparation()", ui.context);
+  resolveCheck({ok: true, json: async () => ({code: 0, status: "정상"})});
+  await running;
+  assert.equal(vm.runInContext("previews.size", ui.context), 0);
+  assert.equal(ui.get("apply").disabled, true);
+});
+
+
+test("apply skips unchanged repositories and requires all previews", async () => {
+  const ui = await autoUI();
+  vm.runInContext(`repositories.push({path: "/work/noop", name: "noop", status: "정상"});
+    selected.add("/work/noop");
+    previews.set("/work/demo", {code: 0, token: "change", files: [{path: "AGENTS.md"}]});
+    updateApply();`, ui.context);
+  assert.equal(ui.get("apply").disabled, true);
+  vm.runInContext('previews.set("/work/noop", {code: 0, token: "noop", files: []}); updateApply()', ui.context);
+  assert.equal(ui.get("apply").disabled, false);
+  await vm.runInContext('run("apply")', ui.context);
+  const writes = ui.calls.filter(([url]) => url === "/api/apply");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][1].token, "change");
+});
+test("status colors distinguish warnings, errors, installed and absent", async () => {
+  const ui = await autoUI();
+  for (const [label, tone] of [["설치됨", "success"], ["미설치", "neutral"], ["경고", "warning"], ["준비 실패", "danger"], ["검사 중…", "info"], ["사용자 규칙", "info"]]) {
+    assert.equal(vm.runInContext(`statusTone(${JSON.stringify(label)})`, ui.context), tone);
+  }
 });

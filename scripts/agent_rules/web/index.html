@@ -44,8 +44,9 @@
             aria-label="저장소 검색"
           />
           <p class="hint">
-            ‘검사 전’은 설치 흔적만 발견한 상태입니다. 저장소를 선택하고 상태
-            확인을 실행하세요.
+            에이전트별 표시는 규칙 파일의 설치 여부이며, 스킬 검증 결과는 상태 확인에 반영됩니다.
+            ‘사용자 규칙’은 이 도구로 설치하지 않은 규칙 파일입니다.
+            ‘검사 전’은 설치 흔적만 발견한 상태입니다. 저장소를 선택하면 검사와 미리보기가 자동으로 실행됩니다.
           </p>
           <div id="repositories" class="repositories"></div>
           <p id="empty" class="empty">
@@ -60,7 +61,7 @@
           <div class="settings">
             <label
               >에이전트<select id="profile">
-                <option value="auto">저장소별 자동 (신규: Codex)</option>
+                <option value="auto">기존 설치 유지 (미설치: Codex)</option>
                 <option value="codex">Codex</option>
                 <option value="claude">Claude</option>
                 <option value="gemini">Gemini</option>
@@ -102,23 +103,19 @@
           </div>
           <h2 class="preview-heading">변경 미리보기</h2>
           <div id="preview" class="preview">
-            <p class="empty">대상을 선택하고 미리보기를 실행하세요.</p>
+            <p class="empty">저장소를 선택하면 변경 미리보기가 표시됩니다.</p>
           </div>
         </section>
       </div>
       <p class="hint">
-        진행 순서: 저장소 선택 및 설정 → 1. 상태 확인 → 2. 변경 미리보기 → 3.
-        선택한 변경 적용.<br />상태 확인은 현재 설치 상태를 검사합니다.
-        적용하려면 미리보기가 필수이며, 적용 후에는 자동으로 다시 검사합니다.
-        경고·오류는 실행 로그에서 확인하세요.
+        저장소 선택 및 배포 설정 → 자동 검사·미리보기 → 변경 내용 검토 → 적용.<br />
+        선택이나 설정을 바꾸면 미리보기를 다시 준비합니다. 적용 버튼을 누르기 전에는
+        파일을 변경하지 않으며, 적용 후에는 자동으로 재검사합니다.
       </p>
       <div class="actions">
-        <span id="message" role="status" aria-live="polite">준비됨</span
-        ><button id="check">1. 상태 확인</button
-        ><button id="preview-button">2. 변경 미리보기</button
-        ><button id="apply" class="primary" disabled>
-          3. 선택한 변경 적용
-        </button>
+        <span id="message" role="status" aria-live="polite">저장소를 선택하세요.</span>
+        <button id="refresh">다시 확인</button>
+        <button id="apply" class="primary" disabled>선택한 변경 적용</button>
       </div>
       <section class="panel logs">
         <h2>실행 로그</h2>

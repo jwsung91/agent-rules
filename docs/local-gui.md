@@ -75,15 +75,15 @@ for one trusted local user, not a public or multi-user service.
    Automatic mode uses recorded profiles and syncs existing adoptions; new
    repositories default to Codex installation. Visibility is explicitly selected
    and defaults to local; choose tracked for shared installations.
-4. Run **상태 확인** for the actual health report. Initial discovery only reports
-   whether installation metadata exists; it does not claim version currency.
-5. Run **변경 미리보기** to inspect files, baselines, `.gitignore` changes, and
-   conflicts. Baseline files are included because they will also be written.
-6. **선택한 변경 적용** becomes available only when every selected repository has
-   a valid preview. Successful applies automatically run a health check and show
-   its actual status (including warnings). A failed follow-up check is shown
-   separately from an apply failure; use **상태 확인** to retry. Results and
-   failures are logged per repository.
+4. Selecting repositories or changing deployment settings automatically runs
+   health checks and prepares the file diff after a short debounce.
+5. Review the preview, including baselines and `.gitignore` changes. Stale
+   responses are discarded when the selection or settings change.
+6. **선택한 변경 적용** shows the changed repository and file counts and is enabled
+   only when every selected repository has a valid preview and changes exist.
+   Unchanged repositories are skipped. Applying automatically runs another
+   health check. Use **다시 확인** to retry checks or refresh external changes.
+   Warnings and failures remain visible in the status and execution log.
 
 A preview expires after 15 minutes and can be applied once. Changing the UI
 selection or options discards its preview. The server also rejects a preview
@@ -181,3 +181,7 @@ a blank list preserves existing rules. AI output is never applied automatically.
 The preview expires and rejects intervening managed-file changes as usual.
 
 Frontend regression tests: `node --test tests/gui_frontend.test.cjs`.
+
+저장소 목록에는 Codex·Claude·Gemini 규칙 파일별로 `설치됨`, `미설치`, `사용자 규칙`을 표시합니다. `사용자 규칙`은 agent-rules 메타데이터가 없는 파일이며, 설치 표시는 공유 스킬의 정상 여부를 보증하지 않습니다. 상태 확인과 적용 후 검사에서 표시를 갱신합니다. 에이전트 설정의 `기존 설치 유지 (미설치: Codex)`는 기존 프로필을 사용하며, 신규 저장소에는 Codex를 선택합니다.
+
+저장소 선택 또는 배포 설정 변경 시 350ms 동안 연속 입력을 모은 뒤 상태 검사와 변경 미리보기를 순서대로 실행합니다. 설정 변경 전 응답은 폐기하며, 충돌·실패·변경 없음 상태에서는 적용을 막습니다. 실제 파일 변경은 변경 저장소·파일 수가 표시된 적용 버튼으로만 실행합니다. `다시 확인`으로 외부 변경도 재검사할 수 있습니다. 상태 색상은 초록(정상·설치), 회색(미설치), 파랑(진행·사용자 규칙), 주황(경고), 빨강(실패)이며 문구를 함께 제공합니다. AI 분석은 자동 실행하지 않습니다.

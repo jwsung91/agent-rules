@@ -21,6 +21,7 @@ from .checking import check_adoption
 from .constants import DEFAULT_SHARED_URL, VALID_PROFILES, VALID_VISIBILITIES
 from .gitignore import add_to_gitignore
 from .gitio import find_repo_root
+from .metadata import parse_metadata
 from .models import AdoptionPlan
 from .planning import build_plan
 from .source import (
@@ -231,6 +232,21 @@ class DeploymentService:
         digest.update(source_head.encode())
         return digest.hexdigest()
 
+    @staticmethod
+    def agent_status(repo: Path) -> dict[str, str]:
+        statuses = {}
+        for agent, filename in (
+            ("codex", "AGENTS.md"), ("claude", "CLAUDE.md"), ("gemini", "GEMINI.md")
+        ):
+            path = repo / filename
+            if not path.is_file():
+                statuses[agent] = "미설치"
+            elif parse_metadata(path.read_text(encoding="utf-8", errors="replace")):
+                statuses[agent] = "설치됨"
+            else:
+                statuses[agent] = "사용자 규칙"
+        return statuses
+
     def discover(self) -> dict:
         from generate_batch_list import find_git_repos
 
@@ -246,6 +262,7 @@ class DeploymentService:
                         "path": str(repo),
                         "name": repo.name,
                         "profile": profile,
+                        "agents": self.agent_status(repo),
                         "status": "검사 전" if profile else "미설치",
                     }
                 )
@@ -271,6 +288,7 @@ class DeploymentService:
             "code": code,
             "status": {0: "정상", 1: "확인 필요", 2: "경고"}.get(code, "오류"),
             "log": output.getvalue(),
+            "agents": self.agent_status(repo),
         }
 
     @staticmethod
