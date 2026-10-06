@@ -392,6 +392,7 @@ $("log-copy").onclick = async () => {
         : "추가 메모리는 AI 실행 환경의 절대 경로를 입력하세요.";
     $("workspace").value = data.workspace;
     controls(false);
+    await discoverWorkspace();
     await aiRun("models");
   } catch (e) {
     message(e.message);

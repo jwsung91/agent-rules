@@ -18,6 +18,8 @@ function element() {
   };
 }
 
+const startupRepo = { path: "/work/startup", name: "startup", profile: null, status: "미설치" };
+
 async function app(checkResult, applyCode = 0) {
   const elements = new Map();
   const get = (id) => {
@@ -48,6 +50,11 @@ async function app(checkResult, applyCode = 0) {
         };
       if (url === "/api/ai/models")
         return { ok: true, json: async () => ({ models: [] }) };
+      if (url === "/api/workspace/change" && !calls.length)
+        return {
+          ok: true,
+          json: async () => ({ workspace: "/work", repositories: [startupRepo] }),
+        };
       calls.push([url, JSON.parse(request.body)]);
       if (url === "/api/check" && checkResult instanceof Error)
         throw checkResult;
@@ -64,6 +71,7 @@ async function app(checkResult, applyCode = 0) {
     context,
   );
   await new Promise(setImmediate);
+  const startupRepositories = vm.runInContext("repositories.map((r) => r.name)", context);
   vm.runInContext(
     `repositories = [{ path: "/work/demo", name: "demo", profile: null, status: "미설치" }]; selected.add("/work/demo"); previews.set("/work/demo", { token: "preview", files: [{path: "AGENTS.md"}] });`,
     context,
@@ -74,6 +82,7 @@ async function app(checkResult, applyCode = 0) {
     timers,
     calls,
     copied,
+    startupRepositories,
     get,
     status: vm.runInContext("repositories[0].status", context),
   };
@@ -358,6 +367,11 @@ test("status colors distinguish warnings, errors, installed and absent", async (
   for (const [label, tone] of [["설치됨", "success"], ["미설치", "neutral"], ["경고", "warning"], ["준비 실패", "danger"], ["검사 중…", "info"], ["사용자 규칙", "info"]]) {
     assert.equal(vm.runInContext(`statusTone(${JSON.stringify(label)})`, ui.context), tone);
   }
+});
+
+test("startup discovers the initial workspace so repositories are listed", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  assert.deepEqual(ui.startupRepositories, ["startup"]);
 });
 
 test("log copy button copies the execution log", async () => {
