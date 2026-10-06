@@ -115,6 +115,8 @@ class DeploymentService:
         trailing = value.endswith(("/", "\\"))
         parent = candidate if trailing else candidate.parent
         prefix = "" if trailing else candidate.name.casefold()
+        # Dot-directories only when the typed name asks for one.
+        hidden = prefix.startswith(".")
         try:
             listing = self.browse(str(parent), inspect_repositories=False)
         except (GuiError, OSError):
@@ -124,6 +126,7 @@ class DeploymentService:
                 entry["path"] + os.sep
                 for entry in listing["directories"]
                 if entry["name"].casefold().startswith(prefix)
+                and (hidden or not entry["name"].startswith("."))
             ][:30]
         }
 

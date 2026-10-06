@@ -366,3 +366,24 @@ test("log copy button copies the execution log", async () => {
   assert.deepEqual(ui.copied, [ui.get("log").textContent]);
   assert.match(ui.get("message").textContent, /복사했습니다/);
 });
+
+test("folder picker hides dot-directories unless requested", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  ui.context.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      path: "/home", parent: "/", home: "/home", repository_count: 1,
+      directories: [
+        { name: ".cache", path: "/home/.cache", is_repository: false },
+        { name: "work", path: "/home/work", is_repository: true },
+      ],
+    }),
+  });
+  const names = () => ui.get("folder-list").children.map((b) => b.textContent.split(" · ")[0]);
+  ui.get("folder-hidden").checked = false;
+  await vm.runInContext('browseFolder("/home")', ui.context);
+  assert.deepEqual(names(), ["work"]);
+  ui.get("folder-hidden").checked = true;
+  await ui.get("folder-hidden").onchange();
+  assert.deepEqual(names(), [".cache", "work"]);
+});

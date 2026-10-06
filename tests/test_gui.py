@@ -380,6 +380,22 @@ def test_workspace_path_suggestions_are_read_only(gui, tmp_path):
     )
 
 
+def test_workspace_suggestions_hide_dot_directories_unless_typed(gui, tmp_path):
+    import os
+
+    client, _, _ = gui
+    (tmp_path / ".cache").mkdir()
+    paths = client.post(
+        "/api/workspace/suggest", json={"path": str(tmp_path) + os.sep}
+    ).json()["paths"]
+    assert str(tmp_path / ".cache") + os.sep not in paths
+    assert str(tmp_path / "sample") + os.sep in paths
+    typed = client.post(
+        "/api/workspace/suggest", json={"path": str(tmp_path / ".c")}
+    ).json()["paths"]
+    assert typed == [str(tmp_path / ".cache") + os.sep]
+
+
 def test_claude_proposal_restricts_tools_and_parses_envelope(gui):
     import json
     from agent_rules.gui_ai import analyze

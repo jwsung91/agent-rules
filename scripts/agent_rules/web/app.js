@@ -547,6 +547,8 @@ async function browseFolder(path) {
     folderInfo = await api("workspace/browse", { path });
     $("folder-path").textContent = folderInfo.path;
     for (const directory of folderInfo.directories) {
+      if (directory.name.startsWith(".") && !$("folder-hidden").checked)
+        continue;
       const button = document.createElement("button");
       button.textContent = `${directory.name} · ${directory.is_repository ? "Git 저장소" : "일반 폴더 (탐색용)"}`;
       button.onclick = () => browseFolder(directory.path);
@@ -567,6 +569,8 @@ $("workspace-browse").onclick = () => {
   $("workspace-dialog").showModal();
   browseFolder($("workspace").value.trim());
 };
+$("folder-hidden").onchange = () =>
+  folderInfo && browseFolder(folderInfo.path);
 $("workspace-close").onclick = () => $("workspace-dialog").close();
 $("folder-parent").onclick = () =>
   folderInfo && browseFolder(folderInfo.parent);
