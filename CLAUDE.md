@@ -30,6 +30,7 @@ Use the mode requested by the task. Follow `rules/agent-collaboration.md` for mu
 - Avoid new dependencies unless they have a clear, task-specific justification.
 - Follow repository-local formatter, linter, test, PR template, and verification conventions.
 - Consider risks, compatibility concerns, and validation gaps appropriate to the task.
+- Respond to the user in the language of their latest message. Write commit messages, PR titles and descriptions, code comments, and repository docs in English unless the repository's conventions or PR template use another language. Keep code, commands, identifiers, and required report headings unchanged.
 - Ask for clarification before proceeding when scope is ambiguous, instructions conflict, or a destructive action lacks explicit authorization. See `rules/clarification-protocol.md`.
 
 ## Commit Messages
