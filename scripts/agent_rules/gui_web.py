@@ -218,14 +218,14 @@ def create_app(
     async def ai_memories(selection: Analysis):
         from .gui_ai import home_memories
 
-        if bridge:
-            return await execute(
-                bridge.call,
-                "memories",
-                selection.provider,
-                service.target(selection.path),
-            )
-        return await execute(home_memories, service.target(selection.path))
+        def memories():
+            # Resolve inside execute so a rejected path is a 400, not a 500.
+            repo = service.target(selection.path)
+            if bridge:
+                return bridge.call("memories", selection.provider, repo)
+            return home_memories(repo)
+
+        return await execute(memories)
 
     @app.post("/api/ai/connection")
     async def ai_connection(selection: ProviderSelection):

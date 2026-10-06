@@ -203,16 +203,34 @@ def build_entrypoint_plans(
             _existing = _primary_path.read_text(encoding="utf-8", errors="replace")
             if parse_metadata(_existing):
                 update = True
-            elif _primary == "AGENTS.md":
-                merge = True
             else:
-                update = True
+                merge = True
     plans: list[FilePlan] = []
+
+    def merged(
+        relative_path: str, existing: str, rendered: str, metadata: str
+    ) -> tuple[str, str]:
+        # Keep a hand-written entrypoint and add what agent-rules needs.
+        content = merge_agents_content(
+            existing,
+            rendered,
+            metadata,
+            context.shared_rules_url,
+            skills_section=(
+                shared_skills_section(relative_path) if context.install_skills else ""
+            ),
+        )
+        return content, ("no-op" if same_content(content, existing) else "merge")
+
     primary_file = required_files_for_profile(profile)[0]
     for relative_path in required_files_for_profile(profile):
         rendered = render_file_for_profile(relative_path, context)
         path = target_repo / relative_path
         baseline_existed = (target_repo / sync_base_path(relative_path)).exists()
+        # A merge keeps the user's own text, so the baseline must be the
+        # render: recording the merged file would make the next sync read that
+        # text as an upstream deletion and drop it.
+        merging = False
         action = file_action(target_repo, relative_path, update=update, force=force)
 
         if action == "exists" and not merge:
@@ -238,19 +256,9 @@ def build_entrypoint_plans(
             elif update:
                 content = None
                 action = "metadata-missing"
-            elif merge and relative_path == "AGENTS.md":
-                content = merge_agents_content(
-                    existing,
-                    rendered,
-                    metadata,
-                    context.shared_rules_url,
-                    skills_section=(
-                        shared_skills_section("AGENTS.md")
-                        if context.install_skills
-                        else ""
-                    ),
-                )
-                action = "no-op" if same_content(content, existing) else "merge"
+            elif merge:
+                content, action = merged(relative_path, existing, rendered, metadata)
+                merging = True
             elif force:
                 content = rendered
             else:
@@ -260,20 +268,20 @@ def build_entrypoint_plans(
                 baseline_plan(
                     target_repo,
                     relative_path,
-                    baseline_content_for(baseline_existed, rendered, content),
+                    baseline_content_for(baseline_existed or merging, rendered, content),
                 )
             )
             continue
 
-        if relative_path in TOOL_ENTRYPOINTS and path.exists() and update:
+        if relative_path in TOOL_ENTRYPOINTS and path.exists() and sync:
             existing = path.read_text(encoding="utf-8", errors="replace")
+            metadata = render_metadata(
+                shared_url=context.shared_rules_url,
+                profile=context.profile,
+                source_commit=context.source_commit,
+                generated_at=context.generated_at,
+            )
             if parse_metadata(existing):
-                metadata = render_metadata(
-                    shared_url=context.shared_rules_url,
-                    profile=context.profile,
-                    source_commit=context.source_commit,
-                    generated_at=context.generated_at,
-                )
                 content, action = plan_generated_update(existing, rendered, metadata)
                 content, action = plan_three_way_update(
                     target_repo,
@@ -283,14 +291,14 @@ def build_entrypoint_plans(
                     fallback=(content, action),
                 )
             else:
-                content = None
-                action = "metadata-missing"
+                content, action = merged(relative_path, existing, rendered, metadata)
+                merging = True
             plans.append(FilePlan(path=relative_path, action=action, content=content))
             plans.append(
                 baseline_plan(
                     target_repo,
                     relative_path,
-                    baseline_content_for(baseline_existed, rendered, content),
+                    baseline_content_for(baseline_existed or merging, rendered, content),
                 )
             )
             continue

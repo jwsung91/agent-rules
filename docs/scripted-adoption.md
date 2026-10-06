@@ -268,7 +268,7 @@ Use `--sync` when the target repository already has an agent file. The helper au
 - **merge conflict** → stops before writing any file. Use `--dry-run` to inspect the conflict, reconcile the local edit, or use `--force` intentionally.
 - **metadata present, baseline absent** → uses the legacy managed-block refresh once and records a baseline for future 3-way merges.
 - **metadata present, no managed markers** → refused. The markers are what separates shared content from yours; without them a sync would either discard local edits or leave the old shared sections behind as duplicates. Re-run with `--force` to regenerate from the templates. The previous file is copied under `.agent-rules/backups/<timestamp>/` first.
-- **no metadata** → merges shared sections into the existing file without overwriting it (AGENTS.md only).
+- **no metadata** → merges shared sections into the existing AGENTS.md, CLAUDE.md or GEMINI.md without overwriting it, and records the shared source as the baseline so later syncs keep the existing text.
 
 ```bash
 python scripts/adopt.py /path/to/repo --sync --dry-run

@@ -1770,21 +1770,30 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         self.assertIn("Outdated managed rule.", updated)
         self.assertIn("Keep this local section.", updated)
 
-    def test_sync_all_profile_refuses_claude_without_metadata(self) -> None:
-        self.assertEqual(self.cli("--profile", "all").returncode, 0)
+    def test_sync_all_profile_merges_hand_written_claude(self) -> None:
+        # Adding claude to a codex adoption: CLAUDE.md is the user's own file.
+        self.assertEqual(self.cli("--profile", "codex").returncode, 0)
         claude_path = self.repo / "CLAUDE.md"
-        # Simulate a hand-edited CLAUDE.md that predates the agent-rules metadata block.
-        stripped = adopt.METADATA_RE.sub("", claude_path.read_text(encoding="utf-8"), count=1)
-        claude_path.write_text(stripped.lstrip("\n"), encoding="utf-8")
+        claude_path.write_text("# project\n\nKeep this rule.\n", encoding="utf-8")
 
         result = self.cli("--profile", "all", "--sync")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(
-            "Refusing to update file without agent-rules metadata",
-            result.stderr + result.stdout,
-        )
-        # The file must be left untouched, not silently overwritten.
-        self.assertEqual(claude_path.read_text(encoding="utf-8"), stripped.lstrip("\n"))
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        content = claude_path.read_text(encoding="utf-8")
+        # Merged, not overwritten: the hand-written text stays.
+        self.assertIn("Keep this rule.", content)
+        self.assertTrue(adopt.parse_metadata(content))
+        self.assertTrue((self.repo / "GEMINI.md").exists())
+        again = self.cli("--profile", "all", "--sync")
+        self.assertEqual(again.returncode, 0, again.stderr + again.stdout)
+        self.assertIn("Keep this rule.", claude_path.read_text(encoding="utf-8"))
+
+    def test_sync_claude_profile_merges_hand_written_claude(self) -> None:
+        (self.repo / "CLAUDE.md").write_text("# CLAUDE.md\n\nKeep this rule.\n", encoding="utf-8")
+        result = self.cli("--profile", "claude", "--sync")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        content = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("Keep this rule.", content)
+        self.assertTrue(adopt.parse_metadata(content))
 
     def test_existing_agents_default_fails(self) -> None:
         (self.repo / "AGENTS.md").write_text("# custom\n", encoding="utf-8")
@@ -1804,6 +1813,13 @@ class AdoptAgentRulesIntegrationTests(unittest.TestCase):
         # --sync on file with metadata should update
         update = self.cli("--profile", "codex", "--sync", "--dry-run")
         self.assertEqual(update.returncode, 0, update.stderr + update.stdout)
+
+    def test_second_sync_keeps_merged_agents_text(self) -> None:
+        (self.repo / "AGENTS.md").write_text("# AGENTS.md\n\nKeep this rule.\n", encoding="utf-8")
+        for _ in range(2):
+            result = self.cli("--profile", "codex", "--sync")
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("Keep this rule.", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
 
     def test_legacy_merge_with_skills_adds_shared_skills_section(self) -> None:
         # Regression: a legacy AGENTS.md that already has Agent Usage Model
