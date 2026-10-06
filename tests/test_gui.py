@@ -76,6 +76,13 @@ def test_discover_skips_hidden_directories(gui):
     assert [r["path"] for r in found] == [str(repo)]
 
 
+def test_ai_memories_rejects_path_outside_workspace(gui, tmp_path_factory):
+    client, _, _ = gui
+    outside = tmp_path_factory.mktemp("outside")
+    response = client.post("/api/ai/memories", json={"path": str(outside)})
+    assert response.status_code == 400, response.text
+
+
 def test_changed_file_invalidates_approval(gui):
     client, _, repo = gui
     plan = preview(client, repo)
