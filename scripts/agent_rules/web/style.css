@@ -427,6 +427,12 @@ textarea {
   font-size: 12px;
   padding: 7px 10px;
 }
+.ai-tools .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
 .ai-disclosure {
   color: #78889a;
   font-size: 12px;

@@ -18,6 +18,8 @@ function element() {
   };
 }
 
+const startupRepo = { path: "/work/startup", name: "startup", profile: null, status: "미설치" };
+
 async function app(checkResult, applyCode = 0) {
   const elements = new Map();
   const get = (id) => {
@@ -28,11 +30,13 @@ async function app(checkResult, applyCode = 0) {
   get("operation").value = "auto";
   get("visibility").value = "local";
   const calls = [];
+  const copied = [];
   const timers = new Map();
   let timerId = 0;
   const context = vm.createContext({
     setTimeout: (fn) => { timers.set(++timerId, fn); return timerId; },
     clearTimeout: (id) => timers.delete(id),
+    navigator: { clipboard: { writeText: async (text) => { copied.push(text); } } },
     document: {
       getElementById: get,
       querySelectorAll: () => [],
@@ -46,6 +50,11 @@ async function app(checkResult, applyCode = 0) {
         };
       if (url === "/api/ai/models")
         return { ok: true, json: async () => ({ models: [] }) };
+      if (url === "/api/workspace/change" && !calls.length)
+        return {
+          ok: true,
+          json: async () => ({ workspace: "/work", repositories: [startupRepo] }),
+        };
       calls.push([url, JSON.parse(request.body)]);
       if (url === "/api/check" && checkResult instanceof Error)
         throw checkResult;
@@ -62,6 +71,7 @@ async function app(checkResult, applyCode = 0) {
     context,
   );
   await new Promise(setImmediate);
+  const startupRepositories = vm.runInContext("repositories.map((r) => r.name)", context);
   vm.runInContext(
     `repositories = [{ path: "/work/demo", name: "demo", profile: null, status: "미설치" }]; selected.add("/work/demo"); previews.set("/work/demo", { token: "preview", files: [{path: "AGENTS.md"}] });`,
     context,
@@ -71,6 +81,8 @@ async function app(checkResult, applyCode = 0) {
     context,
     timers,
     calls,
+    copied,
+    startupRepositories,
     get,
     status: vm.runInContext("repositories[0].status", context),
   };
@@ -355,4 +367,37 @@ test("status colors distinguish warnings, errors, installed and absent", async (
   for (const [label, tone] of [["설치됨", "success"], ["미설치", "neutral"], ["경고", "warning"], ["준비 실패", "danger"], ["검사 중…", "info"], ["사용자 규칙", "info"]]) {
     assert.equal(vm.runInContext(`statusTone(${JSON.stringify(label)})`, ui.context), tone);
   }
+});
+
+test("startup discovers the initial workspace so repositories are listed", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  assert.deepEqual(ui.startupRepositories, ["startup"]);
+});
+
+test("log copy button copies the execution log", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  await ui.get("log-copy").onclick();
+  assert.deepEqual(ui.copied, [ui.get("log").textContent]);
+  assert.match(ui.get("message").textContent, /복사했습니다/);
+});
+
+test("folder picker hides dot-directories unless requested", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  ui.context.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      path: "/home", parent: "/", home: "/home", repository_count: 1,
+      directories: [
+        { name: ".cache", path: "/home/.cache", is_repository: false },
+        { name: "work", path: "/home/work", is_repository: true },
+      ],
+    }),
+  });
+  const names = () => ui.get("folder-list").children.map((b) => b.textContent.split(" · ")[0]);
+  ui.get("folder-hidden").checked = false;
+  await vm.runInContext('browseFolder("/home")', ui.context);
+  assert.deepEqual(names(), ["work"]);
+  ui.get("folder-hidden").checked = true;
+  await ui.get("folder-hidden").onchange();
+  assert.deepEqual(names(), [".cache", "work"]);
 });

@@ -45,6 +45,7 @@ function controls(value) {
     .forEach((e) => (e.disabled = value));
   updateApply();
   $("ai-close").disabled = false;
+  $("log-copy").disabled = false;
   $("ai-preview").disabled = value || !aiTarget || !selected.has(aiTarget);
   render();
 }
@@ -366,6 +367,14 @@ for (const id of ["profile", "operation", "visibility", "skills"])
   $(id).onchange = schedulePreparation;
 $("refresh").onclick = schedulePreparation;
 $("apply").onclick = () => run("apply");
+$("log-copy").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($("log").textContent);
+    message("실행 로그를 복사했습니다.");
+  } catch (_) {
+    message("로그를 복사하지 못했습니다. 로그를 직접 선택해 복사하세요.");
+  }
+};
 (async () => {
   controls(true);
   try {
@@ -383,6 +392,7 @@ $("apply").onclick = () => run("apply");
         : "추가 메모리는 AI 실행 환경의 절대 경로를 입력하세요.";
     $("workspace").value = data.workspace;
     controls(false);
+    await discoverWorkspace();
     await aiRun("models");
   } catch (e) {
     message(e.message);
@@ -538,6 +548,8 @@ async function browseFolder(path) {
     folderInfo = await api("workspace/browse", { path });
     $("folder-path").textContent = folderInfo.path;
     for (const directory of folderInfo.directories) {
+      if (directory.name.startsWith(".") && !$("folder-hidden").checked)
+        continue;
       const button = document.createElement("button");
       button.textContent = `${directory.name} · ${directory.is_repository ? "Git 저장소" : "일반 폴더 (탐색용)"}`;
       button.onclick = () => browseFolder(directory.path);
@@ -558,6 +570,8 @@ $("workspace-browse").onclick = () => {
   $("workspace-dialog").showModal();
   browseFolder($("workspace").value.trim());
 };
+$("folder-hidden").onchange = () =>
+  folderInfo && browseFolder(folderInfo.path);
 $("workspace-close").onclick = () => $("workspace-dialog").close();
 $("folder-parent").onclick = () =>
   folderInfo && browseFolder(folderInfo.parent);

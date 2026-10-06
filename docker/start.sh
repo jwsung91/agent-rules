@@ -30,6 +30,8 @@ done
 export AGENT_RULES_WORKSPACE="${AGENT_RULES_WORKSPACE:-}"
 [[ -n "$AGENT_RULES_WORKSPACE" && -d "$AGENT_RULES_WORKSPACE" ]] || usage
 AGENT_RULES_WORKSPACE="$(cd "$AGENT_RULES_WORKSPACE" && pwd)"
+# Mount at the host path so the GUI, logs and previews show real paths.
+export AGENT_RULES_CONTAINER_WORKSPACE="$AGENT_RULES_WORKSPACE"
 
 if [[ ! -x "$PY" ]]; then
   python3 -m venv "$VENV"
