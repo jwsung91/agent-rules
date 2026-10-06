@@ -57,7 +57,9 @@ def main() -> int:
     if args.claude:
         os.environ["AGENT_RULES_CLAUDE"] = args.claude
     host = "0.0.0.0" if args.container else "127.0.0.1"
-    app = create_app(DeploymentService(args.workspace.expanduser()), args.port)
+    workspace = args.workspace.expanduser()
+    service = DeploymentService(workspace, home=workspace if args.container else None)
+    app = create_app(service, args.port)
     url = f"http://127.0.0.1:{args.port}"
     # Bind before opening the browser, so an occupied port never opens a
     # different application's page. No reload/workers: preview tokens are local.

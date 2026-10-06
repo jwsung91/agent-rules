@@ -47,8 +47,16 @@ class Preview:
 class DeploymentService:
     """One operation at a time, including legacy stdout-producing helpers."""
 
-    def __init__(self, workspace: Path, shared_url: str = DEFAULT_SHARED_URL):
+    def __init__(
+        self,
+        workspace: Path,
+        shared_url: str = DEFAULT_SHARED_URL,
+        home: Path | None = None,
+    ):
         self.workspace = workspace.resolve(strict=True)
+        # In Docker the user's home is the container's, so callers pass the
+        # mounted workspace as the "home" the folder picker returns to.
+        self.home = home or Path.home()
         if not self.workspace.is_dir():
             raise GuiError("작업 경로는 디렉터리여야 합니다.")
         self.shared_url = shared_url
@@ -98,14 +106,14 @@ class DeploymentService:
             "repository_count": count,
             "path": str(directory),
             "parent": str(directory.parent),
-            "home": str(Path.home()),
+            "home": str(self.home),
             "directories": sorted(children, key=lambda x: x["name"].casefold()),
         }
 
     def suggest_directories(self, value: str) -> dict:
         if not value.strip():
             return {
-                "paths": list(dict.fromkeys([str(self.workspace), str(Path.home())]))
+                "paths": list(dict.fromkeys([str(self.workspace), str(self.home)]))
             }
         candidate = Path(value).expanduser()
         if not candidate.is_absolute():

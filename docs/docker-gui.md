@@ -50,7 +50,10 @@ around ownership errors by globally trusting all Git repositories.
 
 `docker/start.sh` performs the steps above: it creates the venv and token on
 first use, runs `check.sh` (warning only), starts the GUI, then runs the bridge
-in the foreground.
+in the foreground. It also sets `AGENT_RULES_CONTAINER_WORKSPACE` to the host
+path, so the folder is mounted at the same path inside the container and the GUI
+shows real host paths instead of `/workspace/...`. Without it (for example on
+native Windows) the mount stays at `/workspace`.
 
 ```bash
 docker/start.sh [--port PORT] /absolute/path/to/repository-parent

@@ -380,6 +380,12 @@ def test_workspace_path_suggestions_are_read_only(gui, tmp_path):
     )
 
 
+def test_container_home_points_to_mounted_workspace(tmp_path):
+    service = DeploymentService(tmp_path, str(ROOT), home=tmp_path)
+    assert service.browse(str(tmp_path), inspect_repositories=False)["home"] == str(tmp_path)
+    assert service.suggest_directories("")["paths"] == [str(tmp_path.resolve())]
+
+
 def test_workspace_suggestions_hide_dot_directories_unless_typed(gui, tmp_path):
     import os
 

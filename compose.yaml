@@ -8,12 +8,12 @@ services:
         USER_GID: ${AGENT_RULES_GID:-1000}
     ports:
       - "127.0.0.1:${AGENT_RULES_PORT:-8765}:${AGENT_RULES_PORT:-8765}"
-    command: ["python", "scripts/gui.py", "--workspace", "/workspace", "--container", "--port", "${AGENT_RULES_PORT:-8765}"]
+    command: ["python", "scripts/gui.py", "--workspace", "${AGENT_RULES_CONTAINER_WORKSPACE:-/workspace}", "--container", "--port", "${AGENT_RULES_PORT:-8765}"]
     init: true
     volumes:
       - type: bind
         source: ${AGENT_RULES_WORKSPACE:?Set AGENT_RULES_WORKSPACE to your repository parent folder}
-        target: /workspace
+        target: ${AGENT_RULES_CONTAINER_WORKSPACE:-/workspace}
         bind:
           create_host_path: false
       - type: bind
