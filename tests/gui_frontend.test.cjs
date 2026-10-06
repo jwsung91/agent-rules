@@ -28,11 +28,13 @@ async function app(checkResult, applyCode = 0) {
   get("operation").value = "auto";
   get("visibility").value = "local";
   const calls = [];
+  const copied = [];
   const timers = new Map();
   let timerId = 0;
   const context = vm.createContext({
     setTimeout: (fn) => { timers.set(++timerId, fn); return timerId; },
     clearTimeout: (id) => timers.delete(id),
+    navigator: { clipboard: { writeText: async (text) => { copied.push(text); } } },
     document: {
       getElementById: get,
       querySelectorAll: () => [],
@@ -71,6 +73,7 @@ async function app(checkResult, applyCode = 0) {
     context,
     timers,
     calls,
+    copied,
     get,
     status: vm.runInContext("repositories[0].status", context),
   };
@@ -355,4 +358,11 @@ test("status colors distinguish warnings, errors, installed and absent", async (
   for (const [label, tone] of [["설치됨", "success"], ["미설치", "neutral"], ["경고", "warning"], ["준비 실패", "danger"], ["검사 중…", "info"], ["사용자 규칙", "info"]]) {
     assert.equal(vm.runInContext(`statusTone(${JSON.stringify(label)})`, ui.context), tone);
   }
+});
+
+test("log copy button copies the execution log", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  await ui.get("log-copy").onclick();
+  assert.deepEqual(ui.copied, [ui.get("log").textContent]);
+  assert.match(ui.get("message").textContent, /복사했습니다/);
 });

@@ -45,6 +45,7 @@ function controls(value) {
     .forEach((e) => (e.disabled = value));
   updateApply();
   $("ai-close").disabled = false;
+  $("log-copy").disabled = false;
   $("ai-preview").disabled = value || !aiTarget || !selected.has(aiTarget);
   render();
 }
@@ -366,6 +367,14 @@ for (const id of ["profile", "operation", "visibility", "skills"])
   $(id).onchange = schedulePreparation;
 $("refresh").onclick = schedulePreparation;
 $("apply").onclick = () => run("apply");
+$("log-copy").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($("log").textContent);
+    message("실행 로그를 복사했습니다.");
+  } catch (_) {
+    message("로그를 복사하지 못했습니다. 로그를 직접 선택해 복사하세요.");
+  }
+};
 (async () => {
   controls(true);
   try {
