@@ -251,7 +251,7 @@ class DeploymentService:
         from generate_batch_list import find_git_repos
 
         rows = []
-        for repo in find_git_repos(self.workspace, max_depth=3):
+        for repo in find_git_repos(self.workspace, max_depth=3, skip_hidden=True):
             if repo.resolve() == source_repo_root():
                 continue
             try:
