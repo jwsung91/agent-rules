@@ -2,7 +2,7 @@
 # Stop the Docker GUI. Stop the host bridge first with Ctrl+C.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 # compose validates required variables even for down; values are unused.
 export SOURCE_COMMIT="${SOURCE_COMMIT:-unused}"

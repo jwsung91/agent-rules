@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -12,11 +11,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "forward_test.py"
 
-spec = importlib.util.spec_from_file_location("forward_test", SCRIPT)
-forward_test = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-sys.modules["forward_test"] = forward_test
-spec.loader.exec_module(forward_test)
+sys.path.insert(0, str(ROOT / "scripts"))
+from agent_rules.forward_test import runner as forward_test  # noqa: E402
 
 
 FAKE_CLAUDE = '''

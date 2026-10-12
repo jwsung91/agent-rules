@@ -10,8 +10,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from agent_rules.gui_service import DeploymentService  # noqa: E402
-from agent_rules.gui_web import create_app  # noqa: E402
+from agent_rules.gui.service import DeploymentService  # noqa: E402
+from agent_rules.gui.web import create_app  # noqa: E402
 
 
 @pytest.fixture
@@ -50,6 +50,7 @@ def test_discover_preview_apply_sync_and_check(gui):
     client, _, repo = gui
     assert client.get("/").status_code == 200
     assert client.get("/app.js").status_code == 200
+    assert client.get("/style.css").status_code == 200
     found = client.post("/api/discover", json={}).json()["repositories"]
     assert [r["path"] for r in found] == [str(repo)]
     plan = preview(client, repo)
@@ -158,7 +159,7 @@ def test_write_failure_reports_partial_progress(gui):
     client, _, repo = gui
     plan = preview(client, repo)
     with mock.patch(
-        "agent_rules.gui_service.apply_plan", side_effect=OSError("disk full")
+        "agent_rules.gui.service.apply_plan", side_effect=OSError("disk full")
     ):
         response = client.post("/api/apply", json={"token": plan["token"]})
     assert response.json()["code"] == 1
@@ -192,7 +193,7 @@ def test_ai_context_and_mocked_proposal_do_not_write(gui, tmp_path):
     context = client.post("/api/ai/context", json={"path": str(repo)})
     assert str(memory) in context.json()["files"]
     with mock.patch(
-        "agent_rules.gui_ai.analyze",
+        "agent_rules.gui.ai.analyze",
         return_value={
             "rules": [],
             "questions": [],
@@ -211,7 +212,7 @@ def test_ai_context_and_mocked_proposal_do_not_write(gui, tmp_path):
 
 
 def test_ai_output_validation_and_read_only_invocation(gui):
-    from agent_rules.gui_ai import analyze
+    from agent_rules.gui.ai import analyze
 
     _, _, repo = gui
     response = {
@@ -233,10 +234,10 @@ def test_ai_output_validation_and_read_only_invocation(gui):
 
     with (
         mock.patch(
-            "agent_rules.gui_ai.connection",
+            "agent_rules.gui.ai.connection",
             return_value={"ready": True, "path": "codex"},
         ),
-        mock.patch("agent_rules.gui_ai.subprocess.Popen", side_effect=run),
+        mock.patch("agent_rules.gui.ai.subprocess.Popen", side_effect=run),
     ):
         assert analyze(repo, "", [])["rules"][0]["text"] == "Keep API stable."
         response["memories_used"] = ["unknown.md"]
@@ -246,7 +247,7 @@ def test_ai_output_validation_and_read_only_invocation(gui):
 
 def test_ai_timeout_stops_process_group(gui):
     import os
-    from agent_rules.gui_ai import analyze
+    from agent_rules.gui.ai import analyze
 
     _, _, repo = gui
     process = mock.Mock(pid=12345)
@@ -256,12 +257,12 @@ def test_ai_timeout_stops_process_group(gui):
     ]
     with (
         mock.patch(
-            "agent_rules.gui_ai.connection",
+            "agent_rules.gui.ai.connection",
             return_value={"ready": True, "path": "codex"},
         ),
-        mock.patch("agent_rules.gui_ai.subprocess.Popen", return_value=process),
-        mock.patch("agent_rules.gui_ai.subprocess.run") as run,
-        mock.patch("agent_rules.gui_ai.os.killpg", create=True) as killpg,
+        mock.patch("agent_rules.gui.ai.subprocess.Popen", return_value=process),
+        mock.patch("agent_rules.gui.ai.subprocess.run") as run,
+        mock.patch("agent_rules.gui.ai.os.killpg", create=True) as killpg,
     ):
         with pytest.raises(ValueError, match="5분"):
             analyze(repo, "", [])
@@ -273,7 +274,7 @@ def test_ai_timeout_stops_process_group(gui):
 
 
 def test_home_memories_respect_custom_home_and_project(gui, tmp_path, monkeypatch):
-    from agent_rules.gui_ai import home_memories
+    from agent_rules.gui.ai import home_memories
 
     _, _, repo = gui
     home = tmp_path / "codex-home"
@@ -293,7 +294,7 @@ def test_home_memories_respect_custom_home_and_project(gui, tmp_path, monkeypatc
 def test_ai_models_endpoint(gui):
     client, _, _ = gui
     with mock.patch(
-        "agent_rules.gui_ai.models",
+        "agent_rules.gui.ai.models",
         return_value={"models": [{"model": "test", "name": "Test", "default": True}]},
     ):
         response = client.post("/api/ai/models", json={})
@@ -404,7 +405,7 @@ def test_workspace_suggestions_hide_dot_directories_unless_typed(gui, tmp_path):
 
 def test_claude_proposal_restricts_tools_and_parses_envelope(gui):
     import json
-    from agent_rules.gui_ai import analyze
+    from agent_rules.gui.ai import analyze
 
     _, _, repo = gui
     payload = {
@@ -431,10 +432,10 @@ def test_claude_proposal_restricts_tools_and_parses_envelope(gui):
 
     with (
         mock.patch(
-            "agent_rules.gui_ai.connection",
+            "agent_rules.gui.ai.connection",
             return_value={"ready": True, "path": "claude"},
         ),
-        mock.patch("agent_rules.gui_ai.subprocess.Popen", side_effect=run),
+        mock.patch("agent_rules.gui.ai.subprocess.Popen", side_effect=run),
     ):
         assert analyze(repo, "sonnet", [], "claude")["rules"] == []
         payload["is_error"] = True
@@ -445,7 +446,7 @@ def test_claude_proposal_restricts_tools_and_parses_envelope(gui):
 def test_ai_provider_routing_and_validation(gui):
     client, _, repo = gui
     with mock.patch(
-        "agent_rules.gui_ai.analyze", return_value={"rules": []}
+        "agent_rules.gui.ai.analyze", return_value={"rules": []}
     ) as analyze:
         response = client.post(
             "/api/ai/analyze",
@@ -468,11 +469,11 @@ def test_ai_provider_routing_and_validation(gui):
 
 
 def test_claude_auth_requires_logged_in_state(monkeypatch):
-    from agent_rules.gui_ai import connection
+    from agent_rules.gui.ai import connection
 
-    monkeypatch.setattr("agent_rules.gui_ai.executable", lambda provider: "claude")
+    monkeypatch.setattr("agent_rules.gui.ai.executable", lambda provider: "claude")
     with mock.patch(
-        "agent_rules.gui_ai.subprocess.run",
+        "agent_rules.gui.ai.subprocess.run",
         side_effect=[
             mock.Mock(returncode=0, stdout="Claude Code"),
             mock.Mock(returncode=0, stdout='{"loggedIn": false}'),
@@ -483,7 +484,7 @@ def test_claude_auth_requires_logged_in_state(monkeypatch):
 
 def test_claude_memory_respects_config_directory(gui, tmp_path, monkeypatch):
     import re
-    from agent_rules.gui_ai import memory_files, home_memories
+    from agent_rules.gui.ai import memory_files, home_memories
 
     _, _, repo = gui
     home = tmp_path / "claude-home"

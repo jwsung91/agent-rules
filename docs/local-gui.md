@@ -114,15 +114,20 @@ processes running as the same OS user.
 
 ## Implementation and validation
 
-- `scripts/gui.py`: direct-execution launcher and optional browser opening.
-- `scripts/agent_rules/gui_web.py`: loopback HTTP API and bundled static assets.
-- `scripts/agent_rules/gui_service.py`: structured previews and approval state,
+- `scripts/gui.py`, `scripts/ai_bridge.py`: stable command entrypoints.
+- `scripts/agent_rules/gui/launch.py`: direct-execution launcher and optional browser opening.
+- `scripts/agent_rules/gui/web.py`: loopback HTTP API and static asset routes.
+- `scripts/agent_rules/gui/service.py`: structured previews and approval state,
   delegating to existing planning, applying, checking, and discovery modules.
-- `scripts/agent_rules/web/`: plain HTML, CSS, and JavaScript.
+- `scripts/agent_rules/gui/ai.py`: local AI CLI calls and memory inspection.
+- `scripts/agent_rules/gui/bridge.py`, `host_bridge.py`: server-side job exchange
+  and host-side polling, respectively.
+- `scripts/agent_rules/gui/assets/`: plain HTML, CSS, and JavaScript.
 - `tests/test_gui.py`: temporary-repository workflows, stale previews, access
   restrictions, conflicting files, and failure reporting.
 
 Install `requirements-dev.txt` to run the full suite including GUI tests.
+See [repository architecture](architecture.md) for dependency boundaries.
 
 ## Codex and Claude Code rule proposals
 
