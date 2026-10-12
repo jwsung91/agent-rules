@@ -125,4 +125,3 @@ CASES: dict[str, ForwardTestCase] = {
 }
 
 AGENT_PROFILES = {"claude": "claude", "codex": "codex"}
-
