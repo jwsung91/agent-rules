@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .applying import apply_plan
 from .checking import check_adoption
+from .constants import SOURCE_REF
 from .models import BatchEntry
 from .planning import build_plan
 from .source import (
@@ -118,6 +119,7 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
                     visibility=entry_args.visibility,
                     profile_override=profile,
                     problems_only=entry_args.problems_only,
+                    source_ref=getattr(entry_args, "source_ref", SOURCE_REF),
                 )
             else:
                 if not profile:

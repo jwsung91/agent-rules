@@ -9,13 +9,14 @@ from pathlib import Path
 from .applying import apply_plan
 from .batch import run_batch
 from .checking import check_adoption, list_shared_skills
-from .constants import DEFAULT_SHARED_URL, VALID_PROFILES, VALID_VISIBILITIES
+from .constants import DEFAULT_SHARED_URL, SOURCE_REF, VALID_PROFILES, VALID_VISIBILITIES
 from .planning import build_plan
 from .removal import apply_removal, build_removal_plan
 from .source import (
     adoption_is_current,
     infer_profile_from_existing,
     parse_profile,
+    parse_source_ref,
     resolve_target_repo,
     skills_installed,
 )
@@ -55,6 +56,12 @@ def parse_args() -> argparse.Namespace:
         "--shared-url",
         default=DEFAULT_SHARED_URL,
         help=f"Shared rules repository URL. Default: {DEFAULT_SHARED_URL}",
+    )
+    contents.add_argument(
+        "--source-ref",
+        type=parse_source_ref,
+        default=SOURCE_REF,
+        help="Shared source branch for version checks and metadata (default: main).",
     )
     contents.add_argument(
         "--boundary",
@@ -221,13 +228,14 @@ def main() -> int:
             visibility=args.visibility,
             profile_override=profile,
             problems_only=args.problems_only,
+            source_ref=args.source_ref,
         )
 
     plan = build_plan(target_repo, args, profile)
 
     if args.sync and plan.source_status.local_status in {"behind", "different", "diverged"}:
         print(
-            f"FAIL: local agent-rules source status is {plan.source_status.local_status} versus remote main.\n"
+            f"FAIL: local agent-rules source status is {plan.source_status.local_status} versus remote {args.source_ref}.\n"
             "Update local agent-rules first."
         )
         return 1

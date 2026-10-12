@@ -8,7 +8,7 @@ services:
         USER_GID: ${AGENT_RULES_GID:-1000}
     ports:
       - "127.0.0.1:${AGENT_RULES_PORT:-8765}:${AGENT_RULES_PORT:-8765}"
-    command: ["python", "scripts/gui.py", "--workspace", "${AGENT_RULES_CONTAINER_WORKSPACE:-/workspace}", "--container", "--port", "${AGENT_RULES_PORT:-8765}"]
+    command: ["python", "scripts/gui.py", "--workspace", "${AGENT_RULES_CONTAINER_WORKSPACE:-/workspace}", "--container", "--port", "${AGENT_RULES_PORT:-8765}", "--shared-url", "${AGENT_RULES_SHARED_URL:-https://github.com/jwsung91/agent-rules}", "--source-ref", "${AGENT_RULES_SOURCE_REF:-main}", "--max-depth", "${AGENT_RULES_MAX_DEPTH:-3}"]
     init: true
     volumes:
       - type: bind

@@ -165,7 +165,7 @@ def print_summary(
     warnings = list(plan.warnings)
     if plan.source_status.local_status in {"behind", "ahead", "different", "diverged"}:
         warnings.append(
-            f"Local agent-rules source status versus remote main is {plan.source_status.local_status}."
+            f"Local agent-rules source status versus remote {plan.source_status.source_ref} is {plan.source_status.local_status}."
         )
     for status in plan.ignore_statuses:
         if status.warning:
@@ -203,7 +203,7 @@ def print_summary(
 
     print("\nLatest source status:")
     print(f"- local: {plan.source_status.local_head or 'unknown'}")
-    print(f"- remote main: {plan.source_status.remote_head or 'unknown'}")
+    print(f"- remote {plan.source_status.source_ref}: {plan.source_status.remote_head or 'unknown'}")
     print(f"- status: {plan.source_status.local_status}")
 
     if plan.detected.repo_types:

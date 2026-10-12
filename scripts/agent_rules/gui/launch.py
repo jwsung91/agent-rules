@@ -10,6 +10,9 @@ import socket
 import threading
 import webbrowser
 
+from ..constants import DEFAULT_SHARED_URL, SOURCE_REF
+from ..source import parse_source_ref
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -19,7 +22,7 @@ def main() -> int:
         "--workspace",
         required=True,
         type=Path,
-        help="Initial repository parent folder; editable in the GUI. Discovery depth is three.",
+        help="Initial repository parent folder; editable in the GUI. Discovery depth defaults to three.",
     )
     parser.add_argument(
         "--codex", help="Codex CLI executable path (or AGENT_RULES_CODEX)."
@@ -32,6 +35,18 @@ def main() -> int:
         action="store_true",
         help="Bind all container interfaces; publish the port on host loopback only.",
     )
+    parser.add_argument(
+        "--shared-url", default=DEFAULT_SHARED_URL,
+        help="Shared rules repository URL for links and version checks.",
+    )
+    parser.add_argument(
+        "--source-ref", type=parse_source_ref, default=SOURCE_REF,
+        help="Shared source branch (default: main).",
+    )
+    parser.add_argument(
+        "--max-depth", type=int, default=3,
+        help="Repository discovery depth (positive; default: 3).",
+    )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
         "--open-browser",
@@ -39,6 +54,8 @@ def main() -> int:
         help="Open the local URL using this environment's browser handler.",
     )
     args = parser.parse_args()
+    if args.max_depth < 1:
+        parser.error("--max-depth must be positive")
     if not 1024 <= args.port <= 65535:
         parser.error("--port must be between 1024 and 65535")
     if not args.workspace.expanduser().is_dir():
@@ -58,7 +75,10 @@ def main() -> int:
         os.environ["AGENT_RULES_CLAUDE"] = args.claude
     host = "0.0.0.0" if args.container else "127.0.0.1"
     workspace = args.workspace.expanduser()
-    service = DeploymentService(workspace, home=workspace if args.container else None)
+    service = DeploymentService(
+        workspace, args.shared_url, home=workspace if args.container else None,
+        source_ref=args.source_ref, max_depth=args.max_depth,
+    )
     app = create_app(service, args.port)
     url = f"http://127.0.0.1:{args.port}"
     # Bind before opening the browser, so an occupied port never opens a

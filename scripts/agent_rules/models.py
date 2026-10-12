@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .constants import SOURCE_REF
+
 
 @dataclass(frozen=True)
 class RenderContext:
@@ -16,6 +18,7 @@ class RenderContext:
     generated_at: str
     install_skills: bool = False
     codex_skill_root: str = ".agents/skills"
+    source_ref: str = SOURCE_REF
 
 
 @dataclass
@@ -24,6 +27,7 @@ class SourceStatus:
     remote_head: str | None
     local_status: str
     warnings: list[str] = field(default_factory=list)
+    source_ref: str = SOURCE_REF
 
 
 @dataclass

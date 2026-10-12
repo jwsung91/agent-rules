@@ -19,7 +19,7 @@ import time
 from ..discovery import find_git_repos
 from ..applying import apply_plan
 from ..checking import check_adoption
-from ..constants import DEFAULT_SHARED_URL, VALID_PROFILES, VALID_VISIBILITIES
+from ..constants import DEFAULT_SHARED_URL, SOURCE_REF, VALID_PROFILES, VALID_VISIBILITIES
 from ..gitignore import add_to_gitignore
 from ..gitio import find_repo_root
 from ..metadata import parse_metadata
@@ -30,6 +30,7 @@ from ..source import (
     skills_installed,
     source_repo_root,
     local_source_head,
+    parse_source_ref,
 )
 
 
@@ -53,6 +54,9 @@ class DeploymentService:
         workspace: Path,
         shared_url: str = DEFAULT_SHARED_URL,
         home: Path | None = None,
+        *,
+        source_ref: str = SOURCE_REF,
+        max_depth: int = 3,
     ):
         self.workspace = workspace.resolve(strict=True)
         # In Docker the user's home is the container's, so callers pass the
@@ -61,6 +65,10 @@ class DeploymentService:
         if not self.workspace.is_dir():
             raise GuiError("작업 경로는 디렉터리여야 합니다.")
         self.shared_url = shared_url
+        self.source_ref = parse_source_ref(source_ref)
+        if max_depth < 1:
+            raise GuiError("max_depth must be positive")
+        self.max_depth = max_depth
         self.lock = threading.Lock()
         self.previews: dict[str, Preview] = {}
 
@@ -99,7 +107,10 @@ class DeploymentService:
         if inspect_repositories:
             count = sum(
                 "error" not in row
-                for row in DeploymentService(directory, self.shared_url).discover()[
+                for row in DeploymentService(
+                    directory, self.shared_url,
+                    source_ref=self.source_ref, max_depth=self.max_depth,
+                ).discover()[
                     "repositories"
                 ]
             )
@@ -144,10 +155,13 @@ class DeploymentService:
         # Discover before committing the switch: failed navigation keeps the
         # active workspace and its preview approvals intact.
         self.browse(str(candidate), inspect_repositories=False)
-        result = DeploymentService(candidate, self.shared_url).discover()
+        result = DeploymentService(
+            candidate, self.shared_url,
+            source_ref=self.source_ref, max_depth=self.max_depth,
+        ).discover()
         if not any("error" not in row for row in result["repositories"]):
             raise GuiError(
-                "선택 가능한 Git 저장소가 없습니다. .git이 있는 저장소 또는 그 상위 폴더를 선택하세요. 하위 탐색 깊이는 3입니다."
+                f"선택 가능한 Git 저장소가 없습니다. .git이 있는 저장소 또는 그 상위 폴더를 선택하세요. 하위 탐색 깊이는 {self.max_depth}입니다."
             )
         self.workspace = candidate
         self.previews.clear()
@@ -261,7 +275,9 @@ class DeploymentService:
 
     def discover(self) -> dict:
         rows = []
-        for repo in find_git_repos(self.workspace, max_depth=3, skip_hidden=True):
+        for repo in find_git_repos(
+            self.workspace, max_depth=self.max_depth, skip_hidden=True
+        ):
             if repo.resolve() == source_repo_root():
                 continue
             try:
@@ -293,6 +309,7 @@ class DeploymentService:
                 visibility=visibility,
                 profile_override=profile,
                 problems_only=True,
+                source_ref=self.source_ref,
             )
         return {
             "code": code,
@@ -322,6 +339,7 @@ class DeploymentService:
         before = self.fingerprint(repo)
         args = argparse.Namespace(
             shared_url=self.shared_url,
+            source_ref=self.source_ref,
             profile=profile,
             boundary=boundaries or [],
             validation=[],

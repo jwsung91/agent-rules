@@ -161,3 +161,9 @@ restart both with that file. Never commit or share the token.
 
 See [host AI bridge usage](host-ai-bridge.md) for bridge flags and troubleshooting,
 and the [usage index](README.md) for other tools.
+
+Source and discovery settings can be overridden before starting Compose (or
+`start.sh`) with `AGENT_RULES_SHARED_URL`, `AGENT_RULES_SOURCE_REF`, and
+`AGENT_RULES_MAX_DEPTH`. Defaults are the shared repository URL, `main`, and `3`.
+Use a checkout matching that source before building: the settings control
+links, metadata, and version checks, and do not download source content.

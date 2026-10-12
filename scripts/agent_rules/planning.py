@@ -12,6 +12,7 @@ from .constants import (
     ENTRYPOINT_FILES,
     MANAGED_START,
     SHARED_SKILLS,
+    SOURCE_REF,
     TOOL_ENTRYPOINTS,
 )
 from .gitio import check_generated_files_ignored, find_repo_root, three_way_merge
@@ -244,6 +245,7 @@ def build_entrypoint_plans(
                 profile=context.profile,
                 source_commit=context.source_commit,
                 generated_at=context.generated_at,
+                source_ref=context.source_ref,
             )
             if update and parse_metadata(existing):
                 content, action = plan_three_way_update(
@@ -280,6 +282,7 @@ def build_entrypoint_plans(
                 profile=context.profile,
                 source_commit=context.source_commit,
                 generated_at=context.generated_at,
+                source_ref=context.source_ref,
             )
             if parse_metadata(existing):
                 content, action = plan_generated_update(existing, rendered, metadata)
@@ -434,7 +437,7 @@ def build_plan(
 ) -> AdoptionPlan:
     git_root = find_repo_root(target_repo)
     detected = detect_repository_type(target_repo)
-    source_status = get_source_status(args.shared_url)
+    source_status = get_source_status(args.shared_url, getattr(args, "source_ref", SOURCE_REF))
     metadata: dict[str, str] = {}
     for _name in ENTRYPOINT_FILES:
         _p = target_repo / _name
