@@ -13,6 +13,7 @@ from .constants import (
     ENTRYPOINT_SKILL_ROOTS,
     PROFILE_SKILL_ROOTS,
     SHARED_SKILLS,
+    SOURCE_REF,
     SYNC_BASE_ROOT,
     VALID_PROFILES,
     VALIDATION_PLACEHOLDER,
@@ -66,6 +67,7 @@ def check_adoption(
     visibility: str = "local",
     profile_override: str | None = None,
     problems_only: bool = False,
+    source_ref: str = SOURCE_REF,
 ) -> int:
     results: list[tuple[str, str]] = []
     git_root = find_repo_root(target_repo)
@@ -387,13 +389,13 @@ def check_adoption(
     if problems_only and not counts.get("FAIL") and not counts.get("WARN"):
         print("No problems found.")
 
-    source_status = get_source_status(shared_url)
+    source_status = get_source_status(shared_url, source_ref)
     target_status = latest_status_for_target(metadata, source_status)
     local_copy_commit = read_local_copy_commit(target_repo)
 
     print("\nSource status:")
     print(f"- local source HEAD: {source_status.local_head or 'unknown'}")
-    print(f"- remote main HEAD: {source_status.remote_head or 'unknown'}")
+    print(f"- remote {source_ref} HEAD: {source_status.remote_head or 'unknown'}")
     print(f"- local source status: {source_status.local_status}")
     for warning in source_status.warnings:
         print(f"- {warning}")

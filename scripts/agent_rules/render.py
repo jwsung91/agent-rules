@@ -18,6 +18,7 @@ from .constants import (
     MANAGED_START,
     METADATA_RE,
     SHARED_SKILLS,
+    SOURCE_REF,
     SKILL_TRIGGER_PRIORITY_NOTE,
     SKILL_TRIGGER_RULES,
     VALIDATION_PLACEHOLDER,
@@ -77,6 +78,7 @@ def render_template(content: str, context: RenderContext) -> str:
             profile=context.profile,
             source_commit=context.source_commit,
             generated_at=context.generated_at,
+            source_ref=context.source_ref,
         ),
     }
     rendered = content
@@ -101,6 +103,7 @@ def build_render_context(
         source_commit=source_status.local_head or "unknown",
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         install_skills=args.skills,
+        source_ref=getattr(args, "source_ref", SOURCE_REF),
     )
 
 

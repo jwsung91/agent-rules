@@ -13,6 +13,7 @@ def render_metadata(
     profile: str,
     source_commit: str,
     generated_at: str | None = None,
+    source_ref: str = SOURCE_REF,
 ) -> str:
     timestamp = generated_at or datetime.now().astimezone().isoformat(timespec="seconds")
     return "\n".join(
@@ -20,7 +21,7 @@ def render_metadata(
             "<!-- agent-rules:",
             f"source={shared_url}",
             f"profile={profile}",
-            f"source_ref={SOURCE_REF}",
+            f"source_ref={source_ref}",
             f"source_commit={source_commit}",
             f"generated_at={timestamp}",
             "managed_block=true",

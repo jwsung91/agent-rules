@@ -91,9 +91,11 @@ def local_source_head(root: Path | None = None) -> tuple[str | None, str | None]
     return stdout, None
 
 
-def remote_main_head(shared_url: str) -> tuple[str | None, str | None]:
+def remote_main_head(
+    shared_url: str, source_ref: str = SOURCE_REF
+) -> tuple[str | None, str | None]:
     code, stdout, stderr = run_command(
-        ["git", "ls-remote", shared_url, f"refs/heads/{SOURCE_REF}"]
+        ["git", "ls-remote", shared_url, f"refs/heads/{source_ref}"]
     )
     if code != 0 or not stdout:
         return None, stderr or "git ls-remote failed"
@@ -152,29 +154,38 @@ def target_commit_status(
     return "different"
 
 
-_SOURCE_STATUS_CACHE: dict[str, SourceStatus] = {}
+def parse_source_ref(value: str) -> str:
+    code, _, _ = run_command(["git", "check-ref-format", f"refs/heads/{value}"])
+    if not value or value.startswith("-") or code != 0:
+        raise ValueError("source branch must be a valid Git branch name")
+    return value
 
 
-def get_source_status(shared_url: str) -> SourceStatus:
-    # Cached per URL: batch runs would otherwise repeat the same
+_SOURCE_STATUS_CACHE: dict[tuple[str, str], SourceStatus] = {}
+
+
+def get_source_status(shared_url: str, source_ref: str = SOURCE_REF) -> SourceStatus:
+    # Cached per URL and branch: batch runs would otherwise repeat the same
     # `git ls-remote` network call once per repository.
-    cached = _SOURCE_STATUS_CACHE.get(shared_url)
+    key = (shared_url, source_ref)
+    cached = _SOURCE_STATUS_CACHE.get(key)
     if cached is not None:
         return cached
     warnings: list[str] = []
     local_head, local_warning = local_source_head()
     if local_warning:
         warnings.append(f"WARN: local source HEAD unavailable: {local_warning}")
-    remote_head, remote_warning = remote_main_head(shared_url)
+    remote_head, remote_warning = remote_main_head(shared_url, source_ref)
     if remote_warning:
-        warnings.append(f"WARN: remote main HEAD unavailable: {remote_warning}")
+        warnings.append(f"WARN: remote {source_ref} HEAD unavailable: {remote_warning}")
     status = SourceStatus(
         local_head=local_head,
         remote_head=remote_head,
         local_status=resolve_latest_status(local_head, remote_head, source_repo_root()),
         warnings=warnings,
+        source_ref=source_ref,
     )
-    _SOURCE_STATUS_CACHE[shared_url] = status
+    _SOURCE_STATUS_CACHE[key] = status
     return status
 
 

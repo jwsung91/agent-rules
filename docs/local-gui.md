@@ -12,7 +12,7 @@ Run from the agent-rules checkout with Python 3.10+ and Git installed:
 ```bash
 python3 -m venv ~/.venvs/agent-rules
 ~/.venvs/agent-rules/bin/python -m pip install -r requirements-gui.txt
-~/.venvs/agent-rules/bin/python scripts/gui.py --workspace /home/rain/workspace/jwsung91
+~/.venvs/agent-rules/bin/python scripts/gui.py --workspace /path/to/workspace
 ```
 
 If venv creation is unavailable, install your distribution's Python venv
@@ -190,3 +190,21 @@ Frontend regression tests: `node --test tests/gui_frontend.test.cjs`.
 저장소 목록에는 Codex·Claude·Gemini 규칙 파일별로 `설치됨`, `미설치`, `사용자 규칙`을 표시합니다. `사용자 규칙`은 agent-rules 메타데이터가 없는 파일이며, 설치 표시는 공유 스킬의 정상 여부를 보증하지 않습니다. 상태 확인과 적용 후 검사에서 표시를 갱신합니다. 에이전트 설정의 `기존 설치 유지 (미설치: Codex)`는 기존 프로필을 사용하며, 신규 저장소에는 Codex를 선택합니다.
 
 저장소 선택 또는 배포 설정 변경 시 350ms 동안 연속 입력을 모은 뒤 상태 검사와 변경 미리보기를 순서대로 실행합니다. 설정 변경 전 응답은 폐기하며, 충돌·실패·변경 없음 상태에서는 적용을 막습니다. 실제 파일 변경은 변경 저장소·파일 수가 표시된 적용 버튼으로만 실행합니다. `다시 확인`으로 외부 변경도 재검사할 수 있습니다. 상태 색상은 초록(정상·설치), 회색(미설치), 파랑(진행·사용자 규칙), 주황(경고), 빨강(실패)이며 문구를 함께 제공합니다. AI 분석은 자동 실행하지 않습니다.
+
+## Source and discovery settings
+
+Use launch options to select the source repository URL, source branch, and
+repository discovery depth. Defaults remain the shared agent-rules URL, `main`,
+and depth `3` (the workspace root is depth zero). Depth must be positive.
+
+```bash
+python scripts/gui.py --workspace /path/to/workspace \
+  --shared-url https://github.com/your-org/agent-rules \
+  --source-ref stable --max-depth 5
+```
+
+Source options control generated links, metadata, and version checks. Files are
+always generated from the current agent-rules checkout; these options do not
+clone or switch branches. Use a checkout matching the selected source.
+The adoption CLI also accepts `--source-ref` alongside `--shared-url` for
+install, sync, and check operations, including batch operations.
