@@ -25,6 +25,20 @@ Python dependencies, and whichever AI CLI you use. Install and log in to the CLI
 on the host as usual. For WSL repositories, run the bridge and CLI in that same
 WSL distribution.
 
+For an existing setup, use the lifecycle scripts:
+
+```bash
+scripts/docker/start.sh /absolute/path/to/repository-parent
+# In another terminal, check one or both installed host CLIs.
+scripts/docker/check.sh codex claude
+# Stop the foreground bridge with Ctrl+C, then stop the GUI.
+scripts/docker/stop.sh
+```
+
+The scripts previously under `docker/` now live under `scripts/docker/`.
+Dockerfile and Compose configuration remain at the checkout root.
+The manual setup below is also useful on platforms without Bash.
+
 ```bash
 python3 -m venv ~/.venvs/agent-rules
 ~/.venvs/agent-rules/bin/python -m pip install -r requirements-gui.txt
@@ -48,7 +62,7 @@ around ownership errors by globally trusting all Git repositories.
 
 ### Start and stop scripts
 
-`docker/start.sh` performs the steps above: it creates the venv and token on
+`scripts/docker/start.sh` performs the steps above: it creates the venv and token on
 first use, runs `check.sh` (warning only), starts the GUI, then runs the bridge
 in the foreground. It also sets `AGENT_RULES_CONTAINER_WORKSPACE` to the host
 path, so the folder is mounted at the same path inside the container and the GUI
@@ -56,9 +70,9 @@ shows real host paths instead of `/workspace/...`. Without it (for example on
 native Windows) the mount stays at `/workspace`.
 
 ```bash
-docker/start.sh [--port PORT] /absolute/path/to/repository-parent
-docker/stop.sh
-docker/check.sh [codex|claude]...
+scripts/docker/start.sh [--port PORT] /absolute/path/to/repository-parent
+scripts/docker/stop.sh
+scripts/docker/check.sh [codex|claude]...
 ```
 
 `check.sh` reports whether each host CLI is installed and logged in, without
@@ -144,3 +158,6 @@ Host CLI credentials, memories and repositories are unaffected by container
 rebuild/removal. The bridge token file remains on the host. To rotate it, stop
 both processes, create a new token file, update `AGENT_RULES_BRIDGE_TOKEN`, and
 restart both with that file. Never commit or share the token.
+
+See [host AI bridge usage](host-ai-bridge.md) for bridge flags and troubleshooting,
+and the [usage index](README.md) for other tools.

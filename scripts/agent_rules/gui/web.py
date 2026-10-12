@@ -12,8 +12,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from .gui_service import DeploymentService, GuiError
-from .gui_bridge import HostBridge, Reply
+from .service import DeploymentService, GuiError
+from .bridge import HostBridge, Reply
 
 
 class Selection(BaseModel):
@@ -66,7 +66,7 @@ def create_app(
     token = session_token or secrets.token_urlsafe(32)
     origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
-    assets = Path(__file__).parent / "web"
+    assets = Path(__file__).parent / "assets"
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):
@@ -205,7 +205,7 @@ def create_app(
 
     @app.post("/api/ai/models")
     async def ai_models(selection: ProviderSelection):
-        from .gui_ai import models
+        from .ai import models
 
         try:
             if bridge:
@@ -216,7 +216,7 @@ def create_app(
 
     @app.post("/api/ai/memories")
     async def ai_memories(selection: Analysis):
-        from .gui_ai import home_memories
+        from .ai import home_memories
 
         def memories():
             # Resolve inside execute so a rejected path is a 400, not a 500.
@@ -229,14 +229,14 @@ def create_app(
 
     @app.post("/api/ai/connection")
     async def ai_connection(selection: ProviderSelection):
-        from .gui_ai import connection
+        from .ai import connection
 
         if bridge:
             return await execute(bridge.call, "connection", selection.provider)
         return await execute(connection, selection.provider)
 
     def ai_request(selection: Analysis, inspect_only: bool):
-        from .gui_ai import analyze, context
+        from .ai import analyze, context
 
         repo = service.target(selection.path)
         service.guard(repo)

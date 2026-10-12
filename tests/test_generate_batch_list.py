@@ -9,8 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "generate_batch_list.py"
 
-# The script imports `adopt` from its own directory, so that has to be on the
-# path before loading it here.
+# Public scripts and their implementation package live in this directory.
 sys.path.insert(0, str(ROOT / "scripts"))
 import generate_batch_list  # noqa: E402
 ADOPT_SCRIPT = ROOT / "scripts" / "adopt.py"

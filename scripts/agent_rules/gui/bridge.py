@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .gui_service import GuiError
+from .service import GuiError
 
 
 class Job(BaseModel):
@@ -123,7 +123,7 @@ class HostBridge:
 
 
 def host_target(workspace: Path, relative: str) -> Path:
-    from .gui_service import DeploymentService
+    from .service import DeploymentService
 
     value = PurePosixPath(relative)
     if (
@@ -144,15 +144,15 @@ def host_target(workspace: Path, relative: str) -> Path:
 
 
 def run_job(job: Job, workspace: Path, memory_roots: list[Path]) -> dict:
-    from . import gui_ai
+    from . import ai
 
     if job.action == "connection":
-        return gui_ai.connection(job.provider)
+        return ai.connection(job.provider)
     if job.action == "models":
-        return gui_ai.models(job.provider)
+        return ai.models(job.provider)
     repo = host_target(workspace, job.path)
     if job.action == "memories":
-        return gui_ai.home_memories(repo)
+        return ai.home_memories(repo)
     for value in job.memories:
         path = Path(value).expanduser()
         if not path.is_absolute() or not any(
@@ -163,5 +163,5 @@ def run_job(job: Job, workspace: Path, memory_roots: list[Path]) -> dict:
                 "추가 메모리는 작업 경로·기본 메모리 폴더 또는 --memory-root 안에 있어야 합니다."
             )
     if job.action == "context":
-        return {"files": gui_ai.context(repo, job.memories)["files"]}
-    return gui_ai.analyze(repo, job.model, job.memories, job.provider)
+        return {"files": ai.context(repo, job.memories)["files"]}
+    return ai.analyze(repo, job.model, job.memories, job.provider)

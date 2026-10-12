@@ -11,9 +11,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from agent_rules.gui_bridge import HostBridge, Job, Reply, host_target, run_job  # noqa: E402
-from agent_rules.gui_service import DeploymentService, GuiError  # noqa: E402
-from agent_rules.gui_web import create_app  # noqa: E402
+from agent_rules.gui.bridge import HostBridge, Job, Reply, host_target, run_job  # noqa: E402
+from agent_rules.gui.service import DeploymentService, GuiError  # noqa: E402
+from agent_rules.gui.web import create_app  # noqa: E402
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def test_bridge_routes_relative_path_and_never_runs_container_cli(bridge_app):
     client.post("/api/bridge/poll", json={}, headers=worker_headers)
     with (
         mock.patch(
-            "agent_rules.gui_ai.analyze",
+            "agent_rules.gui.ai.analyze",
             side_effect=AssertionError("container CLI must not run"),
         ),
         concurrent.futures.ThreadPoolExecutor() as executor,
@@ -149,7 +149,7 @@ def test_host_paths_and_memory_limits(tmp_path):
         run_job(job, tmp_path, [])
     job.memories = []
     with mock.patch(
-        "agent_rules.gui_ai.analyze", return_value={"rules": []}
+        "agent_rules.gui.ai.analyze", return_value={"rules": []}
     ) as analyze:
         assert run_job(job, tmp_path, []) == {"rules": []}
         analyze.assert_called_once_with(repo, "", [], "codex")

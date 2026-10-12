@@ -390,6 +390,10 @@ case documented above (fixture creation, adoption, a real `claude -p` or
 `codex exec` invocation, and before/after file snapshots and `git status` comparisons to catch
 file changes):
 
+The standalone [forward-testing guide](forward-testing.md) covers setup,
+command options, output files, and result interpretation. This document retains
+the evaluation method and recorded findings.
+
 ```bash
 python scripts/forward_test.py --agent claude --out-dir /path/to/results --runs 2
 python scripts/forward_test.py --agent codex --out-dir /path/to/results --runs 2

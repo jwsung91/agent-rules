@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Start the Docker GUI and the host AI bridge (Linux/WSL). See docs/docker-gui.md.
-# Usage: docker/start.sh [--port PORT] /path/to/repository-parent
+# Usage: scripts/docker/start.sh [--port PORT] /path/to/repository-parent
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 VENV="${AGENT_RULES_VENV:-$HOME/.venvs/agent-rules}"
 PY="$VENV/bin/python"
@@ -43,7 +43,7 @@ if [[ ! -f "$AGENT_RULES_BRIDGE_TOKEN" ]]; then
 fi
 
 # Deployment works without AI, so a missing CLI only warns.
-AGENT_RULES_VENV="$VENV" docker/check.sh || echo "warning: no host AI CLI is ready; AI requests will fail" >&2
+AGENT_RULES_VENV="$VENV" scripts/docker/check.sh || echo "warning: no host AI CLI is ready; AI requests will fail" >&2
 
 URL="http://127.0.0.1:$AGENT_RULES_PORT"
 docker compose up --build -d
@@ -56,7 +56,7 @@ if ! curl -fs -o /dev/null "$URL/"; then
   echo "GUI did not respond at $URL; check: docker compose logs gui" >&2
   exit 1
 fi
-echo "GUI: $URL  (stop bridge: Ctrl+C, stop GUI: docker/stop.sh)"
+echo "GUI: $URL  (stop bridge: Ctrl+C, stop GUI: scripts/docker/stop.sh)"
 
 exec "$PY" scripts/ai_bridge.py \
   --workspace "$AGENT_RULES_WORKSPACE" \

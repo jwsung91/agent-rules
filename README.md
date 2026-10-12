@@ -12,6 +12,12 @@ Supported agents:
 - Claude
 - Gemini
 
+## Usage Guides
+
+See the [usage index](docs/README.md) for prerequisites, commands, and examples
+for each tool. Deployment, repository discovery, local GUI, Docker operation,
+host AI bridge, and live validation have separate guides.
+
 ## Directory Overview
 
 - `AGENTS.md`: Shared coding agent entrypoint.
@@ -21,9 +27,14 @@ Supported agents:
 - `docs/scripted-adoption.md`: Usage guide for the Python adoption helper script.
 - `docs/claude-codex-workflow.md`: Guide for running Codex and Claude together on the same repository.
 - `scripts/adopt.py`: Helper script for creating or checking lightweight target-repository adoption files. This path is the stable entry point; it re-exports the implementation.
-- `scripts/agent_rules/`: Implementation modules behind `adopt.py`, split by concern (constants, models, metadata, gitio, source, render, gitignore, planning, checking, applying, batch, cli).
+- `scripts/agent_rules/`: Shared adoption implementation, batch-list generation, and repository discovery.
+- `scripts/agent_rules/gui/`: Optional GUI, host AI bridge, and their bundled web assets.
+- `scripts/agent_rules/forward_test/`: Live validation fixtures and evidence runner, separate from deployment.
 - `scripts/generate_batch_list.py`: Builds a `repos.toml`/`repos.txt` batch file by scanning a root folder for Git repositories.
-- `docker/`: Start, stop, and host AI CLI check scripts for the Docker GUI and host AI bridge on Linux/WSL.
+- `scripts/gui.py`, `scripts/ai_bridge.py`, `scripts/forward_test.py`: Stable command entrypoints for the GUI, host bridge, and live validation.
+- `scripts/docker/`: Start, stop, and host AI CLI check scripts for the Docker GUI and host AI bridge on Linux/WSL.
+- `docs/architecture.md`: File responsibilities, dependency boundaries, and structure review.
+- `docs/README.md`: Index of usage guides and maintainer documentation.
 - `rules/agent-collaboration.md`: Primary/Review mode and multi-agent collaboration rules.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.

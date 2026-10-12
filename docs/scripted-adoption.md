@@ -160,6 +160,9 @@ Per-repo `profile` overrides the `--profile` flag on the command line.
 
 ### Generating the batch file
 
+See [batch-list usage](batch-list.md) for the discovery command's prerequisites,
+options, output formats, and a deployment example.
+
 `scripts/generate_batch_list.py` builds a `repos.toml`/`repos.txt` by scanning a
 root folder for Git repositories:
 
@@ -587,13 +590,15 @@ The public entrypoints remain stable; implementation modules live under
 | Layer | Files | Responsibility |
 | --- | --- | --- |
 | Public commands | `scripts/adopt.py`, `scripts/generate_batch_list.py` | Adoption API/CLI and repository discovery |
-| Dispatch | `cli.py`, `batch.py` | Arguments, operation selection, per-repository batch execution |
+| Dispatch | `cli.py`, `batch.py`, `batch_list.py` | Arguments, operation selection, per-repository batch execution, candidate list output |
 | Plan | `source.py`, `metadata.py`, `render.py`, `planning.py` | Source/profile detection, content rendering, merge planning |
 | Apply | `applying.py`, `gitignore.py` | Write planned files, backups, visibility rules |
 | Inspect and remove | `checking.py`, `removal.py` | Health reports and ownership-aware removal |
-| Shared support | `models.py`, `constants.py`, `gitio.py` | Data structures, policy constants, Git helpers |
+| Shared support | `models.py`, `constants.py`, `gitio.py`, `discovery.py` | Data structures, policy constants, Git helpers, repository discovery |
 
 `rules/` and `skills/` define behavior; `templates/` defines generated
 entrypoints. `tests/test_adopt.py` and `tests/test_generate_batch_list.py` cover
 installation and discovery. `scripts/forward_test.py` evaluates agent execution
 separately; it is not part of deployment.
+See [repository architecture](architecture.md) for the GUI and live validation
+subpackages and their dependency boundaries.

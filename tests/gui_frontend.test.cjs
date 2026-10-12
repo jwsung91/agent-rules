@@ -65,7 +65,7 @@ async function app(checkResult, applyCode = 0) {
   });
   vm.runInContext(
     fs.readFileSync(
-      path.join(__dirname, "../scripts/agent_rules/web/app.js"),
+      path.join(__dirname, "../scripts/agent_rules/gui/assets/app.js"),
       "utf8",
     ),
     context,

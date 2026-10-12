@@ -16,15 +16,16 @@ import tempfile
 import threading
 import time
 
-from .applying import apply_plan
-from .checking import check_adoption
-from .constants import DEFAULT_SHARED_URL, VALID_PROFILES, VALID_VISIBILITIES
-from .gitignore import add_to_gitignore
-from .gitio import find_repo_root
-from .metadata import parse_metadata
-from .models import AdoptionPlan
-from .planning import build_plan
-from .source import (
+from ..discovery import find_git_repos
+from ..applying import apply_plan
+from ..checking import check_adoption
+from ..constants import DEFAULT_SHARED_URL, VALID_PROFILES, VALID_VISIBILITIES
+from ..gitignore import add_to_gitignore
+from ..gitio import find_repo_root
+from ..metadata import parse_metadata
+from ..models import AdoptionPlan
+from ..planning import build_plan
+from ..source import (
     infer_profile_from_existing,
     skills_installed,
     source_repo_root,
@@ -259,8 +260,6 @@ class DeploymentService:
         return statuses
 
     def discover(self) -> dict:
-        from generate_batch_list import find_git_repos
-
         rows = []
         for repo in find_git_repos(self.workspace, max_depth=3, skip_hidden=True):
             if repo.resolve() == source_repo_root():
