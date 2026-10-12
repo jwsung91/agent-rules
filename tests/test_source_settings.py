@@ -21,7 +21,7 @@ def git(repo, *args):
 
 def test_selected_branch_lookup_and_cache(tmp_path):
     git(tmp_path, "init", "-b", "main")
-    git(tmp_path, "fetch", str(ROOT), "HEAD")
+    git(tmp_path, "fetch", "--update-shallow", str(ROOT), "HEAD")
     main = git(tmp_path, "rev-parse", "FETCH_HEAD")
     stable = main
     git(tmp_path, "update-ref", "refs/heads/main", main)
@@ -42,7 +42,7 @@ def test_gui_selected_source_metadata_and_check(tmp_path):
     shared = tmp_path / "source"
     shared.mkdir()
     git(shared, "init")
-    git(shared, "fetch", str(ROOT), "HEAD")
+    git(shared, "fetch", "--update-shallow", str(ROOT), "HEAD")
     git(shared, "update-ref", "refs/heads/stable", "FETCH_HEAD")
     branch = "stable"
     service = DeploymentService(tmp_path, str(shared), source_ref=branch)
@@ -87,7 +87,7 @@ def test_cli_batch_uses_selected_branch(tmp_path):
     shared = tmp_path / "source"
     shared.mkdir()
     git(shared, "init")
-    git(shared, "fetch", str(ROOT), "HEAD")
+    git(shared, "fetch", "--update-shallow", str(ROOT), "HEAD")
     git(shared, "update-ref", "refs/heads/stable", "FETCH_HEAD")
     repo = tmp_path / "project"
     repo.mkdir()
