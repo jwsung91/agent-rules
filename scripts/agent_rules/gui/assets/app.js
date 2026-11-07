@@ -25,8 +25,7 @@ function logPreparation(repo, kind, text) {
 }
 function clearAI() {
   $("ai-review").hidden = true;
-  $("ai-summary").textContent =
-    "선택 사항 · AI와 함께 프로젝트에 맞는 규칙을 작성하세요.";
+  $("ai-summary").textContent = "저장소 1개를 선택하면 사용할 수 있습니다.";
   homeMemoryTarget = null;
   homeMemorySelected.clear();
   $("ai-memories").value = "";
@@ -49,6 +48,40 @@ function invalidate() {
 }
 function message(text) {
   $("message").textContent = text;
+  $("message").className = "";
+}
+function showLog(open) {
+  $("log-panel").hidden = !open;
+  $("log-toggle").setAttribute("aria-expanded", String(open));
+  $("log-toggle").textContent = open ? "로그 닫기" : "로그";
+}
+// Progress bar: a summary of the visible workflow, never a separate screen.
+const PROFILE_LABELS = { auto: "기존 유지", codex: "Codex", claude: "Claude", gemini: "Gemini", all: "전체" };
+function setStep(n, state, sub) {
+  $(`step-${n}`).className = `is-${state}`;
+  $(`step-${n}-dot`).textContent = state === "done" ? "✓" : state === "blocked" ? "!" : String(n);
+  $(`step-${n}-sub`).textContent = sub;
+}
+function renderSteps() {
+  const chosen = repositories.filter((r) => selected.has(r.path));
+  if (!chosen.length) {
+    setStep(1, "current", "선택 전");
+    for (const n of [2, 3, 4]) setStep(n, "todo", "대기");
+    return;
+  }
+  const plans = chosen.map((r) => previews.get(r.path));
+  const blocked = chosen.some((r, i) => r.preparation === "준비 실패" ||
+    (plans[i] && (!plans[i].token || plans[i].code)));
+  const files = plans.reduce((n, plan) => n + (plan?.files?.length || 0), 0);
+  const ready = plans.every(Boolean);
+  setStep(1, "done", `${chosen.length}개 선택`);
+  setStep(2, "done", `${PROFILE_LABELS[$("profile").value] || "기존 유지"} · ${$("visibility").value === "tracked" ? "공유" : "로컬 전용"}`);
+  if (blocked) setStep(3, "blocked", "적용 불가 · 로그 확인");
+  else if (preparing || scheduled) setStep(3, "current", "준비 중…");
+  else if (ready) setStep(3, "done", files ? `${files}개 파일` : "변경 없음");
+  else setStep(3, "todo", "대기");
+  const applicable = !blocked && ready && files > 0;
+  setStep(4, applicable && !busy ? "current" : "todo", applicable ? "적용 가능" : "대기");
 }
 function controls(value) {
   busy = value;
@@ -58,6 +91,7 @@ function controls(value) {
   updateApply();
   $("ai-close").disabled = false;
   $("log-copy").disabled = false;
+  $("log-toggle").disabled = false;
   $("ai-preview").disabled = value || !aiTarget || !selected.has(aiTarget);
   render();
 }
@@ -68,8 +102,12 @@ function updateApply() {
   $("apply").disabled = busy || preparing || !count ||
     plans.some((plan) => !plan?.token || plan.code);
   $("apply").textContent = count
-    ? `선택한 변경 적용 · ${changed.length}개 저장소 / ${count}개 파일`
-    : "선택한 변경 적용";
+    ? `적용 · ${changed.length}개 저장소 / ${count}개 파일`
+    : "적용";
+  $("preview-summary").textContent = !selected.size ? ""
+    : preparing ? "준비 중…"
+    : count ? `${changed.length}개 저장소 · ${count}개 파일` : "";
+  renderSteps();
 }
 function statusTone(status) {
   if (/오류|실패|불가/.test(status)) return "danger";
@@ -78,8 +116,38 @@ function statusTone(status) {
   if (/정상|설치됨|최신|준비 완료/.test(status)) return "success";
   return "neutral";
 }
+const STATUS_FILTERS = {
+  attention: (tone) => ["warning", "danger", "info"].includes(tone),
+  absent: (tone) => tone === "neutral",
+};
+function visibleRepositories() {
+  const query = $("search").value.toLowerCase();
+  const matches = STATUS_FILTERS[$("filter").value];
+  return repositories.filter((r) => r.name.toLowerCase().includes(query) &&
+    (!matches || matches(statusTone(r.error ? "오류" : r.status || ""))));
+}
+function agentSummary(repo) {
+  const names = { codex: "Codex", claude: "Claude", gemini: "Gemini" };
+  return Object.entries(names)
+    .filter(([key]) => repo.agents?.[key] && repo.agents[key] !== "미설치")
+    .map(([key, name]) => repo.agents[key] === "설치됨" ? name : `${name} (${repo.agents[key]})`)
+    .join(" · ");
+}
+// Radio groups expose a select-like value so the settings code stays unchanged.
+function segmented(id) {
+  const group = $(id);
+  if (!group.querySelectorAll) return;
+  const radios = [...group.querySelectorAll('input[type="radio"]')];
+  Object.defineProperty(group, "value", {
+    get: () => radios.find((r) => r.checked)?.value ?? "",
+    set: (value) => radios.forEach((r) => { r.checked = r.value === value; }),
+  });
+}
+for (const id of ["profile", "operation", "visibility", "filter"]) segmented(id);
+let scheduled = false;
 function schedulePreparation() {
   invalidate();
+  scheduled = selected.size > 0;
   render();
   if (!selected.size) {
     message("저장소를 선택하면 검사와 미리보기가 자동으로 준비됩니다.");
@@ -96,6 +164,7 @@ async function prepareSelection(version = preparationVersion) {
     return;
   }
   preparing = true;
+  scheduled = false;
   updateApply();
   const chosen = repositories.filter((repo) => selected.has(repo.path));
   try {
@@ -125,17 +194,21 @@ async function prepareSelection(version = preparationVersion) {
         if (version !== preparationVersion) return;
         previews.delete(repo.path);
         repo.preparation = "준비 실패";
+        showPreviewNote(repo, "준비 실패 · 로그 확인");
         log(`${repo.name}: ${error.message}`);
       }
       render();
     }
     if (version !== preparationVersion) return;
-    const blocked = chosen.some((repo) => !previews.get(repo.path)?.token || previews.get(repo.path).code);
+    const blockedRepo = chosen.find((repo) => !previews.get(repo.path)?.token || previews.get(repo.path).code);
+    const blocked = !!blockedRepo;
+    if (blocked) showLog(true);
     const changed = chosen.some((repo) => previews.get(repo.path)?.files.length);
     const warnings = chosen.some((repo) => /경고|확인 필요|오류/.test(repo.status));
-    message(blocked ? "준비하지 못한 저장소가 있습니다. 로그 확인 후 다시 확인하세요."
+    message(blocked ? `${blockedRepo.name}: 적용할 수 없습니다 · 로그에서 원인을 확인하세요.`
       : !changed ? (warnings ? "변경 없음 · 검사 경고는 로그에서 확인하세요." : "이미 최신 상태입니다. 적용할 변경이 없습니다.")
-      : `${warnings ? "검사 경고가 있습니다. " : ""}미리보기 준비 완료 · 변경 내용을 검토한 뒤 적용하세요.`);
+      : `${warnings ? "검사 경고가 있습니다. " : ""}변경 내용을 검토한 뒤 적용하세요. 적용 전에는 파일이 바뀌지 않습니다.`);
+    if (blocked) $("message").className = "error";
   } finally {
     preparing = false;
     updateApply();
@@ -178,10 +251,18 @@ function options(repo) {
 function render() {
   $("ai-open").disabled = busy || preparing || selected.size !== 1;
   $("repositories").replaceChildren();
-  const filter = $("search").value.toLowerCase();
-  for (const repo of repositories.filter((r) =>
-    r.name.toLowerCase().includes(filter),
-  )) {
+  const visible = visibleRepositories();
+  const selectable = visible.filter((r) => !r.error);
+  const allSelected = selectable.length > 0 && selectable.every((r) => selected.has(r.path));
+  $("select-all").textContent = allSelected ? "선택 해제" : "전체 선택";
+  $("select-all").disabled = busy || !selectable.length;
+  $("skills").disabled = busy || $("profile").value === "gemini";
+  if (!aiTarget)
+    $("ai-summary").textContent = selected.size === 1
+      ? "선택 사항 · 코드와 메모리를 읽고 규칙을 제안합니다."
+      : "저장소 1개를 선택하면 사용할 수 있습니다.";
+  $("preview-empty").hidden = $("preview").children.length > 0;
+  for (const repo of visible) {
     const row = document.createElement("label");
     row.className = "repo";
     const box = document.createElement("input");
@@ -198,19 +279,13 @@ function render() {
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = repo.name;
-    const sub = document.createElement("small");
-    sub.textContent = repo.path;
-    const agents = document.createElement("small");
-    agents.className = "agent-badges";
-    for (const agent of ["codex", "claude", "gemini"]) {
-      const badge = document.createElement("span");
-      const status = repo.agents?.[agent] || "확인 필요";
-      badge.className = `agent-badge tone-${statusTone(status)}`;
-      badge.textContent = `${{ codex: "Codex", claude: "Claude", gemini: "Gemini" }[agent]}: ${status}`;
-      agents.append(badge);
+    row.title = repo.path;
+    const agents = agentSummary(repo);
+    if (agents) {
+      const sub = document.createElement("small");
+      sub.textContent = agents;
+      name.append(sub);
     }
-    name.append(agents);
-    name.append(sub);
     const state = document.createElement("span");
     const status = repo.error ? "오류" : repo.status;
     state.className = `state tone-${statusTone(status)}`;
@@ -226,17 +301,51 @@ function render() {
   }
   $("empty").hidden = repositories.length > 0;
   $("count").textContent = `${repositories.length}개`;
+  renderSteps();
+}
+function previewGroup(repo, note, failed) {
+  const group = document.createElement("div"),
+    heading = document.createElement("h3"),
+    label = document.createElement("span");
+  group.className = "preview-repo";
+  heading.textContent = repo.name;
+  label.textContent = note;
+  if (failed) label.className = "error";
+  heading.append(label);
+  group.append(heading);
+  $("preview").append(group);
+  return group;
+}
+function showPreviewNote(repo, note) {
+  previewGroup(repo, note, true);
+}
+function diffStat(diff) {
+  let add = 0, del = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) add++;
+    else if (line.startsWith("-") && !line.startsWith("---")) del++;
+  }
+  return `+${add} −${del}`;
 }
 function showPreview(repo, data) {
-  const heading = document.createElement("h3");
-  heading.textContent = `${repo.name} · ${data.files.length}개 변경${data.code ? " · 적용 불가" : ""}`;
-  $("preview").append(heading);
+  const blocked = data.code || !data.token;
+  const group = previewGroup(
+    repo,
+    blocked ? "적용 불가 · 로그 확인" : data.files.length ? `${data.files.length}개 파일` : "이미 최신 상태",
+    blocked,
+  );
   for (const file of data.files) {
     const details = document.createElement("details"),
       summary = document.createElement("summary"),
       pre = document.createElement("pre");
-    summary.textContent = `${file.action} · ${file.path}`;
-    for (const line of file.diff.split("\n")) {
+    const diff = file.diff || "";
+    for (const [className, text] of [["action", file.action], ["path", file.path], ["stat", diffStat(diff)]]) {
+      const part = document.createElement("span");
+      part.className = className;
+      part.textContent = text;
+      summary.append(part);
+    }
+    for (const line of diff.split("\n")) {
       const span = document.createElement("span");
       span.textContent = line + "\n";
       span.className = line.startsWith("+")
@@ -247,7 +356,7 @@ function showPreview(repo, data) {
       pre.append(span);
     }
     details.append(summary, pre);
-    $("preview").append(details);
+    group.append(details);
   }
 }
 async function run(action) {
@@ -337,9 +446,13 @@ async function run(action) {
         : action === "check"
           ? `${chosen.length}개 상태 확인 완료 · 변경하려면 2. 변경 미리보기를 실행하세요.`
           : action === "preview"
-            ? "미리보기 완료 · 내용을 검토한 뒤 3. 선택한 변경 적용을 누르세요."
+            ? "미리보기 완료 · 내용을 검토한 뒤 적용을 누르세요."
             : `${chosen.length}개 적용 및 상태 확인 완료`,
     );
+    if (failed) {
+      $("message").className = "error";
+      showLog(true);
+    }
   } finally {
     controls(false);
     render();
@@ -375,6 +488,30 @@ async function discoverWorkspace() {
 }
 $("discover").onclick = discoverWorkspace;
 $("search").oninput = render;
+$("filter").onchange = render;
+$("select-all").onclick = () => {
+  if (busy) return;
+  const selectable = visibleRepositories().filter((r) => !r.error);
+  const all = selectable.every((r) => selected.has(r.path));
+  for (const repo of selectable)
+    all ? selected.delete(repo.path) : selected.add(repo.path);
+  clearAI();
+  $("selected").textContent = `${selected.size}개 선택`;
+  schedulePreparation();
+};
+$("log-toggle").onclick = () => showLog($("log-panel").hidden);
+["panel-repos", "panel-settings", "panel-review", "apply"].forEach((target, i) => {
+  $(`step-${i + 1}`).onclick = () => {
+    const el = $(target);
+    // Keep the target below the sticky progress bar, which wraps on narrow screens.
+    const offset = document.querySelector(".steps").getBoundingClientRect().bottom + 16;
+    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset, behavior: "smooth" });
+    el.classList.remove("flash");
+    void el.offsetWidth;
+    el.classList.add("flash");
+    if (target === "apply" && !el.disabled) el.focus();
+  };
+});
 for (const id of ["profile", "operation", "visibility", "skills"])
   $(id).onchange = schedulePreparation;
 $("refresh").onclick = schedulePreparation;

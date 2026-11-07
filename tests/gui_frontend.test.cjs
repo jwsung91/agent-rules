@@ -463,3 +463,121 @@ test("repeated preparation logs unchanged output as one line", async () => {
   assert.match(repeated, /미리보기 · 이전 결과와 같음/);
   assert.doesNotMatch(repeated, /\ncheck\n|\npreview\n/);
 });
+
+function steps(ui) {
+  return [1, 2, 3, 4].map((n) => [
+    ui.get(`step-${n}`).className,
+    ui.get(`step-${n}-dot`).textContent,
+    ui.get(`step-${n}-sub`).textContent,
+  ]);
+}
+test("progress steps summarize selection, preparation and apply readiness", async () => {
+  const ui = await autoUI();
+  vm.runInContext("selected.clear(); renderSteps()", ui.context);
+  assert.deepEqual(steps(ui), [
+    ["is-current", "1", "선택 전"],
+    ["is-todo", "2", "대기"],
+    ["is-todo", "3", "대기"],
+    ["is-todo", "4", "대기"],
+  ]);
+  vm.runInContext('selected.add("/work/demo"); schedulePreparation()', ui.context);
+  assert.deepEqual(steps(ui).slice(0, 3), [
+    ["is-done", "✓", "1개 선택"],
+    ["is-done", "✓", "기존 유지 · 로컬 전용"],
+    ["is-current", "3", "준비 중…"],
+  ]);
+  assert.deepEqual(steps(ui)[3], ["is-todo", "4", "대기"]);
+  await flushTimers(ui);
+  assert.deepEqual(steps(ui).slice(2), [
+    ["is-done", "✓", "1개 파일"],
+    ["is-current", "4", "적용 가능"],
+  ]);
+  for (const plan of ['{code: 2, token: "conflict", files: []}', "{code: 0, token: null, files: []}"]) {
+    vm.runInContext(`previews.set("/work/demo", ${plan}); renderSteps()`, ui.context);
+    assert.deepEqual(steps(ui).slice(2), [
+      ["is-blocked", "!", "적용 불가 · 로그 확인"],
+      ["is-todo", "4", "대기"],
+    ]);
+  }
+  vm.runInContext('previews.set("/work/demo", {code: 0, token: "noop", files: []}); renderSteps()', ui.context);
+  assert.deepEqual(steps(ui).slice(2), [
+    ["is-done", "✓", "변경 없음"],
+    ["is-todo", "4", "대기"],
+  ]);
+});
+
+async function filterUI() {
+  const ui = await autoUI();
+  vm.runInContext(`repositories = [
+      {path: "/work/demo", name: "demo", status: "정상"},
+      {path: "/work/warn", name: "warn", status: "경고"},
+      {path: "/work/broken", name: "broken", status: "정상", error: "unreadable"},
+      {path: "/work/user", name: "user", status: "사용자 규칙"},
+      {path: "/work/new", name: "new", status: "미설치"},
+    ];
+    selected.clear(); selected.add("/work/demo");`, ui.context);
+  const visible = () => JSON.parse(vm.runInContext("JSON.stringify(visibleRepositories().map((r) => r.name))", ui.context));
+  return { ...ui, visible };
+}
+test("repository filter combines search text and status", async () => {
+  const ui = await filterUI();
+  ui.get("filter").value = "all";
+  assert.deepEqual(ui.visible(), ["demo", "warn", "broken", "user", "new"]);
+  ui.get("filter").value = "attention";
+  assert.deepEqual(ui.visible(), ["warn", "broken", "user"]);
+  ui.get("filter").value = "absent";
+  assert.deepEqual(ui.visible(), ["new"]);
+  ui.get("filter").value = "attention";
+  ui.get("search").value = "WA";
+  assert.deepEqual(ui.visible(), ["warn"]);
+  ui.get("filter").value = "all";
+  ui.get("search").value = "e";
+  assert.deepEqual(ui.visible(), ["demo", "broken", "user", "new"]);
+});
+test("select all toggles only visible repositories without errors", async () => {
+  const ui = await filterUI();
+  let scheduled = 0;
+  ui.context.countPreparation = () => scheduled++;
+  vm.runInContext("const realPreparation = schedulePreparation; schedulePreparation = () => { countPreparation(); realPreparation(); }", ui.context);
+  const chosen = () => JSON.parse(vm.runInContext("JSON.stringify([...selected].sort())", ui.context));
+  ui.get("filter").value = "attention";
+  ui.get("select-all").onclick();
+  assert.equal(scheduled, 1);
+  assert.deepEqual(chosen(), ["/work/demo", "/work/user", "/work/warn"]);
+  assert.equal(ui.get("select-all").textContent, "선택 해제");
+  ui.get("select-all").onclick();
+  assert.equal(scheduled, 2);
+  assert.deepEqual(chosen(), ["/work/demo"]);
+  assert.equal(ui.get("select-all").textContent, "전체 선택");
+});
+
+test("blocked preparation names the repository, marks an error and opens the log", async () => {
+  const ui = await autoUI();
+  const normal = ui.context.fetch;
+  ui.context.fetch = async (url, req) => url.endsWith("preview")
+    ? { ok: true, json: async () => ({ code: 2, files: [], token: null, log: "conflict" }) }
+    : normal(url, req);
+  ui.get("log-panel").hidden = true;
+  vm.runInContext("schedulePreparation()", ui.context);
+  await flushTimers(ui);
+  assert.match(ui.get("message").textContent, /^demo: 적용할 수 없습니다/);
+  assert.equal(ui.get("message").className, "error");
+  assert.equal(ui.get("log-panel").hidden, false);
+  assert.equal(ui.get("apply").disabled, true);
+  vm.runInContext('message("다음 작업")', ui.context);
+  assert.equal(ui.get("message").className, "");
+});
+
+test("preview file rows count changed lines without diff headers", async () => {
+  const ui = await autoUI();
+  ui.get("preview").replaceChildren();
+  vm.runInContext(`showPreview({name: "demo"}, {code: 0, token: "t", files: [
+    {action: "update", path: "AGENTS.md", diff: "--- a/AGENTS.md\\n+++ b/AGENTS.md\\n@@ -1 +1,2 @@\\n-old\\n+new\\n+more"},
+  ]})`, ui.context);
+  const [group] = ui.get("preview").children;
+  const [heading, details] = group.children;
+  assert.equal(heading.textContent, "demo");
+  assert.equal(heading.children[0].textContent, "1개 파일");
+  const [action, filePath, stat] = details.children[0].children;
+  assert.deepEqual([action.textContent, filePath.textContent, stat.textContent], ["update", "AGENTS.md", "+2 −1"]);
+});
