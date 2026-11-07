@@ -1,0 +1,19 @@
+name: dependabot auto-merge
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    # Only Dependabot PRs in this repository. Auto-merge waits for the
+    # required status checks in main's branch protection before merging.
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'jwsung91/agent-rules'
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
