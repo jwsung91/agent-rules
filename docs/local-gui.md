@@ -7,7 +7,17 @@ runs only the GUI; a host bridge invokes your existing AI CLIs. Dependencies are
 
 ## Linux and WSL
 
-Run from the agent-rules checkout with Python 3.10+ and Git installed:
+Run from the agent-rules checkout with Python 3.10+ and Git installed. The
+launch script creates `~/.venvs/agent-rules` if needed, installs
+`requirements-gui.txt` on every run so dependency updates are picked up, and
+starts the GUI. Options after the workspace are passed to `scripts/gui.py`;
+`AGENT_RULES_VENV` overrides the venv path.
+
+```bash
+scripts/local/start.sh /path/to/workspace [--port 8766] [--open-browser]
+```
+
+The equivalent manual steps:
 
 ```bash
 python3 -m venv ~/.venvs/agent-rules

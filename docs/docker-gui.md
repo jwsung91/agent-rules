@@ -63,7 +63,8 @@ around ownership errors by globally trusting all Git repositories.
 ### Start and stop scripts
 
 `scripts/docker/start.sh` performs the steps above: it creates the venv and token on
-first use, runs `check.sh` (warning only), starts the GUI, then runs the bridge
+first use, installs `requirements-gui.txt` into the venv on every run so
+dependency updates reach the host bridge, runs `check.sh` (warning only), starts the GUI, then runs the bridge
 in the foreground. It also sets `AGENT_RULES_CONTAINER_WORKSPACE` to the host
 path, so the folder is mounted at the same path inside the container and the GUI
 shows real host paths instead of `/workspace/...`. Without it (for example on
@@ -78,8 +79,8 @@ scripts/docker/check.sh [codex|claude]...
 `check.sh` reports whether each host CLI is installed and logged in, without
 consuming AI usage; it exits 1 when none of the checked CLIs is ready.
 
-`--port` defaults to `AGENT_RULES_PORT` or 8765 and is also passed to the
-bridge. `AGENT_RULES_VENV` and `AGENT_RULES_BRIDGE_TOKEN` override the default
+`--port` defaults to `AGENT_RULES_PORT` or 8765, must be 1024-65535 like the
+GUI's own `--port`, and is also passed to the bridge. `AGENT_RULES_VENV` and `AGENT_RULES_BRIDGE_TOKEN` override the default
 venv and token paths. Stop the bridge with Ctrl+C before running `stop.sh`.
 
 ## Native Windows setup
