@@ -445,6 +445,7 @@ test("offline host bridge hides the saved proposal option", async () => {
   vm.runInContext("selected.clear(); selected.add('/work/demo')", ui.context);
   await vm.runInContext("loadSavedProposal()", ui.context);
   assert.equal(ui.get("ai-saved").hidden, true);
+});
 
 test("repeated preparation logs unchanged output as one line", async () => {
   const ui = await autoUI();
