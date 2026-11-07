@@ -16,7 +16,8 @@ RUN printf '%s' "$SOURCE_COMMIT" | grep -Eq '^[0-9a-f]{40}$' \
     && printf '%s\n' "$SOURCE_COMMIT" > .source-commit \
     && mkdir -p /workspace && chown app:app /workspace
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
-    AGENT_RULES_BRIDGE_FILE=/run/secrets/ai-bridge-token
+    AGENT_RULES_BRIDGE_FILE=/run/secrets/ai-bridge-token \
+    AGENT_RULES_WORKSPACE=/workspace
 USER app
 EXPOSE 8765
-CMD ["python", "scripts/gui.py", "--workspace", "/workspace", "--container"]
+CMD ["python", "scripts/gui.py", "--container"]

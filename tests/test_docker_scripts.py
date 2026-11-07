@@ -134,13 +134,93 @@ def test_local_start_from_outside_checkout(tmp_path, shell_environment):
     ]
 
 
-@pytest.mark.parametrize("arguments", [[], ["--port", "8866"], ["missing-folder"]])
-def test_local_start_requires_workspace(tmp_path, shell_environment, arguments):
+def test_local_start_rejects_missing_workspace(tmp_path, shell_environment):
     env, log, _ = shell_environment
     result = subprocess.run(
-        ["bash", str(ROOT / "scripts/local/start.sh"), *arguments],
+        ["bash", str(ROOT / "scripts/local/start.sh"), "missing-folder"],
         cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
     )
     assert result.returncode == 2
     assert "usage:" in result.stderr
     assert not log.exists()
+
+
+@pytest.mark.parametrize("arguments", [[], ["--port", "8866"]])
+def test_local_start_defaults_to_checkout_parent(tmp_path, shell_environment, arguments):
+    env, log, _ = shell_environment
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/local/start.sh"), *arguments],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert calls[-1]["args"] == ["scripts/gui.py", "--workspace", str(ROOT.parent), *arguments]
+
+
+def test_docker_start_resolves_relative_workspace_and_default(tmp_path, shell_environment):
+    env, log, workspace = shell_environment
+    for arguments, expected in (([workspace.name], workspace), ([], ROOT.parent)):
+        log.unlink(missing_ok=True)
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts/docker/start.sh"), *arguments],
+            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        docker = next(json.loads(line) for line in log.read_text().splitlines()
+                      if json.loads(line)["tool"] == "docker")
+        assert docker["workspace"] == docker["container_workspace"] == str(expected)
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/docker/start.sh"), "missing-folder"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 2 and "usage:" in result.stderr
+
+
+def test_docker_start_stops_previous_bridge(tmp_path, shell_environment):
+    env, log, workspace = shell_environment
+    stale = subprocess.Popen(
+        [sys.executable, "-c",
+         "import signal, sys, time\n"
+         "signal.signal(signal.SIGINT, lambda *_: sys.exit(42))\n"
+         "time.sleep(30)",
+         "scripts/ai_bridge.py", "--workspace", str(workspace),
+         "--token-file", env["AGENT_RULES_BRIDGE_TOKEN"]],
+    )
+    try:
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts/docker/start.sh"), str(workspace)],
+            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"Stopping the previous host AI bridge (PID {stale.pid})" in result.stdout
+        assert stale.wait(timeout=5) == 42
+    finally:
+        stale.kill()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "mode", "tool"),
+    [(["--local"], "local", "python"), ([], "docker", "docker")],
+)
+def test_root_start_selects_mode(tmp_path, shell_environment, arguments, mode, tool):
+    env, log, workspace = shell_environment
+    result = subprocess.run(
+        ["bash", str(ROOT / "start.sh"), *arguments, "--port", "8877", str(workspace)],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"agent-rules GUI: {mode} mode" in result.stderr
+    tools = [json.loads(line)["tool"] for line in log.read_text().splitlines()]
+    assert tool in tools
+    if mode == "local":
+        assert "docker" not in tools
+
+
+def test_root_stop_runs_compose_down(tmp_path, shell_environment):
+    env, log, _ = shell_environment
+    result = subprocess.run(
+        ["bash", str(ROOT / "stop.sh")],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(log.read_text().splitlines()[0])["args"] == ["compose", "down"]

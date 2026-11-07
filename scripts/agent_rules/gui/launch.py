@@ -11,7 +11,13 @@ import threading
 import webbrowser
 
 from ..constants import DEFAULT_SHARED_URL, SOURCE_REF
-from ..source import parse_source_ref
+from ..source import parse_source_ref, source_repo_root
+
+
+def env_default(name: str, fallback: str) -> str:
+    # Launch scripts and Compose pass settings through these variables, so the
+    # defaults below are the only copy; an empty value means "use the default".
+    return os.environ.get(name) or fallback
 
 
 def main() -> int:
@@ -20,9 +26,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--workspace",
-        required=True,
         type=Path,
-        help="Initial repository parent folder; editable in the GUI. Discovery depth defaults to three.",
+        default=env_default("AGENT_RULES_WORKSPACE", str(source_repo_root().parent)),
+        help="Initial repository parent folder; editable in the GUI. "
+        "Default: AGENT_RULES_WORKSPACE or the folder containing this checkout.",
     )
     parser.add_argument(
         "--codex", help="Codex CLI executable path (or AGENT_RULES_CODEX)."
@@ -36,18 +43,22 @@ def main() -> int:
         help="Bind all container interfaces; publish the port on host loopback only.",
     )
     parser.add_argument(
-        "--shared-url", default=DEFAULT_SHARED_URL,
-        help="Shared rules repository URL for links and version checks.",
+        "--shared-url", default=env_default("AGENT_RULES_SHARED_URL", DEFAULT_SHARED_URL),
+        help="Shared rules repository URL for links and version checks (or AGENT_RULES_SHARED_URL).",
     )
     parser.add_argument(
-        "--source-ref", type=parse_source_ref, default=SOURCE_REF,
-        help="Shared source branch (default: main).",
+        "--source-ref", type=parse_source_ref,
+        default=env_default("AGENT_RULES_SOURCE_REF", SOURCE_REF),
+        help="Shared source branch (or AGENT_RULES_SOURCE_REF; default: main).",
     )
     parser.add_argument(
-        "--max-depth", type=int, default=3,
-        help="Repository discovery depth (positive; default: 3).",
+        "--max-depth", type=int, default=env_default("AGENT_RULES_MAX_DEPTH", "3"),
+        help="Repository discovery depth (or AGENT_RULES_MAX_DEPTH; positive; default: 3).",
     )
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--port", type=int, default=env_default("AGENT_RULES_PORT", "8765"),
+        help="Listening port (or AGENT_RULES_PORT; 1024-65535; default: 8765).",
+    )
     parser.add_argument(
         "--open-browser",
         action="store_true",
@@ -68,6 +79,13 @@ def main() -> int:
         parser.exit(
             1,
             f"Missing GUI dependency: {exc.name}. Run: python -m pip install -r requirements-gui.txt\n",
+        )
+    bridge_file = os.environ.get("AGENT_RULES_BRIDGE_FILE")
+    if bridge_file and not Path(bridge_file).is_file():
+        parser.exit(
+            1,
+            f"Host bridge token file not found: {bridge_file}\n"
+            "Mount it (compose.yaml does) or unset AGENT_RULES_BRIDGE_FILE to run AI locally.\n",
         )
     if args.codex:
         os.environ["AGENT_RULES_CODEX"] = args.codex

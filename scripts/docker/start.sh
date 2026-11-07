@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Start the Docker GUI and the host AI bridge (Linux/WSL). See docs/docker-gui.md.
-# Usage: scripts/docker/start.sh [--port PORT] /path/to/repository-parent
+# Usage: scripts/docker/start.sh [--port PORT] [/path/to/repository-parent]
+# The workspace defaults to the folder that contains this checkout.
 set -euo pipefail
 
-cd "$(dirname "$0")/../.."
+CALLER="$PWD"
+CHECKOUT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$CHECKOUT"
 # shellcheck source=../lib/venv.sh
 source scripts/lib/venv.sh
 
@@ -16,7 +19,7 @@ export AGENT_RULES_GID="$(id -g)"
 export AGENT_RULES_PORT="${AGENT_RULES_PORT:-8765}"
 
 usage() {
-  echo "usage: $0 [--port PORT] /path/to/repository-parent  (PORT: 1024-65535)" >&2
+  echo "usage: $0 [--port PORT] [/path/to/repository-parent]  (PORT: 1024-65535)" >&2
   exit 2
 }
 
@@ -24,13 +27,16 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --port) [[ $# -ge 2 ]] || usage; AGENT_RULES_PORT="$2"; shift 2 ;;
     -*) usage ;;
-    *) AGENT_RULES_WORKSPACE="$1"; shift ;;
+    *)
+      # Resolve against the caller's directory, not the checkout.
+      AGENT_RULES_WORKSPACE="$(cd "$CALLER" && cd -- "$1" 2>/dev/null && pwd)" || usage
+      shift ;;
   esac
 done
 
 [[ "$AGENT_RULES_PORT" =~ ^[0-9]+$ ]] && (( AGENT_RULES_PORT >= 1024 && AGENT_RULES_PORT <= 65535 )) || usage
-export AGENT_RULES_WORKSPACE="${AGENT_RULES_WORKSPACE:-}"
-[[ -n "$AGENT_RULES_WORKSPACE" && -d "$AGENT_RULES_WORKSPACE" ]] || usage
+export AGENT_RULES_WORKSPACE="${AGENT_RULES_WORKSPACE:-$(dirname "$CHECKOUT")}"
+[[ -d "$AGENT_RULES_WORKSPACE" ]] || usage
 AGENT_RULES_WORKSPACE="$(cd "$AGENT_RULES_WORKSPACE" && pwd)"
 # Mount at the host path so the GUI, logs and previews show real paths.
 export AGENT_RULES_CONTAINER_WORKSPACE="$AGENT_RULES_WORKSPACE"
@@ -45,6 +51,14 @@ fi
 AGENT_RULES_VENV="$VENV" scripts/docker/check.sh || echo "warning: no host AI CLI is ready; AI requests will fail" >&2
 
 URL="http://127.0.0.1:$AGENT_RULES_PORT"
+
+# A bridge left over from an earlier start keeps running old code against the
+# rebuilt GUI; stop it so a restart is a single command.
+for pid in $(pgrep -f -- "scripts/ai_bridge.py .*--token-file $AGENT_RULES_BRIDGE_TOKEN" || true); do
+  echo "Stopping the previous host AI bridge (PID $pid)"
+  kill -INT "$pid" 2>/dev/null || true
+done
+
 docker compose up --build -d
 
 for _ in $(seq 60); do

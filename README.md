@@ -32,6 +32,7 @@ host AI bridge, and live validation have separate guides.
 - `scripts/agent_rules/forward_test/`: Live validation fixtures and evidence runner, separate from deployment.
 - `scripts/generate_batch_list.py`: Builds a `repos.toml`/`repos.txt` batch file by scanning a root folder for Git repositories.
 - `scripts/gui.py`, `scripts/ai_bridge.py`, `scripts/forward_test.py`: Stable command entrypoints for the GUI, host bridge, and live validation.
+- `start.sh`, `stop.sh`: One-command Linux/WSL GUI start (Docker or local) and Docker GUI stop.
 - `scripts/local/start.sh`: Linux/WSL launcher that prepares the GUI venv and starts the local GUI.
 - `scripts/lib/venv.sh`: Venv setup shared by the Linux/WSL launchers; installs `requirements-gui.txt` on every run.
 - `scripts/docker/`: Start, stop, and host AI CLI check scripts for the Docker GUI and host AI bridge on Linux/WSL.
@@ -62,8 +63,11 @@ Run the deployment screen directly on Linux, WSL, or Windows using Python 3.10+
 and Git. GUI dependencies are optional; the existing CLI remains usable without them.
 
 ```bash
-# Linux/WSL: creates or updates the venv, then starts the GUI.
-scripts/local/start.sh /path/to/workspace
+# Linux/WSL, one command: Docker GUI plus host AI bridge when Docker Compose
+# works, otherwise the local GUI. The workspace defaults to the folder that
+# contains this checkout. Rerun it after pulling to restart with new code.
+./start.sh                      # or: ./start.sh --local, ./start.sh /path/to/workspace
+./stop.sh                       # stop the Docker GUI after Ctrl+C
 
 # Manual steps (any platform):
 python3 -m venv ~/.venvs/agent-rules

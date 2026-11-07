@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import secrets
 import time
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
@@ -84,6 +84,13 @@ def main() -> int:
 
     print(f"Host AI bridge: {args.url} · workspace: {workspace}", flush=True)
     disconnected = False
+
+    def report(message):
+        nonlocal disconnected
+        if not disconnected:
+            print(message, flush=True)
+        disconnected = True
+        time.sleep(3)
     try:
         while True:
             try:
@@ -101,14 +108,17 @@ def main() -> int:
                     request("result", reply)
                 else:
                     time.sleep(1)
+            except HTTPError as exc:
+                # Distinguish a wrong token from a GUI that restarted and no
+                # longer waits for this reply (the proposal is saved on the host).
+                report(
+                    "GUI rejected the bridge token; restart the bridge with the GUI's token file."
+                    if exc.code == 403
+                    else f"GUI rejected a bridge request (HTTP {exc.code}); "
+                    "a restarted GUI discards in-flight requests."
+                )
             except (URLError, OSError, ValueError):
-                if not disconnected:
-                    print(
-                        "GUI unavailable or token rejected; check URL, token and GUI process.",
-                        flush=True,
-                    )
-                disconnected = True
-                time.sleep(3)
+                report("GUI unavailable; check the URL and that the GUI is running.")
     except KeyboardInterrupt:
         print("Host AI bridge stopped", flush=True)
     return 0

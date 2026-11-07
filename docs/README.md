@@ -10,6 +10,7 @@ need `requirements-gui.txt`; TOML batch lists need Python 3.11+.
 | --- | --- | --- |
 | Install, sync, check, or remove rules and skills | `python scripts/adopt.py` | [Scripted adoption](scripted-adoption.md) |
 | Build a candidate repository list | `python scripts/generate_batch_list.py` | [Batch-list generation](batch-list.md) |
+| Start the GUI with one command (Linux/WSL) | `./start.sh`, `./stop.sh` | [Local GUI](local-gui.md), [Docker GUI](docker-gui.md) |
 | Preview and apply deployment in a browser | `scripts/local/start.sh` or `python scripts/gui.py` | [Local GUI](local-gui.md) |
 | Run the GUI in Docker on Linux/WSL | `scripts/docker/start.sh`, `stop.sh`, `check.sh` | [Docker GUI](docker-gui.md) |
 | Connect Docker GUI requests to host AI CLIs | `python scripts/ai_bridge.py` | [Host AI bridge](host-ai-bridge.md) |
