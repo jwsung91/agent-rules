@@ -204,6 +204,17 @@ list replaces that local section through the existing preview/apply workflow;
 a blank list preserves existing rules. AI output is never applied automatically.
 The preview expires and rejects intervening managed-file changes as usual.
 
+The latest successful proposal for each repository is saved where the AI runs
+(the host bridge in Docker mode), under `$XDG_CACHE_HOME/agent-rules/ai-proposals/`
+(default `~/.cache/agent-rules/ai-proposals/`; override with
+`AGENT_RULES_PROPOSAL_DIR`). The record is written to a temporary file in the
+same directory and then replaces the previous one, so an interrupted write keeps
+the last complete proposal. Files are owner-only because proposals can quote
+memory contents; target repositories are not modified. After a GUI or container
+restart, **AI로 작성** shows **저장된 제안 불러오기** with the save time, tool,
+and model. If the repository HEAD has moved since the analysis, the note says so;
+loading still requires review and the normal preview/apply workflow.
+
 Frontend regression tests: `node --test tests/gui_frontend.test.cjs`.
 
 저장소 목록에는 Codex·Claude·Gemini 규칙 파일별로 `설치됨`, `미설치`, `사용자 규칙`을 표시합니다. `사용자 규칙`은 agent-rules 메타데이터가 없는 파일이며, 설치 표시는 공유 스킬의 정상 여부를 보증하지 않습니다. 상태 확인과 적용 후 검사에서 표시를 갱신합니다. 에이전트 설정의 `기존 설치 유지 (미설치: Codex)`는 기존 프로필을 사용하며, 신규 저장소에는 Codex를 선택합니다.

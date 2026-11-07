@@ -177,8 +177,10 @@
             >사용할 모델<select id="ai-model">
               <option value="">CLI 기본 모델</option>
             </select></label
-          ><button id="ai-analyze" class="primary">규칙 제안받기</button>
+          ><button id="ai-analyze" class="primary">규칙 제안받기</button
+          ><button id="ai-saved" hidden>저장된 제안 불러오기</button>
         </div>
+        <p id="ai-saved-note" class="hint" hidden></p>
         <p id="ai-model-note" class="hint"></p>
         <p id="ai-status" class="hint" role="status" aria-live="polite">
           준비됨

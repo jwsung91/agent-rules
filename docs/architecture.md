@@ -43,6 +43,7 @@ agent-rules/
 │       │   ├── ai.py               Local AI CLI and memory access
 │       │   ├── bridge.py           Authenticated job exchange and scoped execution
 │       │   ├── host_bridge.py      Host polling command implementation
+│       │   ├── proposals.py        Latest AI proposal per repository on the host
 │       │   └── assets/             HTML, CSS, and JavaScript
 │       └── forward_test/
 │           ├── cases.py            Live test prompts and fixture definitions
