@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared venv setup for the Linux/WSL launch scripts. Source this file from the
 # agent-rules checkout root; do not run it directly.
 

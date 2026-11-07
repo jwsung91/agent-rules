@@ -17,6 +17,7 @@ from .source import (
     infer_profile_from_existing,
     parse_profile,
     parse_source_ref,
+    resolve_source_settings,
     resolve_target_repo,
     skills_installed,
 )
@@ -54,14 +55,18 @@ def parse_args() -> argparse.Namespace:
     )
     contents.add_argument(
         "--shared-url",
-        default=DEFAULT_SHARED_URL,
-        help=f"Shared rules repository URL. Default: {DEFAULT_SHARED_URL}",
+        help=(
+            "Shared rules repository URL. Default: the URL recorded in the target's "
+            f"metadata for --check/--sync, otherwise {DEFAULT_SHARED_URL}"
+        ),
     )
     contents.add_argument(
         "--source-ref",
         type=parse_source_ref,
-        default=SOURCE_REF,
-        help="Shared source branch for version checks and metadata (default: main).",
+        help=(
+            "Shared source branch for version checks and metadata. Default: the "
+            f"recorded branch for --check/--sync, otherwise {SOURCE_REF}."
+        ),
     )
     contents.add_argument(
         "--boundary",
@@ -189,6 +194,8 @@ def main() -> int:
             "Use --force to regenerate from the templates."
         )
         args.sync = True
+
+    resolve_source_settings(args, target_repo)
 
     # Auto-detect profile from existing files when --check or --sync is requested
     if profile is None and (args.check or args.sync or args.remove):

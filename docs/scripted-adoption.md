@@ -495,6 +495,30 @@ If an agent file is already in `.gitignore`, the helper skips the `.gitignore` u
 
 Local copy files (`.agents/agent-rules/`) are different: they are meant to be committed if you want them shared with the team. If `.agents/` is blocked by `.gitignore`, the helper will fail with a message to remove or narrow the ignore rule.
 
+## Source Repository and Branch
+
+Generated metadata records the shared rules URL (`source=`) and branch
+(`source_ref=`); version checks compare the local checkout with that branch on
+that URL. Defaults are `https://github.com/jwsung91/agent-rules` and `main`.
+
+```bash
+# Install from a fork's stable branch.
+python scripts/adopt.py /path/to/repo --profile codex \
+  --shared-url https://github.com/your-org/agent-rules --source-ref stable
+# Later runs keep the recorded URL and branch.
+python scripts/adopt.py /path/to/repo --sync
+python scripts/adopt.py /path/to/repo --check --problems-only
+```
+
+When `--shared-url` or `--source-ref` is omitted, `--sync` and `--check` use the
+values recorded in the target's existing metadata, so a repository installed
+from another URL or branch is neither rewritten to nor checked against the
+defaults. A new installation uses the defaults. Explicit options always win;
+batch runs apply the same rule per repository. `--check` prints the source it
+compared under `Source status`. These options do not clone or switch branches:
+files are generated from the current checkout, so use a checkout that matches
+the selected source.
+
 ## Offline Copy
 
 ```bash

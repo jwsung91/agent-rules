@@ -394,6 +394,7 @@ def check_adoption(
     local_copy_commit = read_local_copy_commit(target_repo)
 
     print("\nSource status:")
+    print(f"- source: {shared_url} ({source_ref})")
     print(f"- local source HEAD: {source_status.local_head or 'unknown'}")
     print(f"- remote {source_ref} HEAD: {source_status.remote_head or 'unknown'}")
     print(f"- local source status: {source_status.local_status}")

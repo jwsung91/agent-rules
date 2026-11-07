@@ -237,4 +237,7 @@ Source options control generated links, metadata, and version checks. Files are
 always generated from the current agent-rules checkout; these options do not
 clone or switch branches. Use a checkout matching the selected source.
 The adoption CLI also accepts `--source-ref` alongside `--shared-url` for
-install, sync, and check operations, including batch operations.
+install, sync, and check operations, including batch operations; see
+[Source repository and branch](scripted-adoption.md#source-repository-and-branch).
+Unlike the CLI, the GUI always uses its launch settings rather than the source
+recorded in each repository.

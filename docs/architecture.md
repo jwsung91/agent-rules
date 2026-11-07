@@ -125,6 +125,7 @@ python -m pytest tests/ -q
 ruff check scripts/ tests/
 node --test tests/gui_frontend.test.cjs
 bash -n start.sh stop.sh scripts/docker/*.sh scripts/local/start.sh scripts/lib/venv.sh
+shellcheck -x start.sh stop.sh scripts/docker/*.sh scripts/local/start.sh scripts/lib/venv.sh
 git diff --check
 ```
 
