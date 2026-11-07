@@ -1,10 +1,20 @@
 version: 2
 updates:
+  # Each ecosystem's updates arrive as one grouped PR, on separate days, so
+  # auto-merged PRs do not leave each other behind main's up-to-date check.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+    groups:
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "tuesday"
+    groups:
+      pip:
+        patterns: ["*"]
