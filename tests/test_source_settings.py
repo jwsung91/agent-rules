@@ -164,3 +164,40 @@ def test_gui_launch_reports_missing_bridge_token(tmp_path):
     assert result.returncode == 1
     assert "Host bridge token file not found" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_sync_and_check_keep_the_recorded_source(tmp_path):
+    shared = tmp_path / "source"
+    shared.mkdir()
+    git(shared, "init")
+    git(shared, "fetch", "--update-shallow", str(ROOT), "HEAD")
+    git(shared, "update-ref", "refs/heads/stable", "FETCH_HEAD")
+    repo = tmp_path / "project"
+    repo.mkdir()
+    git(repo, "init")
+    adopt = [sys.executable, str(ROOT / "scripts/adopt.py"), str(repo)]
+
+    def run(*options, codes=(0,)):
+        result = subprocess.run(adopt + list(options), capture_output=True, text=True, timeout=20)
+        assert result.returncode in codes, result.stdout + result.stderr
+        return result.stdout
+
+    def recorded():
+        metadata = parse_metadata((repo / "AGENTS.md").read_text())
+        return metadata["source"], metadata["source_ref"]
+
+    run("--profile", "codex", "--shared-url", str(shared), "--source-ref", "stable")
+    assert recorded() == (str(shared), "stable")
+    # Without the options, --sync must not rewrite the source to the defaults
+    # and --check must compare against the recorded branch.
+    run("--sync")
+    assert recorded() == (str(shared), "stable")
+    # Exit code 2 only reports warnings such as the boundary placeholder.
+    checked = run("--check", codes=(0, 2))
+    assert "0 FAIL" in checked.splitlines()[0]
+    assert f"- source: {shared} (stable)" in checked
+    assert "remote stable HEAD:" in checked
+    # Explicit options still win.
+    git(shared, "update-ref", "refs/heads/main", "FETCH_HEAD")
+    run("--sync", "--source-ref", "main")
+    assert recorded() == (str(shared), "main")

@@ -19,7 +19,7 @@ if [[ $# -ge 1 && "$1" != -* ]]; then
 fi
 
 cd "$CHECKOUT"
-# shellcheck source=../lib/venv.sh
+# shellcheck source=scripts/lib/venv.sh
 source scripts/lib/venv.sh
 
 VENV="${AGENT_RULES_VENV:-$HOME/.venvs/agent-rules}"

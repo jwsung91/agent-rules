@@ -13,6 +13,7 @@ from .planning import build_plan
 from .source import (
     infer_profile_from_existing,
     parse_profile,
+    resolve_source_settings,
     resolve_target_repo,
     skills_installed,
 )
@@ -103,6 +104,7 @@ def run_batch(batch_file: Path, args: argparse.Namespace) -> int:
             # Per-entry copy: skills inference for one repository must not
             # leak into the rest of the batch.
             entry_args = argparse.Namespace(**vars(args))
+            resolve_source_settings(entry_args, target_repo)
             if (
                 (entry_args.sync or entry_args.check)
                 and not entry_args.skills

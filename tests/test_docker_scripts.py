@@ -224,3 +224,17 @@ def test_root_stop_runs_compose_down(tmp_path, shell_environment):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(log.read_text().splitlines()[0])["args"] == ["compose", "down"]
+
+
+def test_docker_start_stops_when_source_commit_is_unavailable(tmp_path, shell_environment):
+    env, log, workspace = shell_environment
+    fake_git = Path(env["PATH"].split(os.pathsep)[0]) / "git"
+    fake_git.write_text("#!/bin/sh\nexit 1\n")
+    fake_git.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/docker/start.sh"), str(workspace)],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    # `export VAR="$(git ...)"` used to hide this failure from set -e.
+    assert result.returncode != 0
+    assert not log.exists()

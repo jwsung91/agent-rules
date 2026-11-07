@@ -7,6 +7,7 @@ import re
 import time
 
 from .constants import (
+    DEFAULT_SHARED_URL,
     LEGACY_CODEX_SKILL_ROOT,
     ENTRYPOINT_FILES,
     ENTRYPOINT_SKILL_ROOTS,
@@ -205,6 +206,30 @@ def infer_profile_from_existing(target_repo: Path) -> str | None:
             if m.get("profile"):
                 return m["profile"]
     return None
+
+
+def resolve_source_settings(args, target_repo: Path) -> None:
+    """Fill an unset --shared-url/--source-ref for this target.
+
+    --sync and --check keep the source recorded in the existing metadata, so a
+    repository installed from another URL or branch is neither rewritten to
+    nor checked against the defaults. Explicit options always win.
+    """
+    recorded: dict[str, str] = {}
+    if args.check or args.sync:
+        for name in ENTRYPOINT_FILES:
+            path = target_repo / name
+            if path.is_file():
+                recorded = parse_metadata(path.read_text(encoding="utf-8", errors="replace"))
+                if recorded:
+                    break
+    if args.shared_url is None:
+        args.shared_url = recorded.get("source") or DEFAULT_SHARED_URL
+    if args.source_ref is None:
+        try:
+            args.source_ref = parse_source_ref(recorded.get("source_ref") or SOURCE_REF)
+        except ValueError:
+            args.source_ref = SOURCE_REF
 
 
 def adoption_is_current(target_repo: Path, profile: str | None) -> bool:

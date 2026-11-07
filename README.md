@@ -42,7 +42,7 @@ host AI bridge, and live validation have separate guides.
 - `rules/commit-guidelines.md`: Conventional Commits-style commit message rules.
 - `rules/`: Shared rules that apply across agents.
 - `templates/`: Reusable task, review, and target-repository adoption templates.
-- `.github/workflows/tests.yml`: CI workflow that runs the test suite under `tests/` on push and pull request.
+- `.github/workflows/tests.yml`: CI workflow that runs the test suite under `tests/`, ruff, and ShellCheck on push and pull request.
 - `.github/workflows/dependabot-auto-merge.yml`: Enables auto-merge on Dependabot pull requests; they merge only after the required checks pass.
 - `ruff.toml`: Lint configuration for `scripts/` and `tests/`, pinning the rule selection CI enforces so a ruff upgrade cannot change it silently.
 

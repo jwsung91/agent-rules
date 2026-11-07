@@ -7,15 +7,17 @@ set -euo pipefail
 CALLER="$PWD"
 CHECKOUT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$CHECKOUT"
-# shellcheck source=../lib/venv.sh
+# shellcheck source=scripts/lib/venv.sh
 source scripts/lib/venv.sh
 
 VENV="${AGENT_RULES_VENV:-$HOME/.venvs/agent-rules}"
 PY="$VENV/bin/python"
 export AGENT_RULES_BRIDGE_TOKEN="${AGENT_RULES_BRIDGE_TOKEN:-$HOME/.config/agent-rules/bridge-token}"
-export SOURCE_COMMIT="$(git rev-parse HEAD)"
-export AGENT_RULES_UID="$(id -u)"
-export AGENT_RULES_GID="$(id -g)"
+# Assign before exporting: `export VAR="$(cmd)"` hides a failing command from set -e.
+SOURCE_COMMIT="$(git rev-parse HEAD)"
+AGENT_RULES_UID="$(id -u)"
+AGENT_RULES_GID="$(id -g)"
+export SOURCE_COMMIT AGENT_RULES_UID AGENT_RULES_GID
 export AGENT_RULES_PORT="${AGENT_RULES_PORT:-8765}"
 
 usage() {
@@ -34,7 +36,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$AGENT_RULES_PORT" =~ ^[0-9]+$ ]] && (( AGENT_RULES_PORT >= 1024 && AGENT_RULES_PORT <= 65535 )) || usage
+if ! [[ "$AGENT_RULES_PORT" =~ ^[0-9]+$ ]] || (( AGENT_RULES_PORT < 1024 || AGENT_RULES_PORT > 65535 )); then
+  usage
+fi
 export AGENT_RULES_WORKSPACE="${AGENT_RULES_WORKSPACE:-$(dirname "$CHECKOUT")}"
 [[ -d "$AGENT_RULES_WORKSPACE" ]] || usage
 AGENT_RULES_WORKSPACE="$(cd "$AGENT_RULES_WORKSPACE" && pwd)"
