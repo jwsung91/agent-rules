@@ -8,149 +8,126 @@
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <header>
-      <div class="brand">
-        <span class="mark">&gt;_</span><strong>agent-rules</strong
-        ><span class="divider"></span>배포 관리
-      </div>
-      <span class="badge">로컬 실행</span>
-    </header>
-    <main>
+    <header class="topbar">
+      <strong class="brand">agent-rules</strong>
       <div class="workspace">
-        <label for="workspace">작업 경로</label
-        ><input
+        <label for="workspace" class="sr-only">작업 경로</label>
+        <input
           id="workspace"
           list="workspace-suggestions"
           autocomplete="off"
-          placeholder="서버의 작업 폴더 절대 경로"
+          placeholder="작업 폴더 절대 경로 · Enter로 탐색"
+          title="Git 저장소 또는 저장소를 포함한 상위 폴더 (탐색 깊이 3). 경로를 바꾸면 선택·제안·미리보기가 초기화됩니다."
         /><datalist id="workspace-suggestions"></datalist
-        ><button id="workspace-browse">폴더 선택</button
-        ><button id="discover">다시 탐색</button>
+        ><button id="workspace-browse">찾아보기</button
+        ><button id="discover" title="다시 탐색" aria-label="다시 탐색">↻</button>
       </div>
-      <p class="hint">
-        경로 입력 후 Enter를 누르거나 입력창을 벗어나면 자동 탐색합니다. 폴더
-        선택도 즉시 적용됩니다. Git 저장소 또는 저장소를 포함한 상위 폴더를
-        선택하세요. 탐색 깊이 3 · 경로 변경 시 기존 선택·제안·미리보기 초기화.
-      </p>
+    </header>
+    <main>
+      <ol class="steps" aria-label="진행 단계">
+        <li><button id="step-1" class="is-current"><span id="step-1-dot" class="dot">1</span><span class="text"><strong>저장소</strong><small id="step-1-sub">선택 전</small></span></button></li>
+        <li><button id="step-2" class="is-todo"><span id="step-2-dot" class="dot">2</span><span class="text"><strong>설정</strong><small id="step-2-sub">대기</small></span></button></li>
+        <li><button id="step-3" class="is-todo"><span id="step-3-dot" class="dot">3</span><span class="text"><strong>검토</strong><small id="step-3-sub">대기</small></span></button></li>
+        <li><button id="step-4" class="is-todo"><span id="step-4-dot" class="dot">4</span><span class="text"><strong>적용</strong><small id="step-4-sub">대기</small></span></button></li>
+      </ol>
       <div class="layout">
-        <section class="panel">
+        <section id="panel-repos" class="panel">
           <div class="heading">
+            <span class="step">1</span>
             <h1>저장소</h1>
             <span id="count">0개</span>
+            <span id="selected">0개 선택</span>
+            <button id="select-all" class="link">전체 선택</button>
           </div>
-          <input
-            id="search"
-            placeholder="저장소 이름으로 검색…"
-            aria-label="저장소 검색"
-          />
-          <p class="hint">
-            에이전트별 표시는 규칙 파일의 설치 여부이며, 스킬 검증 결과는 상태 확인에 반영됩니다.
-            ‘사용자 규칙’은 이 도구로 설치하지 않은 규칙 파일입니다.
-            ‘검사 전’은 설치 흔적만 발견한 상태입니다. 저장소를 선택하면 검사와 미리보기가 자동으로 실행됩니다.
-          </p>
+          <div class="toolbar">
+            <input id="search" type="search" placeholder="검색" aria-label="저장소 검색" />
+            <fieldset id="filter" class="segmented" aria-label="상태 필터">
+              <label><input type="radio" name="filter" value="all" checked /><span>전체</span></label>
+              <label><input type="radio" name="filter" value="attention" /><span>확인 필요</span></label>
+              <label><input type="radio" name="filter" value="absent" /><span>미설치</span></label>
+            </fieldset>
+          </div>
           <div id="repositories" class="repositories"></div>
-          <p id="empty" class="empty">
-            작업 경로를 확정하거나 폴더를 선택해 시작하세요.
-          </p>
+          <p id="empty" class="empty">작업 경로를 입력하거나 폴더를 찾아 시작하세요.</p>
         </section>
         <section class="panel">
           <div class="heading">
-            <h2 id="detail-title">배포 설정</h2>
-            <span id="selected">0개 선택</span>
+            <span class="step">2</span>
+            <h2>설정</h2>
+            <span>선택한 저장소에 공통 적용</span>
           </div>
-          <div class="settings">
-            <label
-              >에이전트<select id="profile">
-                <option value="auto">기존 설치 유지 (미설치: Codex)</option>
-                <option value="codex">Codex</option>
-                <option value="claude">Claude</option>
-                <option value="gemini">Gemini</option>
-                <option value="all">전체</option>
-              </select></label
-            ><label
-              >작업<select id="operation">
-                <option value="auto">자동 (신규 설치 / 기존 동기화)</option>
-                <option value="install">설치</option>
-                <option value="sync">동기화</option>
-              </select></label
-            ><label
-              >Git 공유 방식<select id="visibility">
-                <option value="local">로컬 전용 (.gitignore 추가)</option>
-                <option value="tracked">Git 공유 (커밋 가능)</option>
-              </select></label
-            ><label class="checkbox"
-              ><input id="skills" type="checkbox" checked />공유 스킬
-              설치</label
-            >
-          </div>
-          <p class="hint">
-            설정은 선택한 저장소에 공통 적용됩니다. 기존 스킬은 동기화 시
-            유지됩니다. Gemini에는 공유 스킬이 없습니다.
-          </p>
-          <p class="hint">
-            로컬 전용은 생성 파일을 .gitignore에 추가합니다. 이미 Git이 추적하는
-            파일은 자동으로 추적 해제되지 않습니다. Git 공유도 커밋·푸시는
-            별도로 해야 합니다.
-          </p>
-          <div class="ai-entry">
-            <div>
-              <strong>프로젝트 규칙</strong>
-              <p id="ai-summary" class="hint">
-                선택 사항 · AI와 함께 프로젝트에 맞는 규칙을 작성하세요.
-              </p>
+          <div id="panel-settings" class="settings">
+            <span class="label">에이전트</span>
+            <fieldset id="profile" class="segmented" aria-label="에이전트">
+              <label title="기존 설치 프로필 사용, 미설치 저장소는 Codex"><input type="radio" name="profile" value="auto" checked /><span>기존 유지</span></label>
+              <label><input type="radio" name="profile" value="codex" /><span>Codex</span></label>
+              <label><input type="radio" name="profile" value="claude" /><span>Claude</span></label>
+              <label><input type="radio" name="profile" value="gemini" /><span>Gemini</span></label>
+              <label><input type="radio" name="profile" value="all" /><span>전체</span></label>
+            </fieldset>
+            <span class="label">작업</span>
+            <fieldset id="operation" class="segmented" aria-label="작업">
+              <label title="신규 저장소는 설치, 기존 설치는 동기화"><input type="radio" name="operation" value="auto" checked /><span>자동</span></label>
+              <label><input type="radio" name="operation" value="install" /><span>설치</span></label>
+              <label title="기존 스킬과 충돌 없는 로컬 편집을 유지"><input type="radio" name="operation" value="sync" /><span>동기화</span></label>
+            </fieldset>
+            <span class="label">Git</span>
+            <fieldset id="visibility" class="segmented" aria-label="Git 공유 방식">
+              <label title="생성 파일을 .gitignore에 추가. 이미 추적 중인 파일은 해제되지 않습니다."><input type="radio" name="visibility" value="local" checked /><span>로컬 전용</span></label>
+              <label title="커밋 가능한 파일로 생성. 커밋·푸시는 직접 진행합니다."><input type="radio" name="visibility" value="tracked" /><span>공유</span></label>
+            </fieldset>
+            <span class="label">공유 스킬</span>
+            <label class="switch" title="Gemini에는 공유 스킬 경로가 없습니다."><input id="skills" type="checkbox" checked /><span>설치</span></label>
+            <span class="label">프로젝트 규칙</span>
+            <div class="ai-entry">
+              <button id="ai-open" class="link" disabled>AI로 작성 →</button>
+              <span id="ai-summary">저장소 1개를 선택하면 사용할 수 있습니다.</span>
             </div>
-            <button id="ai-open" disabled>AI로 작성</button>
           </div>
-          <h2 class="preview-heading">변경 미리보기</h2>
-          <div id="preview" class="preview">
-            <p class="empty">저장소를 선택하면 변경 미리보기가 표시됩니다.</p>
+          <div id="panel-review">
+          <div class="heading">
+            <span class="step">3</span>
+            <h2>변경 검토</h2>
+            <span id="preview-summary"></span>
+            <button id="refresh" class="link" title="외부 변경까지 다시 검사">다시 검사</button>
+          </div>
+          <div id="preview" class="preview"></div>
+          <p id="preview-empty" class="empty dashed">저장소를 선택하면 바뀔 파일이 여기에 표시됩니다.</p>
           </div>
         </section>
       </div>
-      <p class="hint">
-        저장소 선택 및 배포 설정 → 자동 검사·미리보기 → 변경 내용 검토 → 적용.<br />
-        선택이나 설정을 바꾸면 미리보기를 다시 준비합니다. 적용 버튼을 누르기 전에는
-        파일을 변경하지 않으며, 적용 후에는 자동으로 재검사합니다.
-      </p>
-      <div class="actions">
-        <span id="message" role="status" aria-live="polite">저장소를 선택하세요.</span>
-        <button id="refresh">다시 확인</button>
-        <button id="apply" class="primary" disabled>선택한 변경 적용</button>
-      </div>
-      <section class="panel logs">
-        <div class="heading">
-          <h2>실행 로그</h2>
-          <button id="log-copy">로그 복사</button>
-        </div>
-        <pre id="log" tabindex="0">아직 실행한 작업이 없습니다.</pre>
-      </section>
-      <footer>
-        agent-rules · 파일 적용 후 커밋과 푸시는 별도로 진행합니다.
-      </footer>
     </main>
+    <section id="log-panel" class="log-panel" hidden>
+      <div class="log-head">
+        <h2>실행 로그</h2>
+        <button id="log-copy" class="link">복사</button>
+      </div>
+      <pre id="log" tabindex="0">아직 실행한 작업이 없습니다.</pre>
+    </section>
+    <footer class="actionbar">
+      <div class="actionbar-inner">
+        <button id="log-toggle" class="link muted" aria-expanded="false" aria-controls="log-panel">로그</button>
+        <span id="message" role="status" aria-live="polite">저장소를 선택하세요.</span>
+        <button id="apply" class="primary" disabled>적용</button>
+      </div>
+    </footer>
     <dialog id="workspace-dialog" aria-labelledby="workspace-title">
       <div class="ai-dialog-header">
         <h2 id="workspace-title">작업 폴더 선택</h2>
         <button id="workspace-close">닫기</button>
       </div>
       <div class="folder-body">
-        <p class="hint">
-          일반 폴더는 이동용입니다. Git 저장소 또는 저장소를 포함한 상위 폴더만
-          확정할 수 있습니다. WSL 서버에서는 Linux 경로를 사용하세요.
-        </p>
         <p id="folder-path"></p>
         <div class="ai-tools">
           <button id="folder-parent">상위 폴더</button
           ><button id="folder-home">홈</button
-          ><label class="checkbox"
-            ><input id="folder-hidden" type="checkbox" />숨김 폴더 표시</label
-          >
+          ><label class="checkbox"><input id="folder-hidden" type="checkbox" />숨김 폴더</label>
         </div>
-        <p id="folder-status" role="status"></p>
+        <p id="folder-status" class="hint" role="status"></p>
         <div id="folder-list"></div>
       </div>
       <div class="ai-dialog-footer">
-        <span>확정하면 Git 저장소를 자동으로 탐색합니다.</span
+        <span>Git 저장소 또는 저장소를 포함한 폴더만 선택할 수 있습니다.</span
         ><button id="folder-select" class="primary">이 위치로 탐색</button>
       </div>
     </dialog>
@@ -165,16 +142,12 @@
       <div class="ai-panel">
         <p id="ai-project" class="hint"></p>
         <p id="ai-execution" class="hint">AI 실행: 웹서버와 같은 환경</p>
-        <p>기존 코드와 작업 메모리를 읽고, 지켜야 할 규칙을 제안합니다.</p>
         <div class="ai-model-row">
-          <label
-            >분석 도구<select id="ai-provider">
+          <label>분석 도구<select id="ai-provider">
               <option value="codex">Codex</option>
               <option value="claude">Claude Code</option>
-            </select></label
-          >
-          <label
-            >사용할 모델<select id="ai-model">
+            </select></label>
+          <label>모델<select id="ai-model">
               <option value="">CLI 기본 모델</option>
             </select></label
           ><button id="ai-analyze" class="primary">규칙 제안받기</button
@@ -182,37 +155,25 @@
         </div>
         <p id="ai-saved-note" class="hint" hidden></p>
         <p id="ai-model-note" class="hint"></p>
-        <p id="ai-status" class="hint" role="status" aria-live="polite">
-          준비됨
-        </p>
+        <p id="ai-status" class="hint" role="status" aria-live="polite">준비됨</p>
         <details class="ai-settings">
-          <summary>모델 연결 및 참조 메모리 설정</summary>
+          <summary>모델 연결 및 참조 메모리</summary>
           <div class="ai-tools">
             <button id="ai-connect">연결 확인</button
             ><button id="ai-models">모델 새로고침</button
             ><button id="ai-home">메모리 새로고침</button>
           </div>
-          <p class="hint">
-            프로젝트명이 맞는 홈 메모리를 우선 선택합니다. 필요한 파일만
-            포함하세요.
-          </p>
           <div id="ai-home-files"></div>
           <details>
             <summary>검색 위치와 추가 파일</summary>
             <p id="ai-home-roots" class="hint"></p>
-            <label
-              >추가 Markdown 파일 경로 (한 줄에 하나)<textarea
+            <label>추가 Markdown 파일 경로 (한 줄에 하나)<textarea
                 id="ai-memories"
                 rows="2"
                 placeholder="/home/user/.codex/memories/project.md"
               ></textarea>
             </label>
-            <p class="hint">
-              <span id="ai-memory-path-hint"
-                >경로는 AI 실행 환경 기준입니다.</span
-              >
-              전체 대화 기록은 수집하지 않습니다.
-            </p>
+            <p class="hint"><span id="ai-memory-path-hint">경로는 AI 실행 환경 기준입니다.</span> 전체 대화 기록은 수집하지 않습니다.</p>
           </details>
           <button id="ai-context">전체 참조 목록 확인</button>
           <pre id="ai-files">프로젝트 규칙과 선택된 메모리를 참고합니다.</pre>
@@ -223,29 +184,19 @@
             <summary>제안 근거와 확인할 질문</summary>
             <pre id="ai-result"></pre>
           </details>
-          <label
-            >반영할 규칙<textarea
+          <label>반영할 규칙 (한 줄에 하나 · 비우면 기존 유지)<textarea
               id="ai-rules"
               rows="8"
               placeholder="한 줄에 규칙 하나를 입력하세요."
             ></textarea>
           </label>
-          <p class="hint">
-            기존 프로젝트 규칙을 포함한 전체 목록입니다. 미리보기에서 교체
-            내용을 확인하세요. 비우면 기존 규칙을 유지합니다.
-          </p>
           <p id="ai-target" class="hint"></p>
         </section>
-        <p class="ai-disclosure">
-          분석 시 코드와 선택한 메모리가 AI 서비스로 전달되며 사용량이
-          발생합니다. 읽기 전용 분석 · 최대 5분.
-        </p>
+        <p class="ai-disclosure">코드와 선택한 메모리가 AI 서비스로 전달되며 사용량이 발생합니다 · 읽기 전용 · 최대 5분</p>
       </div>
       <div class="ai-dialog-footer">
         <span>미리보기와 적용 전에는 파일이 바뀌지 않습니다.</span
-        ><button id="ai-preview" class="primary" disabled>
-          변경 미리보기로
-        </button>
+        ><button id="ai-preview" class="primary" disabled>변경 검토로</button>
       </div>
     </dialog>
   </body>
