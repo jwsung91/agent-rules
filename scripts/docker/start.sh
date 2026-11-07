@@ -4,6 +4,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+# shellcheck source=../lib/venv.sh
+source scripts/lib/venv.sh
 
 VENV="${AGENT_RULES_VENV:-$HOME/.venvs/agent-rules}"
 PY="$VENV/bin/python"
@@ -14,7 +16,7 @@ export AGENT_RULES_GID="$(id -g)"
 export AGENT_RULES_PORT="${AGENT_RULES_PORT:-8765}"
 
 usage() {
-  echo "usage: $0 [--port PORT] /path/to/repository-parent" >&2
+  echo "usage: $0 [--port PORT] /path/to/repository-parent  (PORT: 1024-65535)" >&2
   exit 2
 }
 
@@ -26,17 +28,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$AGENT_RULES_PORT" =~ ^[0-9]+$ ]] && (( AGENT_RULES_PORT >= 1 && AGENT_RULES_PORT <= 65535 )) || usage
+[[ "$AGENT_RULES_PORT" =~ ^[0-9]+$ ]] && (( AGENT_RULES_PORT >= 1024 && AGENT_RULES_PORT <= 65535 )) || usage
 export AGENT_RULES_WORKSPACE="${AGENT_RULES_WORKSPACE:-}"
 [[ -n "$AGENT_RULES_WORKSPACE" && -d "$AGENT_RULES_WORKSPACE" ]] || usage
 AGENT_RULES_WORKSPACE="$(cd "$AGENT_RULES_WORKSPACE" && pwd)"
 # Mount at the host path so the GUI, logs and previews show real paths.
 export AGENT_RULES_CONTAINER_WORKSPACE="$AGENT_RULES_WORKSPACE"
 
-if [[ ! -x "$PY" ]]; then
-  python3 -m venv "$VENV"
-  "$PY" -m pip install -r requirements-gui.txt
-fi
+ensure_venv "$VENV"
 
 if [[ ! -f "$AGENT_RULES_BRIDGE_TOKEN" ]]; then
   "$PY" scripts/ai_bridge.py --token-file "$AGENT_RULES_BRIDGE_TOKEN" --init-token
