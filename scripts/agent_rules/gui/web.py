@@ -227,6 +227,18 @@ def create_app(
 
         return await execute(memories)
 
+    @app.post("/api/ai/saved")
+    async def ai_saved(selection: Analysis):
+        from .proposals import load
+
+        def saved():
+            repo = service.target(selection.path)
+            if bridge:
+                return bridge.call("saved", selection.provider, repo, timeout=30)
+            return load(repo)
+
+        return await execute(saved)
+
     @app.post("/api/ai/connection")
     async def ai_connection(selection: ProviderSelection):
         from .ai import connection

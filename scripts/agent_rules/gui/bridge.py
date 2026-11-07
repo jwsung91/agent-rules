@@ -16,7 +16,7 @@ from .service import GuiError
 class Job(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
-    action: Literal["connection", "models", "memories", "context", "analyze"]
+    action: Literal["connection", "models", "memories", "context", "analyze", "saved"]
     provider: Literal["codex", "claude"] = "codex"
     path: str = ""
     model: str = Field(default="", max_length=100)
@@ -153,6 +153,10 @@ def run_job(job: Job, workspace: Path, memory_roots: list[Path]) -> dict:
     repo = host_target(workspace, job.path)
     if job.action == "memories":
         return ai.home_memories(repo)
+    if job.action == "saved":
+        from . import proposals
+
+        return proposals.load(repo)
     for value in job.memories:
         path = Path(value).expanduser()
         if not path.is_absolute() or not any(

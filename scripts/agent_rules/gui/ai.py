@@ -15,6 +15,8 @@ import tempfile
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import proposals
+
 
 class Rule(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -235,7 +237,15 @@ def analyze(repo: Path, model: str, extra: list[str], provider: str = "codex") -
             raise ValueError(
                 f"{name}가 제공 목록에 없는 메모리를 인용했습니다. 다시 분석하세요."
             )
-        return {**proposal.model_dump(), "memory_files": memories["files"]}
+        result = {**proposal.model_dump(), "memory_files": memories["files"]}
+    # Keep the proposal on the host so a GUI restart does not require a new
+    # analysis; a cache write failure must not discard a finished analysis.
+    try:
+        proposals.save(repo, provider, model, extra, result)
+        saved = True
+    except OSError:
+        saved = False
+    return {**result, "saved": saved}
 
 
 async def _models() -> dict:

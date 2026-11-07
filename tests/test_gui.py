@@ -221,7 +221,12 @@ def test_ai_output_validation_and_read_only_invocation(gui):
         "memories_used": [],
     }
 
+    real_popen = subprocess.Popen
+
     def run(command, **kwargs):
+        # Saving the proposal reads git HEAD through the same patched module.
+        if command[0] == "git":
+            return real_popen(command, **kwargs)
         assert command[:5] == ["codex", "-a", "never", "exec", "--sandbox"]
         assert command[5] == "read-only"
         assert kwargs["cwd"] == repo
@@ -413,7 +418,12 @@ def test_claude_proposal_restricts_tools_and_parses_envelope(gui):
         "structured_output": {"rules": [], "questions": [], "memories_used": []},
     }
 
+    real_popen = subprocess.Popen
+
     def run(command, **kwargs):
+        # Saving the proposal reads git HEAD through the same patched module.
+        if command[0] == "git":
+            return real_popen(command, **kwargs)
         assert command[0] == "claude"
         for option in (
             "--restricted",

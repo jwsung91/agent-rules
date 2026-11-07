@@ -66,7 +66,10 @@ the workspace, the configured default memory directories, or an allowed
 - If a project is rejected, confirm the host workspace matches the mounted
   workspace. Symlink projects and traversal outside it are rejected.
 
-AI analysis uses the host account's allowance. A lost result is not persisted or
-automatically re-executed; retrying analysis can consume usage again. Review
+AI analysis uses the host account's allowance. The bridge saves each successful
+proposal on the host before replying, so a proposal finished while the GUI
+restarted can be reloaded with **저장된 제안 불러오기** instead of analyzing
+again; see [Local GUI](local-gui.md#codex-and-claude-code-rule-proposals).
+Failed or timed-out analyses are not saved or automatically re-executed. Review
 proposals in the GUI before previewing and applying deployment changes.
 See [Docker GUI setup](docker-gui.md) for Windows, mounts, and token rotation.
