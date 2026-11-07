@@ -234,7 +234,13 @@ def build_entrypoint_plans(
         merging = False
         action = file_action(target_repo, relative_path, update=update, force=force)
 
-        if action == "exists" and not merge:
+        # --sync updates or merges an existing tool entrypoint below even when
+        # the profile's primary file is missing (e.g. CLAUDE.md kept, AGENTS.md
+        # deleted from an "all" installation); refusing it would make the
+        # installation impossible to sync.
+        if action == "exists" and not merge and not (
+            sync and relative_path in TOOL_ENTRYPOINTS
+        ):
             plans.append(FilePlan(path=relative_path, action="exists"))
             continue
 
