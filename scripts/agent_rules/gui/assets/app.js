@@ -427,6 +427,52 @@ function aiSelection() {
     ],
   };
 }
+function showProposal(result, path, status) {
+  aiTarget = path;
+  $("ai-review").hidden = false;
+  $("ai-summary").textContent =
+    "규칙 제안 준비됨 · 작성 창에서 검토하고 미리보기에 반영하세요.";
+  $("ai-files").textContent = result.memory_files.join("\n");
+  $("ai-result").textContent =
+    result.rules.map((r) => `${r.text}\n근거: ${r.evidence}`).join("\n\n") +
+    "\n\n확인할 질문:\n" +
+    (result.questions.join("\n") || "없음") +
+    "\n\n참고한 메모리:\n" +
+    (result.memories_used.join("\n") || "없음");
+  $("ai-rules").value = result.rules
+    .map((r) => r.text.replace(/\n/g, " "))
+    .join("\n");
+  $("ai-target").textContent =
+    `적용 대상: ${path} · 아래 변경 미리보기에서 교체 내용을 확인하세요.`;
+  $("ai-status").textContent = status;
+  invalidate();
+}
+// The host keeps the latest successful proposal per repository, so a GUI
+// restart can reload it instead of running the analysis again.
+let savedProposal = null;
+async function loadSavedProposal() {
+  savedProposal = null;
+  $("ai-saved").hidden = true;
+  $("ai-saved-note").hidden = true;
+  if (selected.size !== 1) return;
+  const path = [...selected][0];
+  let result;
+  try {
+    result = await api("ai/saved", { path, provider: $("ai-provider").value || "codex" });
+  } catch {
+    return; // An offline host bridge only hides the saved-proposal option.
+  }
+  if (!result.saved || !selected.has(path) || selected.size !== 1) return;
+  const saved = result.saved;
+  savedProposal = { ...saved, path };
+  $("ai-saved").hidden = false;
+  $("ai-saved-note").hidden = false;
+  $("ai-saved-note").textContent =
+    `저장된 제안 · ${new Date(saved.saved_at).toLocaleString()} · ` +
+    `${saved.provider === "claude" ? "Claude Code" : "Codex"}` +
+    (saved.model ? ` · ${saved.model}` : "") +
+    (saved.stale ? " · 저장 이후 커밋이 바뀌었습니다. 현재 코드와 대조하세요." : "");
+}
 async function aiRun(action) {
   if (busy || preparing) return;
   controls(true);
@@ -487,25 +533,12 @@ async function aiRun(action) {
       $("ai-status").textContent =
         "참조 목록 확인 완료 · 추가 경로를 바꾸면 다시 확인하세요.";
     } else {
-      aiTarget = data.path;
-      $("ai-review").hidden = false;
-      $("ai-summary").textContent =
-        "규칙 제안 준비됨 · 작성 창에서 검토하고 미리보기에 반영하세요.";
-      $("ai-files").textContent = result.memory_files.join("\n");
-      $("ai-result").textContent =
-        result.rules.map((r) => `${r.text}\n근거: ${r.evidence}`).join("\n\n") +
-        "\n\n확인할 질문:\n" +
-        (result.questions.join("\n") || "없음") +
-        "\n\n참고한 메모리:\n" +
-        (result.memories_used.join("\n") || "없음");
-      $("ai-rules").value = result.rules
-        .map((r) => r.text.replace(/\n/g, " "))
-        .join("\n");
-      $("ai-target").textContent =
-        `적용 대상: ${data.path} · 아래 변경 미리보기에서 교체 내용을 확인하세요.`;
-      $("ai-status").textContent =
-        "제안 완료 · 근거와 질문을 확인하고 규칙을 편집하세요. 아직 파일은 변경되지 않았습니다.";
-      invalidate();
+      showProposal(
+        result,
+        data.path,
+        "제안 완료 · 근거와 질문을 확인하고 규칙을 편집하세요. 아직 파일은 변경되지 않았습니다." +
+          (result.saved === false ? " 결과를 호스트에 저장하지 못했습니다." : ""),
+      );
     }
   } catch (error) {
     $("ai-status").textContent = error.message;
@@ -529,7 +562,18 @@ $("ai-provider").onchange = async () => {
 };
 $("ai-connect").onclick = () => aiRun("connection");
 $("ai-context").onclick = () => aiRun("context");
-$("ai-analyze").onclick = () => aiRun("analyze");
+$("ai-analyze").onclick = async () => {
+  await aiRun("analyze");
+  await loadSavedProposal();
+};
+$("ai-saved").onclick = () => {
+  if (busy || !savedProposal || !selected.has(savedProposal.path)) return;
+  showProposal(
+    savedProposal.proposal,
+    savedProposal.path,
+    "저장된 제안을 불러왔습니다 · 근거와 질문을 다시 확인하세요. 아직 파일은 변경되지 않았습니다.",
+  );
+};
 $("ai-rules").oninput = invalidate;
 
 $("ai-models").onclick = () => aiRun("models");
@@ -540,6 +584,7 @@ $("ai-open").onclick = async () => {
   $("ai-project").textContent = [...selected][0];
   $("ai-dialog").showModal();
   if (homeMemoryTarget !== [...selected][0]) await aiRun("memories");
+  await loadSavedProposal();
 };
 $("ai-close").onclick = () => $("ai-dialog").close();
 $("ai-preview").onclick = async () => {

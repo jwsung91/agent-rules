@@ -402,6 +402,51 @@ test("folder picker hides dot-directories unless requested", async () => {
   assert.deepEqual(names(), [".cache", "work"]);
 });
 
+test("saved AI proposal can be reloaded after a restart", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  ui.get("ai-dialog").showModal = () => {};
+  ui.get("ai-saved").hidden = true;
+  ui.get("ai-review").hidden = true;
+  const saved = {
+    saved_at: "2026-11-07T12:30:00+09:00",
+    provider: "claude",
+    model: "sonnet",
+    stale: true,
+    proposal: {
+      rules: [{ text: "Keep API stable.", evidence: "README.md" }],
+      questions: [],
+      memories_used: [],
+      memory_files: [],
+    },
+  };
+  ui.calls.length = 0;
+  ui.context.fetch = async (url, request) => {
+    ui.calls.push([url, JSON.parse(request.body)]);
+    const result = url.endsWith("/ai/saved") ? { saved }
+      : url.endsWith("/ai/memories") ? { roots: [], files: [] } : {};
+    return { ok: true, json: async () => result };
+  };
+  vm.runInContext("selected.clear(); selected.add('/work/demo')", ui.context);
+  await ui.get("ai-open").onclick();
+  assert.deepEqual(ui.calls.map(([url]) => url), ["/api/ai/memories", "/api/ai/saved"]);
+  assert.equal(ui.get("ai-saved").hidden, false);
+  assert.match(ui.get("ai-saved-note").textContent, /Claude Code · sonnet · 저장 이후 커밋이 바뀌었습니다/);
+  ui.get("ai-saved").onclick();
+  assert.equal(ui.get("ai-review").hidden, false);
+  assert.equal(ui.get("ai-rules").value, "Keep API stable.");
+  assert.match(ui.get("ai-status").textContent, /저장된 제안을 불러왔습니다/);
+  assert.equal(vm.runInContext("aiTarget", ui.context), "/work/demo");
+});
+
+test("offline host bridge hides the saved proposal option", async () => {
+  const ui = await app({ code: 0, status: "정상", log: "healthy" });
+  ui.get("ai-saved").hidden = false;
+  ui.context.fetch = async () => ({ ok: false, json: async () => ({ detail: "호스트 AI 연결 프로그램이 꺼져 있습니다." }) });
+  vm.runInContext("selected.clear(); selected.add('/work/demo')", ui.context);
+  await vm.runInContext("loadSavedProposal()", ui.context);
+  assert.equal(ui.get("ai-saved").hidden, true);
+});
+
 test("repeated preparation logs unchanged output as one line", async () => {
   const ui = await autoUI();
   vm.runInContext("render()", ui.context);
