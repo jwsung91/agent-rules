@@ -11,6 +11,18 @@ let session = "",
 function log(text) {
   $("log").textContent += `\n[${new Date().toLocaleTimeString()}] ${text}\n`;
 }
+// Automatic preparation reruns on every selection or option change; repeat
+// identical check and preview output as one line instead of the full text.
+const lastPreparationLogs = new Map();
+function logPreparation(repo, kind, text) {
+  const key = `${repo.path}\0${kind}`;
+  if (lastPreparationLogs.get(key) === text) {
+    log(`${repo.name} · ${kind} · 이전 결과와 같음`);
+    return;
+  }
+  lastPreparationLogs.set(key, text);
+  log(`${repo.name} · ${kind}\n${text}`);
+}
 function clearAI() {
   $("ai-review").hidden = true;
   $("ai-summary").textContent =
@@ -99,14 +111,14 @@ async function prepareSelection(version = preparationVersion) {
         if (version !== preparationVersion) return;
         repo.status = checked.status;
         repo.agents = checked.agents;
-        log(`${repo.name} · 상태 확인\n${checked.log}`);
+        logPreparation(repo, "상태 확인", checked.log);
         repo.preparation = "미리보기 생성 중…";
         render();
         const plan = await api("preview", { ...settings, boundaries });
         if (version !== preparationVersion) return;
         previews.set(repo.path, plan);
         showPreview(repo, plan);
-        log(`${repo.name} · 미리보기\n${plan.log}`);
+        logPreparation(repo, "미리보기", plan.log);
         repo.preparation = plan.code || !plan.token ? "적용 불가"
           : plan.files.length ? "준비 완료" : "이미 최신 상태";
       } catch (error) {

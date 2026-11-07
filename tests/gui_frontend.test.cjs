@@ -401,3 +401,20 @@ test("folder picker hides dot-directories unless requested", async () => {
   await ui.get("folder-hidden").onchange();
   assert.deepEqual(names(), [".cache", "work"]);
 });
+
+test("repeated preparation logs unchanged output as one line", async () => {
+  const ui = await autoUI();
+  vm.runInContext("render()", ui.context);
+  const box = ui.get("repositories").children[0].children[0];
+  box.checked = true;
+  await box.onchange();
+  await flushTimers(ui);
+  const first = ui.get("log").textContent;
+  ui.get("profile").value = "claude";
+  ui.get("profile").onchange();
+  await flushTimers(ui);
+  const repeated = ui.get("log").textContent.slice(first.length);
+  assert.match(repeated, /상태 확인 · 이전 결과와 같음/);
+  assert.match(repeated, /미리보기 · 이전 결과와 같음/);
+  assert.doesNotMatch(repeated, /\ncheck\n|\npreview\n/);
+});
