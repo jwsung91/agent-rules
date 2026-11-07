@@ -1,4 +1,4 @@
-"""Exercise relocated shell commands with fake Docker and host AI CLIs."""
+"""Exercise the Linux/WSL launch scripts with fake Docker, pip, and host AI CLIs."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.skipif(
     os.name != "posix" or shutil.which("bash") is None,
-    reason="Docker lifecycle scripts target Linux/WSL with Bash",
+    reason="Launch scripts target Linux/WSL with Bash",
 )
 
 
@@ -86,6 +86,10 @@ def test_docker_command_from_outside_checkout(tmp_path, shell_environment, scrip
             assert [call["args"] for call in calls if call["tool"] == provider] == [["--version"], auth]
         assert "[ok  ]" in result.stdout
     if script == "start":
+        # The existing venv is still reconciled with the pinned requirements.
+        assert calls[0]["tool"] == "python"
+        assert calls[0]["args"][:4] == ["-m", "pip", "install", "-q"]
+        assert calls[0]["args"][-2:] == ["-r", "requirements-gui.txt"]
         docker = next(call for call in calls if call["tool"] == "docker")
         assert docker["args"] == ["compose", "up", "--build", "-d"]
         assert docker["workspace"] == docker["container_workspace"] == str(workspace)
@@ -99,3 +103,44 @@ def test_docker_command_from_outside_checkout(tmp_path, shell_environment, scrip
     elif script == "stop":
         assert calls[0]["args"] == ["compose", "down"]
         assert calls[0]["workspace"] == str(ROOT)
+
+
+@pytest.mark.parametrize("port", ["80", "1023", "65536", "abc"])
+def test_docker_start_rejects_ports_the_gui_refuses(tmp_path, shell_environment, port):
+    env, log, workspace = shell_environment
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/docker/start.sh"), "--port", port, str(workspace)],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 2
+    assert "1024-65535" in result.stderr
+    assert not log.exists()
+
+
+def test_local_start_from_outside_checkout(tmp_path, shell_environment):
+    env, log, workspace = shell_environment
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/local/start.sh"), workspace.name, "--port", "8866"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert all(Path(call["cwd"]) == ROOT for call in calls)
+    assert [call["tool"] for call in calls] == ["python", "python"]
+    assert calls[0]["args"][:3] == ["-m", "pip", "install"]
+    # The relative workspace resolves against the caller, not the checkout.
+    assert calls[1]["args"] == [
+        "scripts/gui.py", "--workspace", str(workspace), "--port", "8866",
+    ]
+
+
+@pytest.mark.parametrize("arguments", [[], ["--port", "8866"], ["missing-folder"]])
+def test_local_start_requires_workspace(tmp_path, shell_environment, arguments):
+    env, log, _ = shell_environment
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/local/start.sh"), *arguments],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 2
+    assert "usage:" in result.stderr
+    assert not log.exists()

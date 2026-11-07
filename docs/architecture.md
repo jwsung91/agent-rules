@@ -19,6 +19,8 @@ agent-rules/
 │   ├── gui.py                     GUI command
 │   ├── ai_bridge.py               Host AI bridge command
 │   ├── forward_test.py            Live validation command
+│   ├── local/start.sh             Linux/WSL local GUI launcher
+│   ├── lib/venv.sh                Venv setup shared by the launchers
 │   ├── docker/                    Linux/WSL lifecycle scripts
 │   │   ├── start.sh               Start Docker GUI and host bridge
 │   │   ├── stop.sh                Stop Docker GUI
@@ -120,7 +122,7 @@ Install `requirements-dev.txt`, then run:
 python -m pytest tests/ -q
 ruff check scripts/ tests/
 node --test tests/gui_frontend.test.cjs
-bash -n scripts/docker/start.sh scripts/docker/stop.sh scripts/docker/check.sh
+bash -n scripts/docker/*.sh scripts/local/start.sh scripts/lib/venv.sh
 git diff --check
 ```
 
