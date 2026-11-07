@@ -49,6 +49,7 @@ agent-rules/
 │           ├── cases.py            Live test prompts and fixture definitions
 │           └── runner.py           Agent execution, provenance, and evidence output
 ├── tests/                         Deterministic Python and frontend checks
+├── start.sh, stop.sh               One-command GUI start (Docker or local) and stop
 ├── Dockerfile, compose.yaml        GUI container build and runtime configuration
 └── requirements-*.txt, ruff.toml  Dependency and lint configuration
 ```
@@ -123,7 +124,7 @@ Install `requirements-dev.txt`, then run:
 python -m pytest tests/ -q
 ruff check scripts/ tests/
 node --test tests/gui_frontend.test.cjs
-bash -n scripts/docker/*.sh scripts/local/start.sh scripts/lib/venv.sh
+bash -n start.sh stop.sh scripts/docker/*.sh scripts/local/start.sh scripts/lib/venv.sh
 git diff --check
 ```
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import time
 
 from .constants import (
     LEGACY_CODEX_SKILL_ROOT,
@@ -161,16 +162,19 @@ def parse_source_ref(value: str) -> str:
     return value
 
 
-_SOURCE_STATUS_CACHE: dict[tuple[str, str], SourceStatus] = {}
+# Short-lived cache per URL and branch: a batch run would otherwise repeat the
+# same `git ls-remote` call per repository, while the long-running GUI must
+# notice a pulled checkout or a moved remote branch instead of stamping
+# generated files with an outdated source commit.
+SOURCE_STATUS_TTL = 30.0
+_SOURCE_STATUS_CACHE: dict[tuple[str, str], tuple[float, SourceStatus]] = {}
 
 
 def get_source_status(shared_url: str, source_ref: str = SOURCE_REF) -> SourceStatus:
-    # Cached per URL and branch: batch runs would otherwise repeat the same
-    # `git ls-remote` network call once per repository.
     key = (shared_url, source_ref)
     cached = _SOURCE_STATUS_CACHE.get(key)
-    if cached is not None:
-        return cached
+    if cached is not None and time.monotonic() - cached[0] < SOURCE_STATUS_TTL:
+        return cached[1]
     warnings: list[str] = []
     local_head, local_warning = local_source_head()
     if local_warning:
@@ -185,7 +189,7 @@ def get_source_status(shared_url: str, source_ref: str = SOURCE_REF) -> SourceSt
         warnings=warnings,
         source_ref=source_ref,
     )
-    _SOURCE_STATUS_CACHE[key] = status
+    _SOURCE_STATUS_CACHE[key] = (time.monotonic(), status)
     return status
 
 

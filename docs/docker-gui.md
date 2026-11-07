@@ -28,12 +28,18 @@ WSL distribution.
 For an existing setup, use the lifecycle scripts:
 
 ```bash
-scripts/docker/start.sh /absolute/path/to/repository-parent
+./start.sh            # same as scripts/docker/start.sh when Docker Compose works
+scripts/docker/start.sh [/path/to/repository-parent]
 # In another terminal, check one or both installed host CLIs.
 scripts/docker/check.sh codex claude
 # Stop the foreground bridge with Ctrl+C, then stop the GUI.
-scripts/docker/stop.sh
+scripts/docker/stop.sh   # or ./stop.sh
 ```
+
+The workspace defaults to the folder that contains this checkout; a relative
+path is resolved from the current directory. Rerunning `start.sh` after pulling
+rebuilds the GUI image and stops a host bridge left running by an earlier start
+with the same token file, so a restart is one command.
 
 The scripts previously under `docker/` now live under `scripts/docker/`.
 Dockerfile and Compose configuration remain at the checkout root.
@@ -71,7 +77,7 @@ shows real host paths instead of `/workspace/...`. Without it (for example on
 native Windows) the mount stays at `/workspace`.
 
 ```bash
-scripts/docker/start.sh [--port PORT] /absolute/path/to/repository-parent
+scripts/docker/start.sh [--port PORT] [/path/to/repository-parent]
 scripts/docker/stop.sh
 scripts/docker/check.sh [codex|claude]...
 ```
@@ -165,6 +171,7 @@ and the [usage index](README.md) for other tools.
 
 Source and discovery settings can be overridden before starting Compose (or
 `start.sh`) with `AGENT_RULES_SHARED_URL`, `AGENT_RULES_SOURCE_REF`, and
-`AGENT_RULES_MAX_DEPTH`. Defaults are the shared repository URL, `main`, and `3`.
+`AGENT_RULES_MAX_DEPTH`. Compose passes them to `scripts/gui.py`, whose defaults
+(the shared repository URL, `main`, and `3`) apply when they are unset.
 Use a checkout matching that source before building: the settings control
 links, metadata, and version checks, and do not download source content.

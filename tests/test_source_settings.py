@@ -115,3 +115,52 @@ def test_gui_launch_rejects_invalid_settings(tmp_path, options):
     )
     assert result.returncode == 2
     assert "error:" in result.stderr
+
+
+def test_source_status_cache_expires(monkeypatch):
+    from unittest import mock
+
+    source._SOURCE_STATUS_CACHE.clear()
+    heads = iter(["a" * 40, "b" * 40])
+    now = [1000.0]
+    monkeypatch.setattr(source.time, "monotonic", lambda: now[0])
+    with (
+        mock.patch.object(source, "local_source_head", side_effect=lambda: (next(heads), None)),
+        mock.patch.object(source, "remote_main_head", return_value=("c" * 40, None)),
+        mock.patch.object(source, "resolve_latest_status", return_value="different"),
+    ):
+        first = source.get_source_status("https://example.invalid/rules")
+        now[0] += source.SOURCE_STATUS_TTL - 1
+        assert source.get_source_status("https://example.invalid/rules") is first
+        # A long-running GUI must see a pulled checkout instead of stamping
+        # generated files with the commit it saw at startup.
+        now[0] += 2
+        assert source.get_source_status("https://example.invalid/rules").local_head == "b" * 40
+    source._SOURCE_STATUS_CACHE.clear()
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"), [("AGENT_RULES_PORT", "80"), ("AGENT_RULES_MAX_DEPTH", "0")]
+)
+def test_gui_launch_reads_invalid_settings_from_environment(tmp_path, variable, value):
+    import os
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/gui.py"), "--workspace", str(tmp_path)],
+        capture_output=True, text=True, timeout=10, env={**os.environ, variable: value},
+    )
+    assert result.returncode == 2
+    assert "error:" in result.stderr
+
+
+def test_gui_launch_reports_missing_bridge_token(tmp_path):
+    import os
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/gui.py"), "--workspace", str(tmp_path)],
+        capture_output=True, text=True, timeout=10,
+        env={**os.environ, "AGENT_RULES_BRIDGE_FILE": str(tmp_path / "missing-token")},
+    )
+    assert result.returncode == 1
+    assert "Host bridge token file not found" in result.stderr
+    assert "Traceback" not in result.stderr

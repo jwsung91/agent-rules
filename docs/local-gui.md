@@ -10,12 +10,21 @@ runs only the GUI; a host bridge invokes your existing AI CLIs. Dependencies are
 Run from the agent-rules checkout with Python 3.10+ and Git installed. The
 launch script creates `~/.venvs/agent-rules` if needed, installs
 `requirements-gui.txt` on every run so dependency updates are picked up, and
-starts the GUI. Options after the workspace are passed to `scripts/gui.py`;
-`AGENT_RULES_VENV` overrides the venv path.
+starts the GUI. The workspace defaults to the folder that contains this
+checkout; options after it are passed to `scripts/gui.py`.
+`AGENT_RULES_VENV` overrides the venv path. `./start.sh --local` from the
+checkout root does the same.
 
 ```bash
-scripts/local/start.sh /path/to/workspace [--port 8766] [--open-browser]
+scripts/local/start.sh [/path/to/workspace] [--port 8766] [--open-browser]
 ```
+
+`scripts/gui.py` itself also defaults `--workspace` to `AGENT_RULES_WORKSPACE`
+or the folder containing the checkout, and reads `AGENT_RULES_PORT`,
+`AGENT_RULES_SHARED_URL`, `AGENT_RULES_SOURCE_REF`, and `AGENT_RULES_MAX_DEPTH`
+as defaults for the matching options. Source status (local and remote heads) is
+refreshed at most every 30 seconds, so pulling the checkout while the GUI runs
+is picked up without a restart; template changes still apply to new previews only.
 
 The equivalent manual steps:
 
